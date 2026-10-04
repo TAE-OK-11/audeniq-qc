@@ -49,6 +49,21 @@ pub(crate) fn count(_counter: Counter, _value: u64) {
     #[cfg(feature = "profile-native")]
     COUNTERS[_counter as usize].fetch_add(_value, std::sync::atomic::Ordering::Relaxed);
 }
+#[inline(always)]
+pub(crate) fn alac_order(_order: usize, _samples: usize) {
+    #[cfg(feature = "profile-native")]
+    {
+        use std::sync::atomic::Ordering::Relaxed;
+        ALAC_ORDERS[_order].fetch_add(1, Relaxed);
+        ALAC_SAMPLES[_order].fetch_add(_samples as u64, Relaxed);
+    }
+}
+#[cfg(feature = "profile-native")]
+static ALAC_ORDERS: [std::sync::atomic::AtomicU64; 32] =
+    [const { std::sync::atomic::AtomicU64::new(0) }; 32];
+#[cfg(feature = "profile-native")]
+static ALAC_SAMPLES: [std::sync::atomic::AtomicU64; 32] =
+    [const { std::sync::atomic::AtomicU64::new(0) }; 32];
 #[cfg(feature = "profile-native")]
 static COUNTERS: [std::sync::atomic::AtomicU64; 7] =
     [const { std::sync::atomic::AtomicU64::new(0) }; 7];
@@ -104,5 +119,16 @@ pub fn report() -> serde_json::Value {
         .enumerate()
         .map(|(i, &name)| (name.into(), serde_json::json!(COUNTERS[i].load(Relaxed))))
         .collect();
-    serde_json::json!({"kind":"inclusive wall time with profiling overhead; stages overlap, do not sum", "stages":stages,"counters":counters})
+    let orders: serde_json::Map<String, serde_json::Value> = (0..32)
+        .filter_map(|order| {
+            let calls = ALAC_ORDERS[order].load(Relaxed);
+            (calls != 0).then(|| {
+                (
+                    order.to_string(),
+                    serde_json::json!({"calls":calls,"samples":ALAC_SAMPLES[order].load(Relaxed)}),
+                )
+            })
+        })
+        .collect();
+    serde_json::json!({"kind":"inclusive wall time with profiling overhead; stages overlap, do not sum", "stages":stages,"counters":counters,"alac_predictor_orders":orders})
 }

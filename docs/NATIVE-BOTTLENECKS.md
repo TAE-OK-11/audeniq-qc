@@ -34,7 +34,10 @@ changes measured about 317 ms in adaptive prediction, 160 ms in Rice decoding,
 inclusive instrumented wall times, not an additive CPU profile. Reducing parser
 work alone cannot materially fix this predictor cost.
 
-The ARM candidate retains order-4/order-8 predictor history and signed adaptive
+Predictor-order counters found all 5,626 calls in the measured local ALAC file
+used **order 6**, so the initial order-4/order-8 candidate did not accelerate it.
+The actual common order-6 scalar loop is now also a compile-time specialization.
+The ARM candidate retains order-4/order-6/order-8 predictor history and signed adaptive
 coefficients in NEON registers. Wrapped integer products reproduce ALAC's
 32-bit arithmetic. A weighted inclusive prefix mask replaces the sequential
 coefficient-update/early-exit loop. The optimization is restricted to <=25-bit
@@ -44,6 +47,9 @@ scalar code. No FMA or lossy arithmetic is used.
 Tests compare complete PCM **and final coefficients**, including extreme
 residuals, coefficient wrap, quantizers and short blocks. This is a separate
 candidate from the previously rejected FLAC 64-bit NEON LPC implementation.
+Order 6 uses two explicitly zero-masked padding lanes, bounded two-coefficient
+tail loads/stores and a six-sample rolling history; no four-lane read crosses
+the coefficient/sample slice. Differential tests include order 6.
 
 ## Measurement and acceptance
 

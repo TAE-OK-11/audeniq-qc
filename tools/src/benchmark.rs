@@ -222,7 +222,7 @@ pub fn decoding(options: &Options) -> Result<Value> {
     }
     let mut report = metadata(options, seconds, results)?;
     report["input_scope"] = json!("WAV/FLAC/ALAC");
-    report["comparison"]=json!("Decode and canonical interleaved s32le SHA-256 only; no meter, fingerprint or encoding. Native scalar selects generic DSP while crypto dispatch and PCM layout kernels remain active. FLAC LPC restoration remains scalar after rejecting its slower NEON candidate; bounded ALAC order-4/order-8 prediction can use NEON on ARM. Hash and exact frame count checked on every measured run. FLAC native/reference also verify PCM MD5; FFmpeg validates frames but is not claimed to perform the same whole-stream MD5 check.");
+    report["comparison"]=json!("Decode and canonical interleaved s32le SHA-256 only; no meter, fingerprint or encoding. Native scalar selects generic DSP while crypto dispatch and PCM layout kernels remain active. FLAC LPC restoration remains scalar after rejecting its slower NEON candidate; bounded ALAC order-4/order-6/order-8 prediction can use NEON on ARM. Hash and exact frame count checked on every measured run. FLAC native/reference also verify PCM MD5; FFmpeg validates frames but is not claimed to perform the same whole-stream MD5 check.");
     Ok(report)
 }
 pub fn analysis(options: &Options) -> Result<Value> {

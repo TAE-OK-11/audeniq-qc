@@ -50,6 +50,7 @@ pub(crate) fn count(_counter: Counter, _value: u64) {
     COUNTERS[_counter as usize].fetch_add(_value, std::sync::atomic::Ordering::Relaxed);
 }
 #[inline(always)]
+#[cfg(not(feature = "reference-codecs"))]
 pub(crate) fn alac_order(_order: usize, _samples: usize) {
     #[cfg(feature = "profile-native")]
     {

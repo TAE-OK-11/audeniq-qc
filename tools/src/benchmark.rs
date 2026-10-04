@@ -90,9 +90,16 @@ fn ratios(medians: &Value) -> Value {
     }
     Value::Object(ratios)
 }
+/// Benchmark fixture. `AUDENIQ_BENCH_SIGNAL=music` selects a seeded
+/// broadband pink-noise/tone stereo mix, closer to mastered music than the
+/// default pure tones for prediction, Rice and stereo-decorrelation costs.
 fn source(root: &Path, seconds: u32) -> Result<std::path::PathBuf> {
     let wav = root.join("master.wav");
-    ff(&["-v","error","-f","lavfi","-i",&format!("aevalsrc=0.4*sin(2*PI*997*t)+0.05*sin(2*PI*13001*t)|0.3*sin(2*PI*437*t)+0.04*sin(2*PI*9011*t):s=48000:d={seconds}"),"-c:a","pcm_s24le",path(&wav)])?;
+    if std::env::var("AUDENIQ_BENCH_SIGNAL").as_deref() == Ok("music") {
+        ff(&["-v","error","-f","lavfi","-i",&format!("anoisesrc=c=pink:a=0.3:d={seconds}:r=48000:seed=7"),"-af","aformat=channel_layouts=stereo,aeval=val(0)|0.7*val(0)+0.3*sin(2*PI*220*t)","-c:a","pcm_s24le",path(&wav)])?;
+    } else {
+        ff(&["-v","error","-f","lavfi","-i",&format!("aevalsrc=0.4*sin(2*PI*997*t)+0.05*sin(2*PI*13001*t)|0.3*sin(2*PI*437*t)+0.04*sin(2*PI*9011*t):s=48000:d={seconds}"),"-c:a","pcm_s24le",path(&wav)])?;
+    }
     Ok(wav)
 }
 fn encoded(wav: &Path, root: &Path, codec: &str, ext: &str) -> Result<std::path::PathBuf> {
@@ -157,6 +164,12 @@ fn metadata(options: &Options, seconds: u32, results: Vec<Value>) -> Result<Valu
     let mut metadata = json!({"harness":"audeniq-qc-tools Rust","date_utc":date()?,"host_cpu":cpu_identity()?,"arch":std::env::consts::ARCH,"binary_sha256":file_sha(&options.binary)?,"ffmpeg_version":ffmpeg,"seconds":seconds,"sample_rate":48000,"channels":2,"bits":24,"repeats":options.repeats,"qualification":"Synthetic tones, warm page cache, median repeated runs. Applies only to the reported host; not a production corpus or end-to-end AUDENIQ measurement.","results":results});
     if let Some(binary) = &options.baseline_binary {
         metadata["baseline_binary_sha256"] = json!(file_sha(binary)?);
+    }
+    if std::env::var("AUDENIQ_BENCH_SIGNAL").as_deref() == Ok("music") {
+        metadata["signal"] = json!("seeded pink noise (L) and 0.7 pink + 0.3 220 Hz tone (R)");
+        metadata["qualification"] = json!("Synthetic broadband pink-noise/tone mix, warm page cache, median repeated runs. Applies only to the reported host; not a production corpus or end-to-end AUDENIQ measurement.");
+    } else {
+        metadata["signal"] = json!("synthetic two-tone stereo");
     }
     metadata["input_scope"] = json!(if options.wav_alac_only || options.review {
         "WAV/ALAC"

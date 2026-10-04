@@ -147,6 +147,15 @@ fn compression_controls_and_pcm_outputs_preserve_samples() {
             audeniq_qc::pcm::decode(&src, &dst, format, Limits::default(), Backend::detect())
                 .unwrap();
         assert_eq!(result.pcm_sha256, expected);
+        assert_eq!(result.source_spec.bits_per_sample, 24);
+        assert_eq!(
+            result.spec.bits_per_sample,
+            if format == audeniq_qc::pcm::Format::Wav {
+                24
+            } else {
+                32
+            }
+        );
         assert!(
             audeniq_qc::pcm::decode(&src, &dst, format, Limits::default(), Backend::detect())
                 .is_err()

@@ -22,6 +22,7 @@ pub enum Format {
 #[derive(Serialize)]
 pub struct Export {
     pub spec: AudioSpec,
+    pub source_spec: AudioSpec,
     pub format: Format,
     pub frames: u64,
     pub pcm_sha256: String,
@@ -131,7 +132,7 @@ pub fn decode(
     file.get_ref().sync_all()?;
     drop(file);
     limits.check()?;
-    if format == Format::Wav {
+    let output_spec = if format == Format::Wav {
         let (out, hash, count) = pcm_sha256(&temp.0, limits, backend)?;
         if hash != source_hash
             || count != frames
@@ -141,6 +142,7 @@ pub fn decode(
         {
             return Err(Error::Invalid("WAV round-trip verification"));
         }
+        out
     } else {
         let mut file = File::open(&temp.0)?;
         let mut hash = Sha256::new();
@@ -158,10 +160,18 @@ pub fn decode(
         {
             return Err(Error::Invalid("raw PCM round-trip verification"));
         }
-    }
+        AudioSpec {
+            container: "raw".into(),
+            codec: "pcm_s32le".into(),
+            bits_per_sample: 32,
+            frames: Some(frames),
+            ..spec.clone()
+        }
+    };
     std::fs::hard_link(&temp.0, dst)?;
     Ok(Export {
-        spec,
+        spec: output_spec,
+        source_spec: spec,
         format,
         frames,
         pcm_sha256: source_hash,

@@ -20,7 +20,35 @@ use std::{
     sync::atomic::{AtomicU64, Ordering},
 };
 
-const BLOCK: usize = 4096;
+#[derive(Clone, Copy)]
+struct Profile {
+    level: u8,
+    block: usize,
+    fixed: usize,
+    lpc: usize,
+}
+impl Profile {
+    fn new(level: u8) -> Result<Self> {
+        let (block, fixed, lpc) = match level {
+            0 => (1024, 0, 0),
+            1 => (2048, 1, 0),
+            2 => (4096, 2, 0),
+            3 => (4096, 3, 0),
+            4 => (4096, 4, 4),
+            5 => (4096, 4, 8),
+            6 => (8192, 4, 8),
+            7 => (16384, 4, 8),
+            8 => (32768, 4, 8),
+            _ => return Err(Error::Invalid("compression level range 0..8")),
+        };
+        Ok(Self {
+            level,
+            block,
+            fixed,
+            lpc,
+        })
+    }
+}
 #[derive(Serialize)]
 pub struct Conversion {
     pub spec: AudioSpec,
@@ -28,6 +56,7 @@ pub struct Conversion {
     pub pcm_sha256: String,
     pub output_bytes: u64,
     pub encoder: &'static str,
+    pub compression_level: Option<u8>,
 }
 // One normalizer per command; stack storage avoids an unnecessary heap box.
 #[allow(clippy::large_enum_variant)]
@@ -44,6 +73,19 @@ impl Drop for Temp {
 static COUNTER: AtomicU64 = AtomicU64::new(0);
 
 pub fn convert(src: &Path, dst: &Path, limits: Limits, backend: Backend) -> Result<Conversion> {
+    convert_with_level(src, dst, limits, backend, None)
+}
+
+/// Explicit levels always re-encode, including FLAC inputs. With no explicit
+/// level, use profile 5 for encoding and preserve verified FLAC audio frames.
+pub fn convert_with_level(
+    src: &Path,
+    dst: &Path,
+    limits: Limits,
+    backend: Backend,
+    level: Option<u8>,
+) -> Result<Conversion> {
+    let profile = Profile::new(level.unwrap_or(5))?;
     if !backend.available() {
         return Err(Error::Unsupported("CPU backend"));
     }
@@ -72,13 +114,23 @@ pub fn convert(src: &Path, dst: &Path, limits: Limits, backend: Backend) -> Resu
     // Already-valid FLAC needs metadata removal, not another prediction pass.
     // Preserve only STREAMINFO and CRC-checked audio packets, then independently
     // decode/hash the resulting file just like newly encoded inputs.
-    let copied = reader.prepare_flac_copy();
+    let copied = if level.is_none() {
+        reader.prepare_flac_copy()
+    } else {
+        None
+    };
     let mut writer = if let Some(info) = copied {
         f.write_all(b"fLaC\x80\x00\x00\x22")?;
         f.write_all(&info)?;
         Normalizer::Copy(f)
     } else {
-        Normalizer::Encode(Encoder::new(f, spec.clone(), limits.clone(), backend)?)
+        Normalizer::Encode(Encoder::new(
+            f,
+            spec.clone(),
+            limits.clone(),
+            backend,
+            profile,
+        )?)
     };
     let mut samples = Vec::new();
     let mut hash = Sha256::new();
@@ -131,6 +183,11 @@ pub fn convert(src: &Path, dst: &Path, limits: Limits, backend: Backend) -> Resu
         } else {
             "adaptive-lpc8-rice-v1"
         },
+        compression_level: if copied.is_some() {
+            None
+        } else {
+            Some(profile.level)
+        },
     })
 }
 
@@ -147,15 +204,23 @@ struct Encoder {
     max_frame: usize,
     dot: Dot64Kernel,
     lpc: LpcKernel,
+    profile: Profile,
 }
 impl Encoder {
-    fn new(mut file: File, spec: AudioSpec, limits: Limits, backend: Backend) -> Result<Self> {
+    fn new(
+        mut file: File,
+        spec: AudioSpec,
+        limits: Limits,
+        backend: Backend,
+        profile: Profile,
+    ) -> Result<Self> {
         file.write_all(b"fLaC\x80\x00\x00\x22")?;
         file.write_all(&[0u8; 34])?;
+        let capacity = profile.block * spec.channels as usize;
         Ok(Self {
             file,
             spec,
-            pending: Vec::with_capacity(BLOCK * 2),
+            pending: Vec::with_capacity(capacity),
             frames: 0,
             number: 0,
             md5: Md5::new(),
@@ -165,6 +230,7 @@ impl Encoder {
             max_frame: 0,
             dot: Dot64Kernel::new(backend),
             lpc: LpcKernel::new(backend),
+            profile,
         })
     }
     fn push(&mut self, samples: &[i32]) -> Result<()> {
@@ -175,7 +241,7 @@ impl Encoder {
             raw.extend_from_slice(&(x >> shift).to_le_bytes()[..nbytes]);
         }
         self.md5.update(&raw);
-        let block = BLOCK * self.spec.channels as usize;
+        let block = self.profile.block * self.spec.channels as usize;
         let mut pos = 0;
         while pos < samples.len() {
             let n = (block - self.pending.len()).min(samples.len() - pos);
@@ -202,9 +268,9 @@ impl Encoder {
                 right.push(row[1] >> shift);
             }
         }
-        let l = Plan::new(&left, depth, &self.dot, &self.lpc);
+        let l = Plan::new(&left, depth, &self.dot, &self.lpc, self.profile);
         let r = if channels == 2 {
-            Some(Plan::new(&right, depth, &self.dot, &self.lpc))
+            Some(Plan::new(&right, depth, &self.dot, &self.lpc, self.profile))
         } else {
             None
         };
@@ -213,7 +279,7 @@ impl Encoder {
         let mut ms = None;
         // Uncorrelated stereo usually gains nothing from mid-side. A cheap
         // covariance check avoids planning two extra subframes in that case.
-        let correlated = if channels == 2 {
+        let correlated = if channels == 2 && self.profile.level >= 3 {
             let (mut ll, mut rr, mut lr) = (0.0f64, 0.0f64, 0.0f64);
             for (&a, &b) in left.iter().zip(&right) {
                 ll += (a as f64) * (a as f64);
@@ -231,8 +297,8 @@ impl Encoder {
                 mid.push((a + b) >> 1);
                 side.push(a - b);
             }
-            let m = Plan::new(&mid, depth, &self.dot, &self.lpc);
-            let s = Plan::new(&side, depth + 1, &self.dot, &self.lpc);
+            let m = Plan::new(&mid, depth, &self.dot, &self.lpc, self.profile);
+            let s = Plan::new(&side, depth + 1, &self.dot, &self.lpc, self.profile);
             if m.cost + s.cost < l.cost + r.as_ref().unwrap().cost {
                 ms = Some((m, s));
             }
@@ -287,8 +353,8 @@ impl Encoder {
         }
         let md5 = self.md5.finalize();
         let mut b = BeWriter::new();
-        b.put(16, BLOCK as u64);
-        b.put(16, BLOCK as u64);
+        b.put(16, self.profile.block as u64);
+        b.put(16, self.profile.block as u64);
         b.put(24, self.min_frame as u64);
         b.put(24, self.max_frame as u64);
         b.put(20, self.spec.sample_rate as u64);
@@ -322,7 +388,13 @@ struct Plan {
     mode: Mode,
 }
 impl Plan {
-    fn new(samples: &[i32], depth: u32, dot: &Dot64Kernel, lpc: &LpcKernel) -> Self {
+    fn new(
+        samples: &[i32],
+        depth: u32,
+        dot: &Dot64Kernel,
+        lpc: &LpcKernel,
+        profile: Profile,
+    ) -> Self {
         if samples.iter().all(|x| *x == samples[0]) {
             return Self {
                 cost: 8 + depth as u64,
@@ -334,7 +406,7 @@ impl Plan {
             mode: Mode::Verbatim,
         };
         let mut diff: Vec<i64> = samples.iter().map(|x| *x as i64).collect();
-        for order in 0..=4.min(samples.len() - 1) {
+        for order in 0..=profile.fixed.min(samples.len() - 1) {
             if order > 0 {
                 for i in (order..samples.len()).rev() {
                     diff[i] -= diff[i - 1];
@@ -377,7 +449,7 @@ impl Plan {
         }
         // Welch-tapered autocorrelation and Levinson-Durbin, limited to order
         // eight. Integer residual costs decide; no lossy reconstruction.
-        if samples.len() > 16 {
+        if samples.len() > 16 && profile.lpc > 0 {
             let n = samples.len();
             let windowed: Vec<f64> = samples
                 .iter()
@@ -393,7 +465,7 @@ impl Plan {
             }
             let mut a = [0.0f64; 8];
             let mut error = r[0];
-            for index in 0..8 {
+            for index in 0..profile.lpc {
                 if error <= r[0] * 1e-12 || !error.is_finite() {
                     break;
                 }

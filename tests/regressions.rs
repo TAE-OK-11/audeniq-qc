@@ -114,6 +114,58 @@ fn deadline_and_output_no_clobber() {
     assert!(flac::convert(&src, &dst, Limits::default(), Backend::Scalar).is_err());
     assert_eq!(std::fs::read(dst).unwrap(), b"preserve me");
 }
+
+#[test]
+fn compression_controls_and_pcm_outputs_preserve_samples() {
+    let d = Dir::new();
+    let src = d.0.join("source.wav");
+    ffmpeg(None, &src, "pcm_s24le");
+    let (_, expected, frames) = pcm_sha256(&src, Limits::default(), Backend::Scalar).unwrap();
+    for level in 0..=8 {
+        let dst = d.0.join(format!("level{level}.flac"));
+        let result = flac::convert_with_level(
+            &src,
+            &dst,
+            Limits::default(),
+            Backend::detect(),
+            Some(level),
+        )
+        .unwrap();
+        assert_eq!(result.compression_level, Some(level));
+        assert_eq!(result.pcm_sha256, expected);
+        assert_eq!(result.frames, frames);
+    }
+    let dst = d.0.join("invalid.flac");
+    assert!(
+        flac::convert_with_level(&src, &dst, Limits::default(), Backend::detect(), Some(9))
+            .is_err()
+    );
+    assert!(!dst.exists());
+    for format in [audeniq_qc::pcm::Format::Wav, audeniq_qc::pcm::Format::S32le] {
+        let dst = d.0.join(format!("{format:?}.pcm"));
+        let result =
+            audeniq_qc::pcm::decode(&src, &dst, format, Limits::default(), Backend::detect())
+                .unwrap();
+        assert_eq!(result.pcm_sha256, expected);
+        assert!(
+            audeniq_qc::pcm::decode(&src, &dst, format, Limits::default(), Backend::detect())
+                .is_err()
+        );
+        let original = std::fs::read(&src).unwrap();
+        let bad = d.0.join("bad.wav");
+        std::fs::write(&bad, &original[..original.len() / 2]).unwrap();
+        let output = d.0.join(format!("bad-{format:?}.pcm"));
+        assert!(audeniq_qc::pcm::decode(
+            &bad,
+            &output,
+            format,
+            Limits::default(),
+            Backend::detect()
+        )
+        .is_err());
+        assert!(!output.exists());
+    }
+}
 #[test]
 fn silent_loudness_is_null_and_metrics_are_reproducible() {
     let d = Dir::new();

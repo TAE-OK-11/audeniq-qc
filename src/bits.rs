@@ -3,40 +3,65 @@ use crate::{Error, Result};
 /// Bounds-checked LSB-first bit reader for FFmpeg-derived TTA/WavPack paths.
 pub struct LeBits<'a> {
     data: &'a [u8],
-    pos: usize,
+    next: usize,
+    cache: u64,
+    available: u32,
 }
 impl<'a> LeBits<'a> {
     pub fn new(data: &'a [u8]) -> Self {
-        Self { data, pos: 0 }
+        Self {
+            data,
+            next: 0,
+            cache: 0,
+            available: 0,
+        }
     }
-    pub fn read(&mut self, n: u32) -> Result<u32> {
-        if n > 32 || self.pos + n as usize > self.data.len() * 8 {
+    fn refill(&mut self, required: u32) -> Result<()> {
+        if self.available < required {
+            let bytes = ((64 - self.available) / 8) as usize;
+            let n = bytes.min(self.data.len() - self.next);
+            let mut word = [0u8; 8];
+            word[..n].copy_from_slice(&self.data[self.next..self.next + n]);
+            self.cache |= u64::from_le_bytes(word) << self.available;
+            self.available += n as u32 * 8;
+            self.next += n;
+        }
+        if self.available < required {
             return Err(Error::Invalid("truncated bitstream"));
         }
-        let mut value = 0u32;
-        // At most five bytes; never perform unchecked or padded overreads.
-        let mut remaining = n;
-        let mut shift = 0;
-        while remaining != 0 {
-            let offset = self.pos & 7;
-            let take = remaining.min(8 - offset as u32);
-            value |= (((self.data[self.pos >> 3] >> offset) as u32) & ((1 << take) - 1)) << shift;
-            self.pos += take as usize;
-            shift += take;
-            remaining -= take;
+        Ok(())
+    }
+    pub fn read(&mut self, n: u32) -> Result<u32> {
+        if n > 32 {
+            return Err(Error::Invalid("truncated bitstream"));
         }
+        self.refill(n)?;
+        let value = (self.cache & ((1u64 << n) - 1)) as u32;
+        self.cache >>= n;
+        self.available -= n;
         Ok(value)
     }
     pub fn unary_ones(&mut self, max: u32) -> Result<u32> {
         let mut n = 0;
         loop {
-            if self.read(1)? == 0 {
-                return Ok(n);
-            }
-            n += 1;
-            if n >= max {
+            self.refill(1)?;
+            let ones = self.cache.trailing_ones().min(self.available);
+            if ones != 0 && ones >= max.saturating_sub(n) {
                 return Err(Error::Invalid("unbounded unary code"));
             }
+            n += ones;
+            if ones < self.available {
+                let consumed = ones + 1;
+                self.cache = if consumed == 64 {
+                    0
+                } else {
+                    self.cache >> consumed
+                };
+                self.available -= consumed;
+                return Ok(n);
+            }
+            self.cache = 0;
+            self.available = 0;
         }
     }
 }
@@ -160,6 +185,48 @@ pub fn crc32(data: &[u8]) -> u32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn cached_reader_matches_bit_reference_and_bounds() {
+        for length in 0..=97 {
+            let data: Vec<u8> = (0..length).map(|i| (i * 131 + 197) as u8).collect();
+            let mut reader = LeBits::new(&data);
+            let mut position = 0;
+            for n in (0..=32).cycle().take(150) {
+                let expected = if position + n as usize <= length * 8 {
+                    let mut value = 0u32;
+                    for bit in 0..n {
+                        value |= (((data[(position + bit as usize) / 8]
+                            >> ((position + bit as usize) % 8))
+                            & 1) as u32)
+                            << bit;
+                    }
+                    Some(value)
+                } else {
+                    None
+                };
+                let actual = reader.read(n).ok();
+                assert_eq!(actual, expected);
+                if actual.is_none() {
+                    break;
+                }
+                position += n as usize;
+            }
+        }
+        for ones in 0..=129 {
+            let mut data = vec![0u8; (ones + 1usize).div_ceil(8)];
+            for i in 0..ones {
+                data[i / 8] |= 1 << (i % 8);
+            }
+            assert_eq!(
+                LeBits::new(&data).unary_ones(ones as u32 + 1).unwrap(),
+                ones as u32
+            );
+            if ones > 0 {
+                assert!(LeBits::new(&data).unary_ones(ones as u32).is_err());
+            }
+        }
+        assert!(LeBits::new(&[255; 8]).unary_ones(256).is_err());
+    }
     #[test]
     fn word_writer_matches_bit_reference() {
         let mut writer = BeWriter::new();

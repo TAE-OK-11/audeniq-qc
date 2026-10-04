@@ -5,6 +5,7 @@ pub mod flac;
 pub mod kernels;
 pub mod meter;
 mod mp4;
+pub mod pcm;
 pub mod probe;
 pub mod resample;
 mod tta;

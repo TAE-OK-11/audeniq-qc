@@ -139,7 +139,13 @@ fn run() -> audeniq_qc::Result<()> {
     }
 }
 fn main() {
-    match run() {
+    let outcome = run();
+    #[cfg(feature = "profile-native")]
+    eprintln!(
+        "{}",
+        serde_json::json!({"native_profile":audeniq_qc::native_profile(),"success":outcome.is_ok()})
+    );
+    match outcome {
         Ok(()) => (),
         Err(e) => {
             let code = match e {

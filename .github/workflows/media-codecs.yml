@@ -18,7 +18,7 @@ jobs:
       matrix:
         runner: [ubuntu-24.04, ubuntu-24.04-arm]
     runs-on: ${{ matrix.runner }}
-    timeout-minutes: 25
+    timeout-minutes: 35
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
       - name: Toolchain and development oracle
@@ -46,6 +46,29 @@ jobs:
           target/release/audeniq-qc-tools standards --output standards-native.json
           target/release/audeniq-qc-tools qualify --binary reference-target/release/audeniq-qc --output qualification-reference.json
           target/release/audeniq-qc-tools codec-stress --binary reference-target/release/audeniq-qc --output stress-reference.json
+      - name: Checkout validated native predecessor
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: ed72fab7b6c31c57b1e25e5a4f97c00e26934a57
+          path: predecessor
+      - name: Build native predecessor and diagnostic build
+        run: |
+          cargo build --manifest-path predecessor/Cargo.toml --release --locked --target-dir predecessor-target
+          cargo clippy --workspace --features profile-native --locked --all-targets -- -D warnings
+          cargo build --features profile-native --release --locked --target-dir profile-target
+      - name: Same-host native before and after comparisons
+        run: |
+          target/release/audeniq-qc-tools benchmark-decode --seconds 240 --repeats 7 --comparison-binary predecessor-target/release/audeniq-qc --output streaming-decoding-benchmark.json
+          target/release/audeniq-qc-tools benchmark-convert --wav-alac-only --seconds 240 --repeats 7 --comparison-binary predecessor-target/release/audeniq-qc --output streaming-normalization-benchmark.json
+          target/release/audeniq-qc-tools benchmark-review --seconds 120 --repeats 5 --comparison-binary predecessor-target/release/audeniq-qc --output streaming-review-benchmark.json
+      - name: Inclusive native stage timings and copy counters
+        run: |
+          ffmpeg -nostdin -hide_banner -loglevel error -f lavfi -i "aevalsrc=0.31*sin(2*PI*997*t)+0.09*sin(2*PI*5237*t)|0.27*sin(2*PI*1511*t)+0.07*sin(2*PI*7123*t):s=48000:d=240" -c:a pcm_s24le profile.wav
+          ffmpeg -nostdin -hide_banner -loglevel error -i profile.wav -c:a alac profile.m4a
+          profile-target/release/audeniq-qc pcm-hash profile.m4a
+          profile-target/release/audeniq-qc pcm-hash profile.m4a --scalar
+          profile-target/release/audeniq-qc convert profile.m4a profile.flac --analyze
+          profile-target/release/audeniq-qc convert profile.flac profile-copy.flac
       - name: Same-host three-way repeated comparisons
         run: |
           target/release/audeniq-qc-tools benchmark-decode --seconds 240 --repeats 7 --reference-binary reference-target/release/audeniq-qc --output decoding-benchmark.json

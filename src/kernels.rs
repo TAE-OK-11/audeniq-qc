@@ -75,6 +75,39 @@ pub(crate) fn interleave_i32(left: &[i32], right: &[i32], out: &mut [i32]) {
     }
 }
 
+/// FLAC independent stereo -> canonical PCM in one read/store pass. The decoded
+/// planes remain at source width; avoid shifting and rewriting both planes.
+#[cfg(not(feature = "reference-codecs"))]
+pub(crate) fn interleave_shift_i32(left: &[i32], right: &[i32], out: &mut [i32], shift: u32) {
+    assert_eq!(left.len(), right.len());
+    assert_eq!(out.len(), left.len() * 2);
+    assert!(matches!(shift, 8 | 16));
+    #[cfg(target_arch = "aarch64")]
+    // SAFETY: baseline NEON; complete four-frame loads/stores, bounded tail.
+    let start = unsafe {
+        use std::arch::aarch64::*;
+        let shifts = vdupq_n_s32(shift as i32);
+        let mut i = 0;
+        while i + 4 <= left.len() {
+            let l = vshlq_s32(vld1q_s32(left.as_ptr().add(i)), shifts);
+            let r = vshlq_s32(vld1q_s32(right.as_ptr().add(i)), shifts);
+            vst2q_s32(out.as_mut_ptr().add(i * 2), int32x4x2_t(l, r));
+            i += 4;
+        }
+        i
+    };
+    #[cfg(not(target_arch = "aarch64"))]
+    let start = 0;
+    for ((&l, &r), row) in left[start..]
+        .iter()
+        .zip(&right[start..])
+        .zip(out[start * 2..].as_chunks_mut::<2>().0)
+    {
+        row[0] = l.wrapping_shl(shift);
+        row[1] = r.wrapping_shl(shift);
+    }
+}
+
 /// Pack left-aligned s32 into FLAC's signed 16/24-bit little-endian MD5 bytes.
 /// This lossless byte-layout operation uses baseline NEON, like interleaving;
 /// it does not change numerical DSP behavior selected by --scalar.
@@ -899,6 +932,26 @@ mod tests {
 #[cfg(test)]
 mod planning_tests {
     use super::*;
+    #[cfg(not(feature = "reference-codecs"))]
+    #[test]
+    fn fused_flac_alignment_interleave_preserves_widths_and_tails() {
+        for shift in [8, 16] {
+            for n in [0, 1, 2, 3, 4, 5, 7, 16, 65, 4095, 4096, 4097] {
+                let left: Vec<i32> = (0..n)
+                    .map(|i| i32::MIN.wrapping_add((i as i32).wrapping_mul(982451653)))
+                    .collect();
+                let right: Vec<i32> = left.iter().map(|&x| !x).collect();
+                let expected: Vec<i32> = left
+                    .iter()
+                    .zip(&right)
+                    .flat_map(|(&l, &r)| [l.wrapping_shl(shift), r.wrapping_shl(shift)])
+                    .collect();
+                let mut out = vec![123; n * 2];
+                interleave_shift_i32(&left, &right, &mut out, shift);
+                assert_eq!(out, expected);
+            }
+        }
+    }
     #[test]
     fn compact_pcm_preserves_signed_widths_and_all_vector_tails() {
         for bits in [16, 24] {

@@ -177,15 +177,19 @@ pub fn convert_with_options(
     let mut samples = Vec::new();
     let mut hash = Sha256::new();
     while reader.next(&mut samples, backend)? {
-        hash.update(crate::audio::pcm_bytes(&samples));
+        {
+            let _profile = crate::profile::scope(crate::profile::Stage::SourceHash);
+            hash.update(crate::audio::pcm_bytes(&samples));
+        }
         if let Some(analyzer) = &mut analyzer {
+            let _profile = crate::profile::scope(crate::profile::Stage::Qc);
             analyzer.push(&samples);
         }
         match &mut writer {
             Normalizer::Encode(encoder) => encoder.push(&samples)?,
             Normalizer::Copy(file) => file.write_all(
-                &reader
-                    .take_flac_frame()
+                reader
+                    .flac_frame()
                     .ok_or(Error::Invalid("missing FLAC frame"))?,
             )?,
         }
@@ -202,7 +206,10 @@ pub fn convert_with_options(
         return Err(Error::Limit("FLAC output bytes"));
     }
     drop(f);
-    let (out, out_hash, out_frames) = pcm_sha256(&temp.0, limits.clone(), backend)?;
+    let (out, out_hash, out_frames) = {
+        let _profile = crate::profile::scope(crate::profile::Stage::OutputVerify);
+        pcm_sha256(&temp.0, limits.clone(), backend)?
+    };
     if out_hash != source_hash
         || out_frames != frames
         || out.sample_rate != spec.sample_rate
@@ -289,6 +296,7 @@ impl Encoder {
         })
     }
     fn push(&mut self, samples: &[i32]) -> Result<()> {
+        let _profile = crate::profile::scope(crate::profile::Stage::Encoder);
         crate::audio::compact_pcm(samples, self.spec.bits_per_sample, &mut self.raw);
         self.md5.update(&self.raw);
         let block = self.profile.block * self.spec.channels as usize;
@@ -539,6 +547,7 @@ impl Plan {
         profile: Profile,
         planner: &mut Planner,
     ) -> Self {
+        let _profile = crate::profile::scope(crate::profile::Stage::EncoderPlan);
         if samples.iter().all(|x| *x == samples[0]) {
             return Self {
                 cost: 8 + depth as u64,

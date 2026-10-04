@@ -1,8 +1,8 @@
 //! Native media path; the `reference-codecs` build substitutes Symphonia.
-use crate::{AudioSpec, Limits, Result};
+use crate::{kernels::Backend, AudioSpec, Limits, Result};
 use std::{
     fs::File,
-    io::{BufReader, Read, Seek, SeekFrom},
+    io::{BufRead, BufReader, Read, Seek, SeekFrom},
 };
 enum Input {
     Flac(crate::flac_decode::Decoder),
@@ -20,7 +20,6 @@ pub(crate) struct Compressed {
     pub spec: AudioSpec,
     pub flac_info: Option<[u8; 34]>,
     pub retain_frame: bool,
-    pub raw_frame: Option<Box<[u8]>>,
 }
 impl Compressed {
     pub fn open(mut file: File, limits: &Limits, is_flac: bool) -> Result<Self> {
@@ -51,13 +50,11 @@ impl Compressed {
             spec,
             flac_info,
             retain_frame: false,
-            raw_frame: None,
         })
     }
-    pub fn next(&mut self, out: &mut Vec<i32>, limits: &Limits) -> Result<()> {
-        self.raw_frame = None;
+    pub fn next(&mut self, out: &mut Vec<i32>, limits: &Limits, backend: Backend) -> Result<()> {
         match &mut self.input {
-            Input::Flac(d) => self.raw_frame = d.next(out, limits, self.retain_frame)?,
+            Input::Flac(d) => d.next(out, limits, self.retain_frame)?,
             Input::Alac {
                 file,
                 position,
@@ -66,20 +63,110 @@ impl Compressed {
                 index,
                 packet,
             } => {
-                out.clear();
                 if let Some(p) = track.packets.get(*index) {
                     limits.check()?;
                     if *position != p.offset {
                         file.seek(SeekFrom::Start(p.offset))?;
                     }
-                    packet.resize(p.size, 0);
-                    file.read_exact(packet)?;
+                    with_packet(file, packet, p.size, |data| {
+                        decoder.decode(data, p.frames, out, backend)
+                    })?;
                     *position = p.offset + p.size as u64;
-                    decoder.decode(packet, p.frames, out)?;
                     *index += 1;
+                } else {
+                    out.clear();
                 }
             }
         }
         Ok(())
+    }
+    pub fn flac_frame(&self) -> Option<&[u8]> {
+        match &self.input {
+            Input::Flac(d) => d.flac_frame(),
+            Input::Alac { .. } => None,
+        }
+    }
+}
+
+// Most packets fit the existing bounded read buffer. Decode that slice directly;
+// only packets crossing a fill boundary need the reusable scratch allocation.
+fn with_packet(
+    file: &mut BufReader<File>,
+    scratch: &mut Vec<u8>,
+    size: usize,
+    decode: impl FnOnce(&[u8]) -> Result<()>,
+) -> Result<()> {
+    let buffered = {
+        let _profile = crate::profile::scope(crate::profile::Stage::PacketRead);
+        file.fill_buf()?
+    };
+    if buffered.len() >= size {
+        crate::profile::count(crate::profile::Counter::PacketBorrowedBytes, size as u64);
+        decode(&buffered[..size])?;
+        file.consume(size);
+    } else {
+        crate::profile::count(crate::profile::Counter::PacketCopiedBytes, size as u64);
+        scratch.resize(size, 0);
+        {
+            let _profile = crate::profile::scope(crate::profile::Stage::PacketRead);
+            file.read_exact(scratch)?;
+        }
+        decode(scratch)?;
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn packet_borrow_crossing_and_truncation_preserve_exact_bytes() {
+        let path =
+            std::env::temp_dir().join(format!("audeniq-packet-borrow-{}", std::process::id()));
+        struct Temp(std::path::PathBuf);
+        impl Drop for Temp {
+            fn drop(&mut self) {
+                let _ = std::fs::remove_file(&self.0);
+            }
+        }
+        let temp = Temp(path);
+        let expected: Vec<u8> = (0..65).collect();
+        std::fs::write(&temp.0, &expected).unwrap();
+        let mut file = BufReader::with_capacity(16, File::open(&temp.0).unwrap());
+        let mut scratch = Vec::new();
+        let ptr = file.fill_buf().unwrap().as_ptr();
+        with_packet(&mut file, &mut scratch, 8, |bytes| {
+            assert_eq!(bytes.as_ptr(), ptr);
+            assert_eq!(bytes, &expected[..8]);
+            Ok(())
+        })
+        .unwrap();
+        assert_eq!(scratch.capacity(), 0);
+        with_packet(&mut file, &mut scratch, 20, |bytes| {
+            assert_eq!(bytes, &expected[8..28]);
+            Ok(())
+        })
+        .unwrap();
+        assert!(scratch.capacity() >= 20);
+        let ptr = file.fill_buf().unwrap().as_ptr();
+        with_packet(&mut file, &mut scratch, 4, |bytes| {
+            assert_eq!(bytes.as_ptr(), ptr);
+            assert_eq!(bytes, &expected[28..32]);
+            Ok(())
+        })
+        .unwrap();
+        file.seek(SeekFrom::Start(0)).unwrap();
+        with_packet(&mut file, &mut scratch, 65, |bytes| {
+            assert_eq!(bytes, expected);
+            Ok(())
+        })
+        .unwrap();
+        let mut decoded = false;
+        assert!(with_packet(&mut file, &mut scratch, 1, |_| {
+            decoded = true;
+            Ok(())
+        })
+        .is_err());
+        assert!(!decoded);
     }
 }

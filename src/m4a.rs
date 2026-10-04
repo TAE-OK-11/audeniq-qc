@@ -124,6 +124,7 @@ fn table<'a>(b: &'a [u8], unit: usize, limits: &Limits) -> Result<&'a [u8]> {
 }
 #[cfg(not(feature = "reference-codecs"))]
 pub(crate) fn open(file: &mut File, limits: &Limits) -> Result<Track> {
+    let _profile = crate::profile::scope(crate::profile::Stage::M4aOpen);
     let (tree, media) = moov(file, limits)?;
     let top = atoms(&tree)?;
     let track = one(&top, b"trak")?;
@@ -188,88 +189,78 @@ pub(crate) fn open(file: &mut File, limits: &Limits) -> Result<Track> {
     if stsz.len() != 12 + if common == 0 { count * 4 } else { 0 } {
         return Err(Error::Invalid("MP4 size table"));
     }
-    let sizes: Vec<usize> = (0..count)
-        .map(|i| {
-            if common == 0 {
-                be32(&stsz[12 + i * 4..]) as usize
-            } else {
-                common
-            }
-        })
-        .collect();
-    if sizes.iter().any(|&n| n == 0 || n > limits.max_packet_bytes) {
-        return Err(Error::Limit("MP4 packet bytes"));
-    }
     let stts = table(one(&stbl, b"stts")?, 8, limits)?;
-    let mut durations = Vec::with_capacity(count);
+    let mut timed_packets = 0;
     let mut total = 0u64;
     for b in stts.as_chunks::<8>().0.iter() {
         let n = be32(b) as usize;
         let frames = be32(&b[4..]);
-        if n == 0 || n > count - durations.len() || frames == 0 || frames > be32(&config) {
+        if n == 0 || n > count - timed_packets || frames == 0 || frames > be32(&config) {
             return Err(Error::Invalid("MP4 sample timing"));
         }
         total += n as u64 * frames as u64;
-        durations.resize(durations.len() + n, frames);
+        timed_packets += n;
     }
-    if durations.len() != count || total != duration {
+    if timed_packets != count || total != duration {
         return Err(Error::Invalid("MP4 timing count"));
     }
-    let offsets: Vec<u64> = if stbl.iter().any(|a| &a.kind == b"co64") {
+    let (offsets, offset_width) = if stbl.iter().any(|a| &a.kind == b"co64") {
         if stbl.iter().any(|a| &a.kind == b"stco") {
             return Err(Error::Invalid("MP4 duplicate chunk offsets"));
         }
-        table(one(&stbl, b"co64")?, 8, limits)?
-            .as_chunks::<8>()
-            .0
-            .iter()
-            .map(|b| be64(b))
-            .collect()
+        (table(one(&stbl, b"co64")?, 8, limits)?, 8)
     } else {
-        table(one(&stbl, b"stco")?, 4, limits)?
-            .as_chunks::<4>()
-            .0
-            .iter()
-            .map(|b| be32(b) as u64)
-            .collect()
+        (table(one(&stbl, b"stco")?, 4, limits)?, 4)
     };
-    let maps: Vec<(u32, u32)> = table(one(&stbl, b"stsc")?, 12, limits)?
-        .as_chunks::<12>()
-        .0
-        .iter()
-        .map(|b| (be32(b), be32(&b[4..])))
-        .collect();
-    let raw_map = table(one(&stbl, b"stsc")?, 12, limits)?;
+    let maps = table(one(&stbl, b"stsc")?, 12, limits)?.as_chunks::<12>().0;
     if maps.is_empty()
-        || maps[0].0 != 1
-        || maps.windows(2).any(|w| w[0].0 >= w[1].0)
-        || maps
-            .iter()
-            .any(|&(a, b)| a as usize > offsets.len() || b == 0)
-        || raw_map
-            .as_chunks::<12>()
-            .0
-            .iter()
-            .any(|b| be32(&b[8..]) != 1)
+        || be32(&maps[0]) != 1
+        || maps.windows(2).any(|w| be32(&w[0]) >= be32(&w[1]))
+        || maps.iter().any(|b| {
+            be32(b) as usize > offsets.len() / offset_width
+                || be32(&b[4..]) == 0
+                || be32(&b[8..]) != 1
+        })
     {
         return Err(Error::Invalid("MP4 sample-to-chunk map"));
     }
     let mut packets = Vec::with_capacity(count);
     let mut map = 0;
     let mut previous_end = 0;
-    for (i, &offset) in offsets.iter().enumerate() {
+    let mut timing = stts.as_chunks::<8>().0.iter();
+    let mut timing_left = 0;
+    let mut packet_frames = 0;
+    for (i, raw_offset) in offsets.chunks_exact(offset_width).enumerate() {
+        let offset = if offset_width == 8 {
+            be64(raw_offset)
+        } else {
+            be32(raw_offset) as u64
+        };
         limits.check()?;
-        if map + 1 < maps.len() && maps[map + 1].0 as usize == i + 1 {
+        if map + 1 < maps.len() && be32(&maps[map + 1]) as usize == i + 1 {
             map += 1;
         }
-        let n = maps[map].1 as usize;
+        let n = be32(&maps[map][4..]) as usize;
         if n > count - packets.len() || offset < previous_end {
             return Err(Error::Invalid("MP4 overlapping/sample count"));
         }
         let mut offset = offset;
         for _ in 0..n {
             let ix = packets.len();
-            let size = sizes[ix];
+            let size = if common == 0 {
+                be32(&stsz[12 + ix * 4..]) as usize
+            } else {
+                common
+            };
+            if size == 0 || size > limits.max_packet_bytes {
+                return Err(Error::Limit("MP4 packet bytes"));
+            }
+            if timing_left == 0 {
+                let row = timing.next().ok_or(Error::Invalid("MP4 timing count"))?;
+                timing_left = be32(row);
+                packet_frames = be32(&row[4..]);
+            }
+            timing_left -= 1;
             let end = offset
                 .checked_add(size as u64)
                 .ok_or(Error::Invalid("MP4 offset overflow"))?;
@@ -279,7 +270,7 @@ pub(crate) fn open(file: &mut File, limits: &Limits) -> Result<Track> {
             packets.push(Packet {
                 offset,
                 size,
-                frames: durations[ix],
+                frames: packet_frames,
             });
             offset = end;
         }
@@ -358,6 +349,101 @@ pub(crate) fn tags(file: &mut File, limits: &Limits) -> Result<Vec<(String, Vec<
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(not(feature = "reference-codecs"))]
+    #[test]
+    fn borrowed_tables_preserve_chunk_maps_timing_runs_and_wide_offsets() {
+        fn atom(kind: &[u8; 4], body: &[u8]) -> Vec<u8> {
+            let mut out = ((body.len() + 8) as u32).to_be_bytes().to_vec();
+            out.extend(kind);
+            out.extend(body);
+            out
+        }
+        fn table(kind: &[u8; 4], entries: &[u32], unit: usize) -> Vec<u8> {
+            let mut body = vec![0; 4];
+            body.extend(((entries.len() * 4 / unit) as u32).to_be_bytes());
+            for value in entries {
+                body.extend(value.to_be_bytes());
+            }
+            atom(kind, &body)
+        }
+        for wide in [false, true] {
+            for common in [false, true] {
+                let sizes: [u32; 5] = if common { [3; 5] } else { [3, 4, 5, 6, 7] };
+                let mut config = [0u8; 24];
+                config[..4].copy_from_slice(&4096u32.to_be_bytes());
+                config[5] = 16;
+                config[9] = 2;
+                config[20..].copy_from_slice(&48000u32.to_be_bytes());
+                let mut cookie = vec![0; 4];
+                cookie.extend(config);
+                let mut desc = vec![0; 28];
+                desc[16..18].copy_from_slice(&2u16.to_be_bytes());
+                desc[18..20].copy_from_slice(&16u16.to_be_bytes());
+                desc.extend(atom(b"alac", &cookie));
+                let mut stsd = vec![0, 0, 0, 0, 0, 0, 0, 1];
+                stsd.extend(atom(b"alac", &desc));
+                let mut stsz = vec![0; 4];
+                stsz.extend(if common { 3u32 } else { 0u32 }.to_be_bytes());
+                stsz.extend(5u32.to_be_bytes());
+                if !common {
+                    for size in sizes {
+                        stsz.extend(size.to_be_bytes());
+                    }
+                }
+                let offsets = [
+                    8u32,
+                    8 + sizes[0] + sizes[1],
+                    8 + sizes[..4].iter().sum::<u32>(),
+                ];
+                let mut stbl = atom(b"stsd", &stsd);
+                stbl.extend(atom(b"stsz", &stsz));
+                stbl.extend(table(b"stts", &[2, 4096, 3, 1024], 8));
+                stbl.extend(table(b"stsc", &[1, 2, 1, 3, 1, 1], 12));
+                if wide {
+                    let values: Vec<u32> = offsets.into_iter().flat_map(|o| [0, o]).collect();
+                    stbl.extend(table(b"co64", &values, 8));
+                } else {
+                    stbl.extend(table(b"stco", &offsets, 4));
+                }
+                let mut mdhd = vec![0; 24];
+                mdhd[12..16].copy_from_slice(&48000u32.to_be_bytes());
+                mdhd[16..20].copy_from_slice(&11264u32.to_be_bytes());
+                let mut hdlr = vec![0; 12];
+                hdlr[8..].copy_from_slice(b"soun");
+                let mut mdia = atom(b"mdhd", &mdhd);
+                mdia.extend(atom(b"hdlr", &hdlr));
+                mdia.extend(atom(b"minf", &atom(b"stbl", &stbl)));
+                let mut data = atom(b"mdat", &vec![0; sizes.iter().sum::<u32>() as usize]);
+                data.extend(atom(b"moov", &atom(b"trak", &atom(b"mdia", &mdia))));
+                let path = std::env::temp_dir().join(format!(
+                    "audeniq-m4a-tables-{}-{wide}-{common}.m4a",
+                    std::process::id()
+                ));
+                std::fs::write(&path, &data).unwrap();
+                let mut file = File::open(&path).unwrap();
+                let track = open(&mut file, &Limits::default()).unwrap();
+                std::fs::remove_file(&path).unwrap();
+                assert_eq!(track.config, config);
+                assert_eq!(track.spec.frames, Some(11264));
+                assert_eq!(track.packets.len(), 5);
+                let mut offset = 8;
+                for (i, packet) in track.packets.iter().enumerate() {
+                    assert_eq!(packet.offset, offset);
+                    assert_eq!(packet.size, sizes[i] as usize);
+                    assert_eq!(packet.frames, if i < 2 { 4096 } else { 1024 });
+                    offset += sizes[i] as u64;
+                }
+                // A timing run with an extra packet must fail before building
+                // an inconsistent borrowed-table cursor/index.
+                let pos = data.windows(4).position(|b| b == b"stts").unwrap() + 12;
+                data[pos..pos + 4].copy_from_slice(&3u32.to_be_bytes());
+                std::fs::write(&path, &data).unwrap();
+                let mut file = File::open(&path).unwrap();
+                assert!(open(&mut file, &Limits::default()).is_err());
+                std::fs::remove_file(&path).unwrap();
+            }
+        }
+    }
     #[test]
     fn atom_headers_lengths_and_duplicate_tables_are_checked() {
         for len in 1..8 {

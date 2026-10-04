@@ -27,6 +27,12 @@ fn entry() -> Result<()> {
             ("conversion_all", "conversion-all-benchmark.json"),
             ("review", "review-benchmark.json"),
             ("review_fingerprint", "review-fingerprint-benchmark.json"),
+            ("streaming_decoding", "streaming-decoding-benchmark.json"),
+            (
+                "streaming_normalization",
+                "streaming-normalization-benchmark.json",
+            ),
+            ("streaming_review", "streaming-review-benchmark.json"),
         ] {
             if !std::path::Path::new(path).exists() {
                 continue;
@@ -43,6 +49,7 @@ fn entry() -> Result<()> {
         return Ok(());
     }
     let mut options = Options::default();
+    let mut comparison_mode = false;
     while let Some(arg) = args.next() {
         match arg.as_str() {
             "--binary" => options.binary = args.next().ok_or("missing --binary")?.into(),
@@ -54,6 +61,12 @@ fn entry() -> Result<()> {
                 options.baseline_binary =
                     Some(args.next().ok_or("missing --reference-binary")?.into());
                 options.reference_codecs = true;
+            }
+            "--comparison-binary" => {
+                options.baseline_binary =
+                    Some(args.next().ok_or("missing --comparison-binary")?.into());
+                options.reference_codecs = true;
+                comparison_mode = true;
             }
             "--output" => options.output = Some(args.next().ok_or("missing --output")?.into()),
             "--seconds" => options.seconds = Some(args.next().ok_or("missing --seconds")?.parse()?),
@@ -85,25 +98,36 @@ fn entry() -> Result<()> {
         _ => return Err("unknown development command".into()),
     };
     if options.reference_codecs {
-        fn rename(value: &mut serde_json::Value) {
+        fn rename(value: &mut serde_json::Value, name: &str) {
             match value {
                 serde_json::Value::Object(map) => {
                     let old = std::mem::take(map);
                     for (key, mut value) in old {
-                        rename(&mut value);
-                        map.insert(key.replace("baseline", "reference"), value);
+                        rename(&mut value, name);
+                        map.insert(key.replace("baseline", name), value);
                     }
                 }
                 serde_json::Value::Array(values) => {
                     for value in values {
-                        rename(value);
+                        rename(value, name);
                     }
                 }
                 _ => (),
             }
         }
-        rename(&mut report);
-        report["reference_mode"] = serde_json::json!("Same engine/encoder/QC, reference-codecs feature enables Symphonia ALAC/FLAC decoding and demuxing. Generic JSON/hash/image dependencies remain in both builds.");
+        rename(
+            &mut report,
+            if comparison_mode {
+                "comparison"
+            } else {
+                "reference"
+            },
+        );
+        if comparison_mode {
+            report["comparison_mode"] = serde_json::json!("Explicit comparison binary; both review builds use fused conversion/QC. Consult binary SHA-256 and workflow checkout SHA for provenance.");
+        } else {
+            report["reference_mode"] = serde_json::json!("Same engine/encoder/QC, reference-codecs feature enables Symphonia ALAC/FLAC decoding and demuxing. Generic JSON/hash/image dependencies remain in both builds.");
+        }
     }
     if let Some(path) = options.output {
         if let Some(parent) = path.parent().filter(|p| !p.as_os_str().is_empty()) {

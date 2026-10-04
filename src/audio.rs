@@ -82,7 +82,7 @@ impl AudioReader {
         self.limits.check()?;
         match &mut self.source {
             Source::Pcm(p) => p.next(samples, backend)?,
-            Source::Compressed(p) => p.next(samples, &self.limits)?,
+            Source::Compressed(p) => p.next(samples, &self.limits, backend)?,
             Source::Tta(p) => p.next(samples, &self.limits)?,
             Source::Wavpack(p) => p.next(samples, &self.limits)?,
         }
@@ -115,9 +115,9 @@ impl AudioReader {
         }
         None
     }
-    pub(crate) fn take_flac_frame(&mut self) -> Option<Box<[u8]>> {
-        if let Source::Compressed(c) = &mut self.source {
-            c.raw_frame.take()
+    pub(crate) fn flac_frame(&self) -> Option<&[u8]> {
+        if let Source::Compressed(c) = &self.source {
+            c.flac_frame()
         } else {
             None
         }
@@ -558,7 +558,10 @@ impl Compressed {
             md5_buffer: Vec::new(),
         })
     }
-    fn next(&mut self, out: &mut Vec<i32>, limits: &Limits) -> Result<()> {
+    fn flac_frame(&self) -> Option<&[u8]> {
+        self.raw_frame.as_deref()
+    }
+    fn next(&mut self, out: &mut Vec<i32>, limits: &Limits, _backend: Backend) -> Result<()> {
         out.clear();
         self.raw_frame = None;
         let packet = match self.format.next_packet() {

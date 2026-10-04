@@ -1,7 +1,7 @@
 //! ALAC Rice/adaptive LPC Rust port, reworked for reusable in-place buffers.
 //! Derived from FFmpeg libavcodec/alac.c and alacdsp.c (LGPL-2.1-or-later),
 //! Copyright (c) 2005 David Hammerton. See THIRD_PARTY.md for the pinned source.
-use crate::{msb::Bits, Error, Result};
+use crate::{kernels::Backend, msb::Bits, Error, Result};
 pub(crate) struct Decoder {
     config: [u8; 24],
     pcm: [Vec<i32>; 2],
@@ -24,6 +24,7 @@ fn rice(
     mult: u32,
     limit: u32,
 ) -> Result<()> {
+    let _profile = crate::profile::scope(crate::profile::Stage::AlacRice);
     let mut history = initial;
     let mut modifier = 0;
     let mut i = 0;
@@ -63,7 +64,8 @@ fn rice(
     }
     Ok(())
 }
-fn predict(p: &mut [i32], bits: u32, coeff: &mut [i16], quant: u32) {
+fn predict(p: &mut [i32], bits: u32, coeff: &mut [i16], quant: u32, _backend: Backend) {
+    let _profile = crate::profile::scope(crate::profile::Stage::AlacPredict);
     let order = coeff.len();
     if order == 0 || p.len() < 2 {
         return;
@@ -78,8 +80,21 @@ fn predict(p: &mut [i32], bits: u32, coeff: &mut [i16], quant: u32) {
         p[i] = extend(p[i - 1].wrapping_add(p[i]), bits);
     }
     match order {
-        4 => predict_order::<4>(p, bits, coeff, quant),
-        8 => predict_order::<8>(p, bits, coeff, quant),
+        4 => {
+            #[cfg(target_arch = "aarch64")]
+            if bits <= 25 && _backend == Backend::Neon && _backend.available() {
+                // SAFETY: runtime detection and bounded implementation below.
+                return unsafe { predict_neon::<4>(p, bits, coeff, quant) };
+            }
+            predict_order::<4>(p, bits, coeff, quant)
+        }
+        8 => {
+            #[cfg(target_arch = "aarch64")]
+            if bits <= 25 && _backend == Backend::Neon && _backend.available() {
+                return unsafe { predict_neon::<8>(p, bits, coeff, quant) };
+            }
+            predict_order::<8>(p, bits, coeff, quant)
+        }
         _ => predict_order::<0>(p, bits, coeff, quant),
     }
 }
@@ -91,13 +106,20 @@ impl Decoder {
             extra: std::array::from_fn(|_| Vec::new()),
         }
     }
-    pub fn decode(&mut self, packet: &[u8], frames: u32, out: &mut Vec<i32>) -> Result<()> {
+    pub fn decode(
+        &mut self,
+        packet: &[u8],
+        frames: u32,
+        out: &mut Vec<i32>,
+        backend: Backend,
+    ) -> Result<()> {
         let mut b = Bits::new(packet);
         let channels = self.config[9] as usize;
         let width = self.config[5] as u32;
         let maximum = u32::from_be_bytes(self.config[..4].try_into().unwrap());
         let mut channel = 0;
         let mut count = 0;
+        let mut stereo_output = false;
         loop {
             let element = b.get(3)?;
             if element == 7 {
@@ -188,9 +210,9 @@ impl Decoder {
                         self.config[8] as u32,
                     )?;
                     if modes[ch] == 15 {
-                        predict(p, bits, &mut [0; 31], 0);
+                        predict(p, bits, &mut [0; 31], 0, backend);
                     }
-                    predict(p, bits, &mut coeff[ch][..orders[ch]], quant[ch]);
+                    predict(p, bits, &mut coeff[ch][..orders[ch]], quant[ch], backend);
                 }
             } else {
                 for i in 0..count {
@@ -200,23 +222,19 @@ impl Decoder {
                 }
                 extra = 0;
             }
-            if n == 2 && weight != 0 {
-                for i in 0..count {
-                    let a = self.pcm[channel][i];
-                    let d = self.pcm[channel + 1][i];
-                    let right = a.wrapping_sub(d.wrapping_mul(weight as i32) >> shift);
-                    self.pcm[channel][i] = right.wrapping_add(d);
-                    self.pcm[channel + 1][i] = right;
-                }
-            }
-            for ch in channel..channel + n {
+            let _profile = crate::profile::scope(crate::profile::Stage::AlacOutput);
+            if n == 2 {
+                out.resize(count * 2, 0);
+                finish_stereo(&self.pcm, &self.extra, width, extra, weight, shift, out);
+                stereo_output = true;
+            } else {
                 for i in 0..count {
                     let value = if extra != 0 {
-                        self.pcm[ch][i].wrapping_shl(extra) | (self.extra[ch][i] as i32)
+                        self.pcm[channel][i].wrapping_shl(extra) | (self.extra[channel][i] as i32)
                     } else {
-                        self.pcm[ch][i]
+                        self.pcm[channel][i]
                     };
-                    self.pcm[ch][i] = value.wrapping_shl(32 - width);
+                    self.pcm[channel][i] = value.wrapping_shl(32 - width);
                 }
             }
             channel += n;
@@ -225,14 +243,46 @@ impl Decoder {
             return Err(Error::Invalid("ALAC end/trailing data"));
         }
         b.align_zero()?;
-        out.clear();
         if channels == 1 {
-            out.extend_from_slice(&self.pcm[0]);
-        } else {
+            std::mem::swap(out, &mut self.pcm[0]);
+            crate::profile::count(crate::profile::Counter::MonoBufferSwaps, 1);
+        } else if !stereo_output {
             out.resize(count as usize * 2, 0);
             crate::kernels::interleave_i32(&self.pcm[0], &self.pcm[1], out);
         }
         Ok(())
+    }
+}
+
+// CPE reconstruction, extra-bit append, canonical alignment and interleaving
+// share one traversal. Predictor planes are not rewritten just to be copied.
+fn finish_stereo(
+    pcm: &[Vec<i32>; 2],
+    tail: &[Vec<u32>; 2],
+    width: u32,
+    extra: u32,
+    weight: u32,
+    shift: u32,
+    out: &mut [i32],
+) {
+    for (i, (row, (&a, &d))) in out
+        .as_chunks_mut::<2>()
+        .0
+        .iter_mut()
+        .zip(pcm[0].iter().zip(&pcm[1]))
+        .enumerate()
+    {
+        let (mut left, mut right) = (a, d);
+        if weight != 0 {
+            right = left.wrapping_sub(right.wrapping_mul(weight as i32) >> shift);
+            left = right.wrapping_add(d);
+        }
+        if extra != 0 {
+            left = left.wrapping_shl(extra) | tail[0][i] as i32;
+            right = right.wrapping_shl(extra) | tail[1][i] as i32;
+        }
+        row[0] = left.wrapping_shl(32 - width);
+        row[1] = right.wrapping_shl(32 - width);
     }
 }
 
@@ -279,9 +329,233 @@ fn predict_order<const N: usize>(p: &mut [i32], bits: u32, coeff: &mut [i16], qu
     }
 }
 
+// For ALAC's accepted <=25-bit predictor samples, delta magnitudes are <2^25.
+// With quant>=1 and N<=8, the complete weighted adaptation prefix is <2^30.
+// Its unsigned threshold mask therefore exactly reproduces the scalar early
+// exit, including i32::MIN errors, negative ceil-shifts and i16 coefficient wrap.
+#[cfg(target_arch = "aarch64")]
+#[target_feature(enable = "neon")]
+unsafe fn adapt_neon(
+    coefficients: std::arch::aarch64::int32x4_t,
+    delta: std::arch::aarch64::int32x4_t,
+    shift: std::arch::aarch64::int32x4_t,
+    negative: bool,
+    magnitude: u32,
+    weights: std::arch::aarch64::int32x4_t,
+    prior: i32,
+) -> (std::arch::aarch64::int32x4_t, i32) {
+    use std::arch::aarch64::*;
+    let zero = vdupq_n_s32(0);
+    let mut direction = vsubq_s32(
+        vreinterpretq_s32_u32(vcltq_s32(delta, zero)),
+        vreinterpretq_s32_u32(vcgtq_s32(delta, zero)),
+    );
+    if negative {
+        direction = vnegq_s32(direction);
+    }
+    let mut progress = vshlq_s32(vmulq_s32(delta, direction), shift);
+    if negative {
+        progress = vnegq_s32(progress);
+    }
+    progress = vmulq_s32(progress, weights);
+    let a = vaddq_s32(progress, vextq_s32::<3>(zero, progress));
+    let prefix = vaddq_s32(a, vextq_s32::<2>(zero, a));
+    let inclusive = vaddq_s32(prefix, vdupq_n_s32(prior));
+    let before = vextq_s32::<3>(vdupq_n_s32(prior), inclusive);
+    let active = vcgtq_u32(vdupq_n_u32(magnitude), vreinterpretq_u32_s32(before));
+    let updated = vsubq_s32(
+        coefficients,
+        vandq_s32(vreinterpretq_s32_u32(active), direction),
+    );
+    (
+        vmovl_s16(vmovn_s32(updated)),
+        vgetq_lane_s32::<3>(inclusive),
+    )
+}
+
+/// Keep predictor samples and adaptive coefficients in registers. Integer
+/// NEON products/reductions wrap just like ALAC; adaptation uses an exact prefix
+/// mask instead of loading/storing coefficients through a scalar early-exit loop.
+#[cfg(target_arch = "aarch64")]
+#[target_feature(enable = "neon")]
+unsafe fn predict_neon<const N: usize>(p: &mut [i32], bits: u32, coeff: &mut [i16], quant: u32) {
+    use std::arch::aarch64::*;
+    assert!(matches!(N, 4 | 8) && coeff.len() == N && bits <= 25 && (1..=15).contains(&quant));
+    if p.len() <= N + 1 {
+        return;
+    }
+    let mut c0 = vmovl_s16(vld1_s16(coeff.as_ptr()));
+    let mut c1 = if N == 8 {
+        vmovl_s16(vld1_s16(coeff.as_ptr().add(4)))
+    } else {
+        vdupq_n_s32(0)
+    };
+    let mut h0 = vld1q_s32(p.as_ptr().add(1));
+    let mut h1 = if N == 8 {
+        vld1q_s32(p.as_ptr().add(5))
+    } else {
+        vdupq_n_s32(0)
+    };
+    let w0 = vld1q_s32([1, 2, 3, 4].as_ptr());
+    let w1 = vld1q_s32([5, 6, 7, 8].as_ptr());
+    let shifts = vdupq_n_s32(-(quant as i32));
+    let mut base = p[0];
+    for residual in &mut p[N + 1..] {
+        let error = *residual;
+        let d0 = vsubq_s32(vdupq_n_s32(base), h0);
+        let d1 = vsubq_s32(vdupq_n_s32(base), h1);
+        let mut products = vmulq_s32(vnegq_s32(d0), c0);
+        if N == 8 {
+            products = vaddq_s32(products, vmulq_s32(vnegq_s32(d1), c1));
+        }
+        let sum = vaddvq_s32(products);
+        let prediction = ((sum as i64 + (1i64 << (quant - 1))) >> quant) as i32;
+        let sample = extend(prediction.wrapping_add(base).wrapping_add(error), bits);
+        *residual = sample;
+        if error != 0 {
+            let (updated, prior) =
+                adapt_neon(c0, d0, shifts, error < 0, error.unsigned_abs(), w0, 0);
+            c0 = updated;
+            if N == 8 {
+                c1 = adapt_neon(c1, d1, shifts, error < 0, error.unsigned_abs(), w1, prior).0;
+            }
+        }
+        base = vgetq_lane_s32::<0>(h0);
+        let newest = vdupq_n_s32(sample);
+        if N == 8 {
+            h0 = vextq_s32::<1>(h0, h1);
+            h1 = vextq_s32::<1>(h1, newest);
+        } else {
+            h0 = vextq_s32::<1>(h0, newest);
+        }
+    }
+    vst1_s16(coeff.as_mut_ptr(), vmovn_s32(c0));
+    if N == 8 {
+        vst1_s16(coeff.as_mut_ptr().add(4), vmovn_s32(c1));
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn adaptive_predictor_matches_scalar_pcm_and_coefficient_state() {
+        for order in [4, 8] {
+            for bits in [1, 8, 16, 17, 24, 25] {
+                for quant in 1..=15 {
+                    for n in [
+                        0,
+                        1,
+                        order,
+                        order + 1,
+                        order + 2,
+                        order + 7,
+                        order + 63,
+                        order + 511,
+                    ] {
+                        for pattern in 0..4 {
+                            let mut seed = 1729u32;
+                            let input: Vec<i32> = (0..n)
+                                .map(|i| {
+                                    seed = seed.wrapping_mul(1664525).wrapping_add(1013904223);
+                                    match pattern {
+                                        0 => 0,
+                                        1 => [i32::MIN, i32::MAX, -1, 0, 1][i % 5],
+                                        2 => seed as i32,
+                                        _ => extend(seed as i32, bits),
+                                    }
+                                })
+                                .collect();
+                            let initial: Vec<i16> = (0..order)
+                                .map(|i| {
+                                    [i16::MIN, i16::MAX, 0, 1, -1, 1023, -1024][(i + pattern) % 7]
+                                })
+                                .collect();
+                            let mut expected = input.clone();
+                            let mut expected_coeff = initial.clone();
+                            predict(
+                                &mut expected,
+                                bits,
+                                &mut expected_coeff,
+                                quant,
+                                Backend::Scalar,
+                            );
+                            let mut actual = input;
+                            let mut actual_coeff = initial;
+                            predict(
+                                &mut actual,
+                                bits,
+                                &mut actual_coeff,
+                                quant,
+                                Backend::detect(),
+                            );
+                            assert_eq!(
+                                actual, expected,
+                                "order={order} bits={bits} quant={quant} n={n} pattern={pattern}"
+                            );
+                            assert_eq!(actual_coeff, expected_coeff);
+                        }
+                    }
+                }
+            }
+        }
+    }
+    #[test]
+    fn fused_output_matches_staged_wrapping_reconstruction() {
+        for n in [1, 3, 4, 7, 16, 65] {
+            let pcm = std::array::from_fn(|ch| {
+                (0..n)
+                    .map(|i| {
+                        (i as i32).wrapping_mul(123456789).wrapping_add(if ch == 0 {
+                            i32::MIN
+                        } else {
+                            i32::MAX
+                        })
+                    })
+                    .collect::<Vec<_>>()
+            });
+            let tail = std::array::from_fn(|ch| {
+                (0..n)
+                    .map(|i| (i * 73 + ch * 19) as u32 & 65535)
+                    .collect::<Vec<_>>()
+            });
+            for width in [16, 24] {
+                for extra in [0, 8, 16] {
+                    for weight in [0, 1, 255] {
+                        for shift in [0, 1, 31] {
+                            let mut expected = pcm.clone();
+                            if weight != 0 {
+                                for i in 0..n {
+                                    let right = pcm[0][i].wrapping_sub(
+                                        pcm[1][i].wrapping_mul(weight as i32) >> shift,
+                                    );
+                                    expected[0][i] = right.wrapping_add(pcm[1][i]);
+                                    expected[1][i] = right;
+                                }
+                            }
+                            for ch in 0..2 {
+                                for i in 0..n {
+                                    if extra != 0 {
+                                        expected[ch][i] = expected[ch][i].wrapping_shl(extra)
+                                            | tail[ch][i] as i32;
+                                    }
+                                    expected[ch][i] = expected[ch][i].wrapping_shl(32 - width);
+                                }
+                            }
+                            let mut out = vec![123; n * 2];
+                            finish_stereo(&pcm, &tail, width, extra, weight, shift, &mut out);
+                            for i in 0..n {
+                                assert_eq!(
+                                    &out[i * 2..i * 2 + 2],
+                                    &[expected[0][i], expected[1][i]]
+                                );
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
     #[test]
     fn escaped_packets_extremes_and_every_truncation() {
         for width in [16u32, 24] {
@@ -311,14 +585,22 @@ mod tests {
                 let packet = w.bytes;
                 let mut out = Vec::new();
                 let mut d = Decoder::new(config);
-                d.decode(&packet, count as u32, &mut out).unwrap();
+                d.decode(&packet, count as u32, &mut out, Backend::Scalar)
+                    .unwrap();
+                assert_eq!(out, expected);
+                d.decode(&packet, count as u32, &mut out, Backend::Scalar)
+                    .unwrap();
                 assert_eq!(out, expected);
                 for n in 0..packet.len() {
-                    assert!(d.decode(&packet[..n], count as u32, &mut out).is_err());
+                    assert!(d
+                        .decode(&packet[..n], count as u32, &mut out, Backend::Scalar)
+                        .is_err());
                 }
                 let mut tail = packet.clone();
                 tail.push(0);
-                assert!(d.decode(&tail, count as u32, &mut out).is_err());
+                assert!(d
+                    .decode(&tail, count as u32, &mut out, Backend::Scalar)
+                    .is_err());
             }
         }
     }
@@ -342,7 +624,7 @@ mod tests {
             config[9] = 2;
             let mut d = Decoder::new(config);
             let mut out = Vec::new();
-            let _ = d.decode(&packet, 32, &mut out);
+            let _ = d.decode(&packet, 32, &mut out, Backend::Scalar);
         }
     }
 }

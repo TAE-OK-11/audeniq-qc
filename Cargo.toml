@@ -24,6 +24,7 @@ image = { version = "=0.24.9", default-features = false, features = ["jpeg", "pn
 [features]
 default = []
 reference-codecs = ["dep:symphonia"]
+profile-native = []
 
 [profile.release]
 opt-level = 3

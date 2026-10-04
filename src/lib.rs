@@ -16,6 +16,9 @@ mod mp4;
 mod msb;
 pub mod pcm;
 pub mod probe;
+mod profile;
+#[cfg(feature = "profile-native")]
+pub use profile::report as native_profile;
 pub mod resample;
 mod tta;
 mod wavpack;

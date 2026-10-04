@@ -14,6 +14,7 @@ pub(crate) struct Decoder {
     pub info: [u8; 34],
     buffer: Vec<u8>,
     start: usize,
+    retained: Option<std::ops::Range<usize>>,
     eof: bool,
     planes: [Vec<i32>; 2],
     decoded: u64,
@@ -33,6 +34,7 @@ fn checked(v: i64, bits: u32) -> Result<i32> {
     Ok(v as i32)
 }
 fn residual(b: &mut Bits<'_>, p: &mut [i32], order: usize) -> Result<()> {
+    let _profile = crate::profile::scope(crate::profile::Stage::FlacResidual);
     let method = b.get(2)?;
     let partition = b.get(4)?;
     let partitions = 1usize << partition;
@@ -123,6 +125,7 @@ fn subframe(b: &mut Bits<'_>, p: &mut [i32], bits: u32) -> Result<()> {
                     _ => restore_lpc::<0>(p, &coeff[..order], shift, width)?,
                 }
             } else {
+                let _profile = crate::profile::scope(crate::profile::Stage::FlacPredict);
                 for i in order..p.len() {
                     let prediction = match order {
                         0 => 0,
@@ -259,20 +262,20 @@ fn decode(
     if crate::bits::crc16(&data[..length]) as u32 != crc {
         return invalid("FLAC frame CRC");
     }
-    out.resize(h.samples * spec.channels as usize, 0);
+    let _profile = crate::profile::scope(crate::profile::Stage::FlacOutput);
     let shift = 32 - spec.bits_per_sample;
     if spec.channels == 1 {
-        for (dst, &v) in out.iter_mut().zip(&planes[0]) {
-            *dst = v.wrapping_shl(shift as u32);
+        for v in &mut planes[0] {
+            *v = v.wrapping_shl(shift as u32);
         }
-    } else if h.mode < 8 {
-        for plane in planes.iter_mut() {
-            for v in plane {
-                *v = v.wrapping_shl(shift as u32);
-            }
-        }
-        crate::kernels::interleave_i32(&planes[0], &planes[1], out);
+        std::mem::swap(out, &mut planes[0]);
+        crate::profile::count(crate::profile::Counter::MonoBufferSwaps, 1);
     } else {
+        out.resize(h.samples * 2, 0);
+        if h.mode < 8 {
+            crate::kernels::interleave_shift_i32(&planes[0], &planes[1], out, shift as u32);
+            return Ok((length + 2, h));
+        }
         // Each subframe is at most 25 signed bits; stereo reconstruction fits
         // i32 even before validation. Accumulate range failures and check once
         // so SIMD/vectorization is possible without weakening integrity.
@@ -380,6 +383,7 @@ impl Decoder {
             info,
             buffer: Vec::new(),
             start: 0,
+            retained: None,
             eof: false,
             planes: std::array::from_fn(|_| Vec::new()),
             decoded: 0,
@@ -406,14 +410,10 @@ impl Decoder {
         }
         Ok(())
     }
-    pub fn next(
-        &mut self,
-        out: &mut Vec<i32>,
-        limits: &Limits,
-        retain: bool,
-    ) -> Result<Option<Box<[u8]>>> {
-        out.clear();
+    pub fn next(&mut self, out: &mut Vec<i32>, limits: &Limits, retain: bool) -> Result<()> {
+        self.retained = None;
         if self.decoded == self.spec.frames.unwrap() {
+            out.clear();
             if self.start != self.buffer.len() {
                 return invalid("FLAC trailing data");
             }
@@ -426,7 +426,7 @@ impl Decoder {
                     return invalid("FLAC MD5 mismatch");
                 }
             }
-            return Ok(None);
+            return Ok(());
         }
         let maximum = u16::from_be_bytes(self.info[2..4].try_into().unwrap()) as usize;
         let declared_max =
@@ -458,12 +458,16 @@ impl Decoder {
                     self.decoded += h.samples as u64;
                     self.frame += 1;
                     if let Some(md5) = &mut self.md5 {
+                        let _profile = crate::profile::scope(crate::profile::Stage::FlacMd5);
                         crate::audio::compact_pcm(out, self.spec.bits_per_sample, &mut self.packed);
                         md5.update(&self.packed);
                     }
-                    let raw = if retain { Some(data[..n].into()) } else { None };
+                    self.retained = retain.then_some(self.start..self.start + n);
+                    if retain {
+                        crate::profile::count(crate::profile::Counter::FlacBorrowedBytes, n as u64);
+                    }
                     self.start += n;
-                    return Ok(raw);
+                    return Ok(());
                 }
                 Err(Error::Io(e)) if e.kind() == std::io::ErrorKind::UnexpectedEof && !self.eof => {
                     self.fill(limits.max_packet_bytes)?
@@ -472,10 +476,16 @@ impl Decoder {
             }
         }
     }
+    pub fn flac_frame(&self) -> Option<&[u8]> {
+        self.retained
+            .as_ref()
+            .map(|range| &self.buffer[range.clone()])
+    }
 }
 
 #[inline]
 fn restore_lpc<const N: usize>(p: &mut [i32], coeff: &[i32], shift: i32, bits: u32) -> Result<()> {
+    let _profile = crate::profile::scope(crate::profile::Stage::FlacPredict);
     let order = if N == 0 { coeff.len() } else { N };
     for i in order..p.len() {
         let window = &p[i - order..i];

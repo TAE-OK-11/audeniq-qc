@@ -100,12 +100,21 @@ fn walk(
                     return Err(Error::Limit("MP4 samples"));
                 }
                 if sz == 0 {
-                    for _ in 0..n {
-                        let mut b = [0u8; 4];
-                        f.read_exact(&mut b)?;
-                        if u32::from_be_bytes(b) as usize > limits.max_packet_bytes {
-                            return Err(Error::Limit("MP4 packet bytes"));
+                    // Table entries are contiguous. Read bounded batches instead
+                    // of one file syscall per four-byte packet-size entry.
+                    let mut buffer = [0u8; 4096];
+                    let mut remaining = n as usize;
+                    while remaining != 0 {
+                        limits.check()?;
+                        let count = remaining.min(buffer.len() / 4);
+                        crate::profile::count(crate::profile::Counter::SizeTableReadRequests, 1);
+                        f.read_exact(&mut buffer[..count * 4])?;
+                        for b in buffer[..count * 4].as_chunks::<4>().0 {
+                            if u32::from_be_bytes(*b) as usize > limits.max_packet_bytes {
+                                return Err(Error::Limit("MP4 packet bytes"));
+                            }
                         }
+                        remaining -= count;
                     }
                 }
             }

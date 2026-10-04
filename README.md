@@ -71,6 +71,8 @@ target/release/audeniq-qc tags master.wv
 
 ## 정확도와 측정
 
+최신 [WAV/ALAC 변환·QC Arm/x86 7회 비교](docs/BENCHMARK-WAV-ALAC.md)는 변환과 QC를 따로 측정합니다. QC는 두 서버에서 더 빠르고 CPU·RSS가 작았으며, ALAC→FLAC은 CPU·RSS는 작지만 처리 시간은 FFmpeg보다 길었습니다. 원시 반복과 실제 CPU 식별자를 함께 공개합니다.
+
 ```sh
 # FFmpeg는 아래 개발/검증 명령에서만 사용합니다.
 cargo test --workspace --locked

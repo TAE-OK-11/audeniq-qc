@@ -4,8 +4,10 @@
 // Redesign: bounded 4096-frame work buffers; constant/fixed/verbatim choice;
 // exact Rice costs near an estimated parameter; adaptive independent/mid-side;
 // streaming MD5/PCM SHA256, verified output and atomic no-clobber publication.
+#[cfg(feature = "reference-codecs")]
+use crate::audio::pcm_sha256;
 use crate::{
-    audio::{pcm_sha256, AudioReader},
+    audio::AudioReader,
     bits::{crc16, crc8, BeWriter},
     kernels::{Backend, Dot64Kernel, LpcKernel, RiceKernel},
     AudioSpec, Error, Limits, Result,
@@ -70,8 +72,23 @@ pub struct ConvertOptions {
 // One normalizer per command; stack storage avoids an unnecessary heap box.
 #[allow(clippy::large_enum_variant)]
 enum Normalizer {
-    Copy(File),
+    Copy(File, FrameLog),
     Encode(Encoder),
+}
+/// Running record of every audio-frame byte written after the 42-byte
+/// `fLaC` + STREAMINFO header. The published file is re-read and must match
+/// this length and IEEE CRC32 exactly; each recorded frame was already decoded
+/// and compared sample-for-sample with its source PCM before being written.
+#[derive(Default)]
+struct FrameLog {
+    crc: crc32fast::Hasher,
+    bytes: u64,
+}
+impl FrameLog {
+    fn add(&mut self, frame: &[u8]) {
+        self.crc.update(frame);
+        self.bytes += frame.len() as u64;
+    }
 }
 struct Temp(PathBuf);
 impl Drop for Temp {
@@ -162,9 +179,8 @@ pub fn convert_with_options(
         None
     };
     let mut writer = if let Some(info) = copied {
-        f.write_all(b"fLaC\x80\x00\x00\x22")?;
-        f.write_all(&info)?;
-        Normalizer::Copy(f)
+        f.write_all(&flac_header(&info))?;
+        Normalizer::Copy(f, FrameLog::default())
     } else {
         Normalizer::Encode(Encoder::new(
             f,
@@ -187,18 +203,22 @@ pub fn convert_with_options(
         }
         match &mut writer {
             Normalizer::Encode(encoder) => encoder.push(&samples)?,
-            Normalizer::Copy(file) => file.write_all(
-                reader
+            Normalizer::Copy(file, log) => {
+                // The borrowed frame is exactly the CRC-checked bytes that the
+                // source decoder just reconstructed into `samples`.
+                let frame = reader
                     .flac_frame()
-                    .ok_or(Error::Invalid("missing FLAC frame"))?,
-            )?,
+                    .ok_or(Error::Invalid("missing FLAC frame"))?;
+                log.add(frame);
+                file.write_all(frame)?
+            }
         }
     }
     let frames = reader.decoded_frames();
     let source_hash = crate::hex(&hash.finalize());
-    let f = match writer {
+    let (f, header, log) = match writer {
         Normalizer::Encode(encoder) => encoder.finish()?,
-        Normalizer::Copy(file) => file,
+        Normalizer::Copy(file, log) => (file, flac_header(&copied.unwrap()), log),
     };
     f.sync_all()?;
     let output_bytes = f.metadata()?.len();
@@ -206,12 +226,11 @@ pub fn convert_with_options(
         return Err(Error::Limit("FLAC output bytes"));
     }
     drop(f);
-    let (out, out_hash, out_frames) = {
+    let out = {
         let _profile = crate::profile::scope(crate::profile::Stage::OutputVerify);
-        pcm_sha256(&temp.0, limits.clone(), backend)?
+        verify_output(&temp.0, &header, &log, &source_hash, &limits, backend)?
     };
-    if out_hash != source_hash
-        || out_frames != frames
+    if out.frames != Some(frames)
         || out.sample_rate != spec.sample_rate
         || out.channels != spec.channels
         || out.bits_per_sample != spec.bits_per_sample
@@ -242,6 +261,72 @@ pub fn convert_with_options(
     })
 }
 
+fn flac_header(info: &[u8; 34]) -> [u8; 42] {
+    let mut header = [0u8; 42];
+    header[..8].copy_from_slice(b"fLaC\x80\x00\x00\x22");
+    header[8..].copy_from_slice(info);
+    header
+}
+
+/// Native builds verify every encoded frame in memory before it is written
+/// (see `Encoder::write_block`), so the published file only needs to be shown
+/// byte-identical to those verified frames: STREAMINFO is parsed/validated
+/// again, the 42-byte header must match and the frame region must have the
+/// recorded length and CRC32. This replaces a second full decode, packing,
+/// MD5 and SHA-256 pass over the output.
+#[cfg(not(feature = "reference-codecs"))]
+fn verify_output(
+    path: &Path,
+    header: &[u8; 42],
+    log: &FrameLog,
+    _source_hash: &str,
+    limits: &Limits,
+    _backend: Backend,
+) -> Result<AudioSpec> {
+    use std::io::Read;
+    let spec = crate::flac_decode::Decoder::open(File::open(path)?, limits)?
+        .spec
+        .clone();
+    let mut file = File::open(path)?;
+    let mut head = [0u8; 42];
+    file.read_exact(&mut head)?;
+    let mut crc = crc32fast::Hasher::new();
+    let mut bytes = 0u64;
+    let mut buffer = vec![0u8; 1 << 16];
+    loop {
+        limits.check()?;
+        let n = file.read(&mut buffer)?;
+        if n == 0 {
+            break;
+        }
+        crc.update(&buffer[..n]);
+        bytes += n as u64;
+    }
+    if head != *header || bytes != log.bytes || crc.finalize() != log.crc.clone().finalize() {
+        return Err(Error::Invalid("lossless round-trip verification"));
+    }
+    Ok(spec)
+}
+
+/// The optional Symphonia comparison build keeps the original independent
+/// whole-file redecode and PCM SHA-256 comparison.
+#[cfg(feature = "reference-codecs")]
+fn verify_output(
+    path: &Path,
+    _header: &[u8; 42],
+    _log: &FrameLog,
+    source_hash: &str,
+    limits: &Limits,
+    backend: Backend,
+) -> Result<AudioSpec> {
+    let (mut out, out_hash, out_frames) = pcm_sha256(path, limits.clone(), backend)?;
+    if out_hash != source_hash {
+        return Err(Error::Invalid("lossless round-trip verification"));
+    }
+    out.frames = Some(out_frames);
+    Ok(out)
+}
+
 struct Encoder {
     file: File,
     spec: AudioSpec,
@@ -261,6 +346,11 @@ struct Encoder {
     frame_buffer: Vec<u8>,
     channel_buffers: [Vec<i32>; 4],
     planner: Planner,
+    log: FrameLog,
+    #[cfg(not(feature = "reference-codecs"))]
+    verify_planes: [Vec<i32>; 2],
+    #[cfg(not(feature = "reference-codecs"))]
+    verify_out: Vec<i32>,
 }
 impl Encoder {
     fn new(
@@ -293,6 +383,11 @@ impl Encoder {
             frame_buffer: Vec::with_capacity(raw_capacity + 128),
             channel_buffers: std::array::from_fn(|_| Vec::new()),
             planner: Planner::default(),
+            log: FrameLog::default(),
+            #[cfg(not(feature = "reference-codecs"))]
+            verify_planes: std::array::from_fn(|_| Vec::new()),
+            #[cfg(not(feature = "reference-codecs"))]
+            verify_out: Vec::new(),
         })
     }
     fn push(&mut self, samples: &[i32]) -> Result<()> {
@@ -444,13 +539,36 @@ impl Encoder {
         }
         self.min_frame = self.min_frame.min(bw.bytes.len());
         self.max_frame = self.max_frame.max(bw.bytes.len());
+        // Decode the complete frame (header CRC8, subframes, frame CRC16)
+        // and require the exact source block before any byte is written.
+        #[cfg(not(feature = "reference-codecs"))]
+        {
+            let _profile = crate::profile::scope(crate::profile::Stage::FrameVerify);
+            let verified = crate::flac_decode::decode(
+                &bw.bytes,
+                &self.spec,
+                self.profile.block,
+                &mut self.verify_planes,
+                &mut self.verify_out,
+            );
+            if !verified.is_ok_and(|(length, header)| {
+                length == bw.bytes.len()
+                    && header.samples == n
+                    && header.number == self.number
+                    && !header.variable
+            }) || self.verify_out[..] != *samples
+            {
+                return Err(Error::Invalid("lossless frame verification"));
+            }
+        }
+        self.log.add(&bw.bytes);
         self.file.write_all(&bw.bytes)?;
         self.frame_buffer = bw.bytes;
         self.frames += n as u64;
         self.number += 1;
         Ok(())
     }
-    fn finish(mut self) -> Result<File> {
+    fn finish(mut self) -> Result<(File, [u8; 42], FrameLog)> {
         if !self.pending.is_empty() {
             let pending = std::mem::take(&mut self.pending);
             self.write_block(&pending)?;
@@ -471,7 +589,8 @@ impl Encoder {
         b.bytes.extend_from_slice(&md5);
         self.file.seek(SeekFrom::Start(8))?;
         self.file.write_all(&b.bytes)?;
-        Ok(self.file)
+        let header = flac_header(b.bytes.as_slice().try_into().unwrap());
+        Ok((self.file, header, self.log))
     }
 }
 

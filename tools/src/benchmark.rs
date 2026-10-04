@@ -96,7 +96,19 @@ fn ratios(medians: &Value) -> Value {
 fn source(root: &Path, seconds: u32) -> Result<std::path::PathBuf> {
     let wav = root.join("master.wav");
     if std::env::var("AUDENIQ_BENCH_SIGNAL").as_deref() == Ok("music") {
-        ff(&["-v","error","-f","lavfi","-i",&format!("anoisesrc=c=pink:a=0.3:d={seconds}:r=48000:seed=7"),"-af","aformat=channel_layouts=stereo,aeval=val(0)|0.7*val(0)+0.3*sin(2*PI*220*t)","-c:a","pcm_s24le",path(&wav)])?;
+        ff(&[
+            "-v",
+            "error",
+            "-f",
+            "lavfi",
+            "-i",
+            &format!("anoisesrc=c=pink:a=0.3:d={seconds}:r=48000:seed=7"),
+            "-af",
+            "aformat=channel_layouts=stereo,aeval=val(0)|0.7*val(0)+0.3*sin(2*PI*220*t)",
+            "-c:a",
+            "pcm_s24le",
+            path(&wav),
+        ])?;
     } else {
         ff(&["-v","error","-f","lavfi","-i",&format!("aevalsrc=0.4*sin(2*PI*997*t)+0.05*sin(2*PI*13001*t)|0.3*sin(2*PI*437*t)+0.04*sin(2*PI*9011*t):s=48000:d={seconds}"),"-c:a","pcm_s24le",path(&wav)])?;
     }

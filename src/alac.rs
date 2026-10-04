@@ -79,10 +79,15 @@ fn predict(p: &mut [i32], bits: u32, coeff: &mut [i16], quant: u32, _backend: Ba
     for i in 1..=order.min(p.len() - 1) {
         p[i] = extend(p[i - 1].wrapping_add(p[i]), bits);
     }
+    // Warm-up normalizes all history except the initial sample. The prefix
+    // proof needs that first sample bounded too; preserve scalar semantics for
+    // synthetic/hostile residual histories outside the declared signed width.
+    #[cfg(target_arch = "aarch64")]
+    let neon_history = bits <= 25 && extend(p[0], bits) == p[0];
     match order {
         4 => {
             #[cfg(target_arch = "aarch64")]
-            if bits <= 25 && _backend == Backend::Neon && _backend.available() {
+            if neon_history && _backend == Backend::Neon && _backend.available() {
                 // SAFETY: runtime detection and bounded implementation below.
                 return unsafe { predict_neon::<4>(p, bits, coeff, quant) };
             }
@@ -90,7 +95,7 @@ fn predict(p: &mut [i32], bits: u32, coeff: &mut [i16], quant: u32, _backend: Ba
         }
         8 => {
             #[cfg(target_arch = "aarch64")]
-            if bits <= 25 && _backend == Backend::Neon && _backend.available() {
+            if neon_history && _backend == Backend::Neon && _backend.available() {
                 return unsafe { predict_neon::<8>(p, bits, coeff, quant) };
             }
             predict_order::<8>(p, bits, coeff, quant)
@@ -455,7 +460,7 @@ mod tests {
                     ] {
                         for pattern in 0..4 {
                             let mut seed = 1729u32;
-                            let input: Vec<i32> = (0..n)
+                            let mut input: Vec<i32> = (0..n)
                                 .map(|i| {
                                     seed = seed.wrapping_mul(1664525).wrapping_add(1013904223);
                                     match pattern {
@@ -466,6 +471,9 @@ mod tests {
                                     }
                                 })
                                 .collect();
+                            if pattern == 1 && !input.is_empty() {
+                                input[0] = 0;
+                            }
                             let initial: Vec<i16> = (0..order)
                                 .map(|i| {
                                     [i16::MIN, i16::MAX, 0, 1, -1, 1023, -1024][(i + pattern) % 7]
@@ -493,7 +501,7 @@ mod tests {
                                 actual, expected,
                                 "order={order} bits={bits} quant={quant} n={n} pattern={pattern}"
                             );
-                            assert_eq!(actual_coeff, expected_coeff);
+                            assert_eq!(actual_coeff, expected_coeff, "coefficients order={order} bits={bits} quant={quant} n={n} pattern={pattern}");
                         }
                     }
                 }

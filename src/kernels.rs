@@ -25,6 +25,40 @@ impl Backend {
     }
 }
 
+/// Report available CPU features separately from selected DSP kernels. SVE2
+/// availability alone does not imply an SVE2 kernel was selected.
+pub fn cpu_features() -> Vec<&'static str> {
+    let mut features = Vec::new();
+    #[cfg(target_arch = "aarch64")]
+    {
+        for (name, available) in [
+            ("neon", std::arch::is_aarch64_feature_detected!("neon")),
+            ("sve", std::arch::is_aarch64_feature_detected!("sve")),
+            ("sve2", std::arch::is_aarch64_feature_detected!("sve2")),
+            ("sha2", std::arch::is_aarch64_feature_detected!("sha2")),
+            ("crc", std::arch::is_aarch64_feature_detected!("crc")),
+            ("pmull", std::arch::is_aarch64_feature_detected!("pmull")),
+        ] {
+            if available {
+                features.push(name);
+            }
+        }
+    }
+    #[cfg(target_arch = "x86_64")]
+    {
+        for (name, available) in [
+            ("avx2", std::is_x86_feature_detected!("avx2")),
+            ("sha", std::is_x86_feature_detected!("sha")),
+            ("pclmulqdq", std::is_x86_feature_detected!("pclmulqdq")),
+        ] {
+            if available {
+                features.push(name);
+            }
+        }
+    }
+    features
+}
+
 /// Direct planar S32 -> interleaved S32. NEON structure stores avoid an extra
 /// ALAC/FLAC staging buffer; all loads and stores cover complete four-frame runs.
 pub(crate) fn interleave_i32(left: &[i32], right: &[i32], out: &mut [i32]) {
@@ -77,11 +111,11 @@ impl RiceKernel {
 }
 fn rice_scalar(residual: &[u32], first: u32, count: usize) -> [u64; 3] {
     let mut out = [0; 3];
-    // Read each residual once while evaluating neighboring Rice parameters.
-    for &r in residual {
-        for (i, sum) in out[..count].iter_mut().enumerate() {
-            *sum += (r >> (first + i as u32)) as u64;
-        }
+    // Keep each reduction simple enough for baseline-ISA auto-vectorization.
+    // The Arm kernel below evaluates all neighbors with one vector load.
+    for (i, sum) in out[..count].iter_mut().enumerate() {
+        let shift = first + i as u32;
+        *sum = residual.iter().map(|&r| (r >> shift) as u64).sum();
     }
     out
 }

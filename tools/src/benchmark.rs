@@ -451,12 +451,26 @@ pub fn convert(options: &Options) -> Result<Value> {
         let median = medians(&runs);
         let ratio = ratios(&median);
         eprintln!("{codec}: {}", serde_json::to_string(&median)?);
-        results.push(json!({"codec":codec,"source_bytes":fs::metadata(&input)?.len(),"fixture_sha256":file_sha(&input)?,"pcm_sha256":expected,"commands":commands,"ffmpeg_verification_command":oracle_command(&outputs["ffmpeg"]),"output_bytes":sizes,"runs":runs,"median":median,"ffmpeg_div_native":ratio}));
+        let baseline_analysis_command = if options.review {
+            options.baseline_binary.as_ref().map(|binary| {
+                let mut command = strings(&[path(binary), "analyze", path(&outputs["baseline"])]);
+                if options.fingerprint {
+                    command.push("--fingerprint".to_owned());
+                }
+                command
+            })
+        } else {
+            None
+        };
+        results.push(json!({"codec":codec,"source_bytes":fs::metadata(&input)?.len(),"fixture_sha256":file_sha(&input)?,"pcm_sha256":expected,"commands":commands,"baseline_analysis_command":baseline_analysis_command,"ffmpeg_verification_command":oracle_command(&outputs["ffmpeg"]),"output_bytes":sizes,"runs":runs,"median":median,"ffmpeg_div_native":ratio}));
     }
     let mut report = metadata(options, seconds, results)?;
     report["review"] = json!(options.review);
     report["fingerprint"] = json!(options.fingerprint && options.review);
     report["comparison"]=json!("Both source decode/hash/FLAC encode and output decode/hash are timed. Native also includes fsync and no-clobber publication. FFmpeg excludes separate probe and backend overhead. Adaptive LPC/Rice or verified FLAC frame-copy can produce different sizes; sizes are reported. FFmpeg verification is a separate subprocess: sum CPU/wall, maximum child RSS. Native independent FFmpeg verification is outside timing.");
+    if options.review {
+        report["comparison"] = json!("Verified FLAC conversion plus QC. Native uses convert --analyze and optionally --fingerprint; baseline runs pinned convert then analyze of verified output, sums CPU/wall and takes maximum child RSS. Baseline/current QC values and fingerprint windows must match exactly (source codec metadata excepted). FFmpeg measures source hash/FLAC encode plus ebur128 true peak in one source decode, then independent output verification; with fingerprint it also emits continuous mono 11025 s16 to /dev/null. FFmpeg excludes native's extra QC metrics and fingerprint retention/JSON cost. Independent FFmpeg checks of native/baseline FLAC outputs are outside timing.");
+    }
     Ok(report)
 }
 

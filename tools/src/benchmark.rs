@@ -248,8 +248,34 @@ pub fn analysis(options: &Options) -> Result<Value> {
             baseline[0] = path(binary).to_owned();
             commands.insert("baseline", baseline);
         }
-        for command in commands.values() {
-            run(command)?;
+        let mut native_qc = None;
+        let mut reference_qc = None;
+        let expected = oracle_hash(&input)?;
+        for (&name, command) in &commands {
+            let output = run(command)?;
+            if name == "ffmpeg" && !options.fingerprint {
+                check(
+                    hash_output(&output.stdout)? == expected,
+                    "FFmpeg analysis hash",
+                )?;
+            } else if name != "ffmpeg" {
+                let mut report: Value = serde_json::from_slice(&output.stdout)?;
+                check(report["pcm_sha256"] == expected, "analysis PCM hash")?;
+                for field in ["spec", "engine", "backend"] {
+                    report.as_object_mut().ok_or("analysis JSON")?.remove(field);
+                }
+                if name == "native" {
+                    native_qc = Some(report);
+                } else if name == "baseline" {
+                    reference_qc = Some(report);
+                }
+            }
+        }
+        if options.reference_codecs {
+            check(
+                native_qc == reference_qc,
+                "native/reference analysis equality",
+            )?;
         }
         let order: Vec<_> = commands.keys().copied().collect();
         let mut runs: BTreeMap<_, _> = order.iter().map(|&name| (name, Vec::new())).collect();
@@ -359,11 +385,23 @@ pub fn convert(options: &Options) -> Result<Value> {
                 .get_mut("native")
                 .unwrap()
                 .push("--analyze".to_owned());
+            if options.reference_codecs {
+                commands
+                    .get_mut("baseline")
+                    .ok_or("reference binary")?
+                    .push("--analyze".to_owned());
+            }
             if options.fingerprint {
                 commands
                     .get_mut("native")
                     .unwrap()
                     .push("--fingerprint".to_owned());
+                if options.reference_codecs {
+                    commands
+                        .get_mut("baseline")
+                        .ok_or("reference binary")?
+                        .push("--fingerprint".to_owned());
+                }
             }
             commands.get_mut("ffmpeg").unwrap().extend(strings(&[
                 "-map",
@@ -411,7 +449,7 @@ pub fn convert(options: &Options) -> Result<Value> {
                         "independent native output hash",
                     )?;
                     if options.review {
-                        let analysis = if name == "native" {
+                        let analysis = if name == "native" || options.reference_codecs {
                             report["analysis"].clone()
                         } else {
                             let mut command = strings(&[
@@ -459,7 +497,7 @@ pub fn convert(options: &Options) -> Result<Value> {
         let median = medians(&runs);
         let ratio = ratios(&median);
         eprintln!("{codec}: {}", serde_json::to_string(&median)?);
-        let baseline_analysis_command = if options.review {
+        let baseline_analysis_command = if options.review && !options.reference_codecs {
             options.baseline_binary.as_ref().map(|binary| {
                 let mut command = strings(&[path(binary), "analyze", path(&outputs["baseline"])]);
                 if options.fingerprint {
@@ -483,6 +521,9 @@ pub fn convert(options: &Options) -> Result<Value> {
     report["comparison"]=json!("Both source decode/hash/FLAC encode and output decode/hash are timed. Native also includes fsync and no-clobber publication. FFmpeg excludes separate probe and backend overhead. Adaptive LPC/Rice or verified FLAC frame-copy can produce different sizes; sizes are reported. FFmpeg verification is a separate subprocess: sum CPU/wall, maximum child RSS. Native independent FFmpeg verification is outside timing.");
     if options.review {
         report["comparison"] = json!("Verified FLAC conversion plus QC. Native uses convert --analyze and optionally --fingerprint; baseline runs pinned convert then analyze of verified output, sums CPU/wall and takes maximum child RSS. Baseline/current QC values and fingerprint windows must match exactly (source codec metadata excepted). FFmpeg measures source hash/FLAC encode plus ebur128 true peak in one source decode, then independent output verification; with fingerprint it also emits continuous mono 11025 s16 to /dev/null. FFmpeg excludes native's extra QC metrics and fingerprint retention/JSON cost. Independent FFmpeg checks of native/baseline FLAC outputs are outside timing.");
+        if options.reference_codecs {
+            report["comparison"] = json!("Native and reference codecs both use fused convert --analyze with optional --fingerprint, exact QC equality and independent FFmpeg output hashes. FFmpeg uses one source decode for FLAC encode, canonical PCM SHA-256 and ebur128 true peak, then separately verifies output. FFmpeg omits native's extra QC fields/JSON/fingerprint retention. True-peak and resampling filters differ.");
+        }
     }
     Ok(report)
 }

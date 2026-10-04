@@ -1,10 +1,14 @@
+#[cfg(not(feature = "reference-codecs"))]
+use crate::compressed::Compressed;
 use crate::{kernels::Backend, AudioSpec, Error, Limits, Result};
+#[cfg(feature = "reference-codecs")]
 use md5::{Digest as _, Md5};
 use std::{
     fs::File,
     io::{Read, Seek, SeekFrom},
     path::Path,
 };
+#[cfg(feature = "reference-codecs")]
 use symphonia::core::{
     audio::{AudioBufferRef, Signal},
     codecs::{Decoder, DecoderOptions, VerificationCheck, CODEC_TYPE_ALAC, CODEC_TYPE_FLAC},
@@ -16,7 +20,7 @@ use symphonia::core::{
 
 enum Source {
     Pcm(Pcm),
-    Compressed(Compressed),
+    Compressed(Box<Compressed>),
     Tta(crate::tta::Tta),
     Wavpack(crate::wavpack::Wavpack),
 }
@@ -55,7 +59,7 @@ impl AudioReader {
                 (p.spec.clone(), Source::Wavpack(p))
             } else if &magic[..4] == b"fLaC" || &magic[4..8] == b"ftyp" {
                 let p = Compressed::open(f, &limits, &magic[..4] == b"fLaC")?;
-                (p.spec.clone(), Source::Compressed(p))
+                (p.spec.clone(), Source::Compressed(Box::new(p)))
             } else {
                 return Err(Error::Unsupported(
                     "accepted containers: WAV/RF64/BW64, AIFF/AIFC, FLAC, ALAC M4A, TTA, WavPack",
@@ -391,6 +395,7 @@ impl Pcm {
     }
 }
 
+#[cfg(feature = "reference-codecs")]
 struct Compressed {
     format: Box<dyn FormatReader>,
     decoder: Box<dyn Decoder>,
@@ -402,12 +407,14 @@ struct Compressed {
     pcm_md5: Option<(Md5, [u8; 16])>,
     md5_buffer: Vec<u8>,
 }
+#[cfg(feature = "reference-codecs")]
 fn decode_err(e: symphonia::core::errors::Error) -> Error {
     match e {
         symphonia::core::errors::Error::IoError(e) => Error::Io(e),
         _ => Error::Invalid("compressed codec/container decode"),
     }
 }
+#[cfg(feature = "reference-codecs")]
 impl Compressed {
     fn open(mut f: File, limits: &Limits, is_flac: bool) -> Result<Self> {
         if !is_flac {

@@ -17,6 +17,7 @@ pub struct Options {
     pub repeats: usize,
     pub fingerprint: bool,
     pub baseline_binary: Option<PathBuf>,
+    pub reference_codecs: bool,
     pub review: bool,
     pub wav_alac_only: bool,
 }
@@ -29,6 +30,7 @@ impl Default for Options {
             repeats: 3,
             fingerprint: false,
             baseline_binary: None,
+            reference_codecs: false,
             review: false,
             wav_alac_only: false,
         }

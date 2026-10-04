@@ -49,6 +49,11 @@ fn entry() -> Result<()> {
                 options.baseline_binary =
                     Some(args.next().ok_or("missing --baseline-binary")?.into())
             }
+            "--reference-binary" => {
+                options.baseline_binary =
+                    Some(args.next().ok_or("missing --reference-binary")?.into());
+                options.reference_codecs = true;
+            }
             "--output" => options.output = Some(args.next().ok_or("missing --output")?.into()),
             "--seconds" => options.seconds = Some(args.next().ok_or("missing --seconds")?.parse()?),
             "--repeats" => options.repeats = args.next().ok_or("missing --repeats")?.parse()?,
@@ -65,7 +70,7 @@ fn entry() -> Result<()> {
     if options.repeats < 3 || options.seconds == Some(0) {
         return Err("expected at least 3 repeats and positive seconds".into());
     }
-    let report = match command.as_str() {
+    let mut report = match command.as_str() {
         "qualify" => qualify::execute(&options)?,
         "standards" => standards::execute(&options)?,
         "codec-stress" => stress::execute(&options)?,
@@ -77,6 +82,27 @@ fn entry() -> Result<()> {
         }
         _ => return Err("unknown development command".into()),
     };
+    if options.reference_codecs {
+        fn rename(value: &mut serde_json::Value) {
+            match value {
+                serde_json::Value::Object(map) => {
+                    let old = std::mem::take(map);
+                    for (key, mut value) in old {
+                        rename(&mut value);
+                        map.insert(key.replace("baseline", "reference"), value);
+                    }
+                }
+                serde_json::Value::Array(values) => {
+                    for value in values {
+                        rename(value);
+                    }
+                }
+                _ => (),
+            }
+        }
+        rename(&mut report);
+        report["reference_mode"] = serde_json::json!("Same engine/encoder/QC, reference-codecs feature enables Symphonia ALAC/FLAC decoding and demuxing. Generic JSON/hash/image dependencies remain in both builds.");
+    }
     if let Some(path) = options.output {
         if let Some(parent) = path.parent().filter(|p| !p.as_os_str().is_empty()) {
             std::fs::create_dir_all(parent)?;

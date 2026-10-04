@@ -91,7 +91,7 @@ fn run() -> audeniq_qc::Result<()> {
     }
     match (command, args.len()) {
         ("capabilities", 1) => write_json(
-            &serde_json::json!({"engine":audeniq_qc::ENGINE_VERSION,"backend":backend,"cpu_features":audeniq_qc::kernels::cpu_features(),"conversion_qc":true,"audio":["WAV/RF64/BW64 PCM16/24","AIFF/AIFC integer PCM","FLAC","M4A ALAC","TTA1","WavPack integer lossless single-block"],"images":["JPEG","PNG"],"pcm_outputs":["wav","s32le"],"compression_levels":{"min":0,"max":8,"default":5},"metric_version":audeniq_qc::METRIC_VERSION,"resampler_version":audeniq_qc::RESAMPLER_VERSION,"true_peak_certified":false,"ffmpeg_runtime":false}),
+            &serde_json::json!({"engine":audeniq_qc::ENGINE_VERSION,"backend":backend,"cpu_features":audeniq_qc::kernels::cpu_features(),"conversion_qc":true,"audio":["WAV/RF64/BW64 PCM16/24","AIFF/AIFC integer PCM","FLAC","M4A ALAC","TTA1","WavPack integer lossless single-block"],"images":["JPEG","PNG"],"pcm_outputs":["wav","s32le"],"compression_levels":{"min":0,"max":8,"default":5},"metric_version":audeniq_qc::METRIC_VERSION,"resampler_version":audeniq_qc::RESAMPLER_VERSION,"true_peak_certified":false,"media_codecs":if cfg!(feature="reference-codecs") {"symphonia-reference"} else {"audeniq-native"},"ffmpeg_runtime":false}),
         ),
         ("probe", 2) => write_json(&audeniq_qc::probe::media(Path::new(&args[1]), limits)?),
         ("image-probe", 2) => write_json(&audeniq_qc::probe::cover(Path::new(&args[1]), limits)?),

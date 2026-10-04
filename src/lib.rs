@@ -1,10 +1,19 @@
 //! Local, lossless-only audio QC. No FFmpeg or native media-codec FFI at runtime.
+#[cfg(not(feature = "reference-codecs"))]
+mod alac;
 pub mod audio;
 mod bits;
+#[cfg(not(feature = "reference-codecs"))]
+mod compressed;
 pub mod flac;
+#[cfg(not(feature = "reference-codecs"))]
+mod flac_decode;
 pub mod kernels;
+mod m4a;
 pub mod meter;
 mod mp4;
+#[cfg(not(feature = "reference-codecs"))]
+mod msb;
 pub mod pcm;
 pub mod probe;
 pub mod resample;

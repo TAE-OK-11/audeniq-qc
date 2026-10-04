@@ -21,7 +21,7 @@ AUDENIQ 전용 Rust 오디오 엔진. 실제 AUDENIQ 소스의 FFmpeg·FFprobe·
 
 1~2채널, 16/24-bit 정수, 44100~192000Hz가 경계입니다. 비디오, 네트워크, 손실 코덱, float/32-bit PCM, hybrid/DSD/float WavPack, fragmented MP4는 지원하지 않습니다. RF64 확장 ds64 테이블과 샘플 수가 선언되지 않은 FLAC도 지원하지 않습니다. 지원 불가나 손상은 오류이며 부분 성공으로 처리하지 않습니다.
 
-FLAC/ALAC 디코더는 필요한 기능만 켠 Symphonia의 기존 Rust 구현입니다. TTA/WavPack 및 FLAC 인코더·K-weighting은 고정한 FFmpeg 소스를 참고/포팅했고, 버퍼·검증·계산 경로를 재설계했습니다. [출처와 라이선스](THIRD_PARTY.md)를 유지합니다.
+기본 빌드의 FLAC/ALAC/TTA/WavPack 디코더와 FLAC 인코더는 고정한 FFmpeg 소스를 참고/포팅한 자체 Rust 경로입니다. WAV/AIFF 및 제한된 단일 ALAC 트랙 M4A 컨테이너도 자체 처리합니다. 기존 Symphonia 코덱은 `--features reference-codecs` 비교 빌드에만 남깁니다. JSON·해시·CRC·JPEG/PNG 등 일반 라이브러리는 유지합니다. [출처와 라이선스](THIRD_PARTY.md)를 유지합니다.
 
 ## 사용
 

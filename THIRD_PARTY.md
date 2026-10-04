@@ -7,19 +7,23 @@ Pinned FFmpeg commit: `12c589a37d093cc55618f8377b092dc21416806f`.
 * `src/tta.rs`: `libavcodec/tta.c`, `ttadata.c`, `ttadsp.c`; Alex Beregszaszi (2006), FFmpeg contributors.
 * `src/wavpack.rs`, `src/wavpack_table.rs`: `libavcodec/wavpack.c`, `wavpack.h`, `wavpackdata.c`; Konstantin Shishkov (2006, 2011), David Bryant (2020). Only integer lossless paths.
 * `src/flac.rs`: FLAC fixed/LPC residual prediction, Rice mapping, frame/subframe structure from `libavcodec/flacenc.c` and Welch/Levinson approach from `lpc.c`; Justin Ruggles (2006). Reworked selection, buffers, verification and commit logic.
+* `src/alac.rs`: Rice/zero-run, adaptive LPC and stereo reconstruction from `libavcodec/alac.c`, `alacdsp.c`; David Hammerton (2005). Reworked bounded bit access, in-place reusable buffers and specialized predictor orders.
+* `src/flac_decode.rs`: frame/header, partitioned Rice, fixed/LPC and channel reconstruction from `libavcodec/flac.c`, `flacdec.c`, `flacdsp.c`; Alex Beregszaszi (2003), Mans Rullgard (2012). Reworked streaming input, strict CRC/count/MD5 checks and specialized LPC orders.
 * `src/meter.rs`: K-weighting coefficient equations from `libavfilter/ebur128.c`; Jan Kokemüller (2011). That source also includes the libebur128 MIT notice below.
 
 Rust translations change storage, bounds handling, error propagation, work limits and dispatch; they do not remove upstream attribution. No FFmpeg binary, libav* library, GPL-only filter, or native media-codec FFI is linked. Media processing is Rust, including CPU intrinsics; normal Rust system-runtime libraries still apply. Full LGPL text: LICENSE; referenced GPL text: COPYING.GPLv2.
 
 ## Rust dependencies
 
-* Symphonia (MPL-2.0): FLAC/ALAC decoders and FLAC/M4A demuxers only; default features disabled. These decoders are existing Rust implementations, not claimed as new FFmpeg ports.
+* Symphonia (MPL-2.0): **optional `reference-codecs` comparison build only**, FLAC/ALAC decoding and FLAC/M4A demuxing. Default builds do not link it. Reference implementations are existing Rust code, not claimed as our ports.
 * image (MIT): JPEG/PNG decoding only; default features disabled.
 * serde/serde_json (MIT OR Apache-2.0): typed reports.
 * RustCrypto sha2/md-5 (MIT OR Apache-2.0): canonical SHA-256 and required FLAC PCM MD5. SHA-256 uses runtime CPU feature dispatch from RustCrypto; MD5 is a format integrity field, not a security authenticator.
 * crc32fast (MIT OR Apache-2.0): IEEE CRC32, with runtime PCLMULQDQ/AArch64 CRC dispatch. Already present through PNG; also used for TTA frame/header verification. Wider VPCLMUL paths depend on compiler/CPU support.
 
 Cargo.lock pins transitive dependencies. Dependency sources/license notices remain available through crates.io. Linking into other applications requires complying with each applicable license; no claim is made that optimization removes copyleft obligations.
+
+`src/m4a.rs` and `src/msb.rs` are AUDENIQ-specific Rust implementations of the container tables and cached bounded bit reader, rather than copied Symphonia source. General JSON, cryptographic hash, CRC and image libraries remain in both builds; "native media codecs" does not mean zero third-party dependencies.
 
 ## libebur128 MIT notice
 

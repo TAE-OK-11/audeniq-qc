@@ -240,36 +240,8 @@ pub fn tags(path: &Path, limits: &Limits) -> Result<Tags> {
         return Ok(tags);
     }
     if &h[4..8] == b"ftyp" {
-        use symphonia::core::{
-            formats::FormatOptions,
-            io::MediaSourceStream,
-            meta::{Limit, MetadataOptions, StandardTagKey},
-            probe::Hint,
-        };
-        crate::mp4::preflight(&mut f, limits)?;
-        let mss = MediaSourceStream::new(Box::new(f), Default::default());
-        let mut p = symphonia::default::get_probe()
-            .format(
-                &Hint::new(),
-                mss,
-                &FormatOptions::default(),
-                &MetadataOptions {
-                    limit_metadata_bytes: Limit::Maximum(limits.max_packet_bytes),
-                    limit_visual_bytes: Limit::Maximum(limits.max_packet_bytes),
-                },
-            )
-            .map_err(|_| Error::Invalid("M4A metadata"))?;
-        if let Some(m) = p.format.metadata().current() {
-            for t in m.tags() {
-                let key = match t.std_key {
-                    Some(StandardTagKey::Encoder) => "encoder",
-                    Some(StandardTagKey::EncodedBy) => "encoded_by",
-                    Some(StandardTagKey::Comment) => "comment",
-                    Some(StandardTagKey::Description) => "description",
-                    _ => &t.key,
-                };
-                insert(&mut tags, key, t.value.to_string().as_bytes())?;
-            }
+        for (key, value) in crate::m4a::tags(&mut f, limits)? {
+            insert(&mut tags, &key, &value)?;
         }
         return Ok(tags);
     }

@@ -4,6 +4,7 @@ on:
     paths:
       - .github/workflows/audio-benchmark.yml
       - src/flac.rs
+      - src/audio.rs
       - src/bits.rs
       - src/kernels.rs
   workflow_dispatch:

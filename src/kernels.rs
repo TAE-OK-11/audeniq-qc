@@ -75,6 +75,54 @@ pub(crate) fn interleave_i32(left: &[i32], right: &[i32], out: &mut [i32]) {
     }
 }
 
+/// Pack left-aligned s32 into FLAC's signed 16/24-bit little-endian MD5 bytes.
+/// This lossless byte-layout operation uses baseline NEON, like interleaving;
+/// it does not change numerical DSP behavior selected by --scalar.
+pub(crate) fn compact_pcm(samples: &[i32], bits: u16, out: &mut [u8]) {
+    assert!(matches!(bits, 16 | 24));
+    assert_eq!(out.len(), samples.len() * (bits / 8) as usize);
+    #[cfg(all(target_arch = "aarch64", target_endian = "little"))]
+    // SAFETY: AArch64 baseline NEON; complete 16-sample loads and stores.
+    let pos = unsafe { compact_neon(samples, bits, out) };
+    #[cfg(not(all(target_arch = "aarch64", target_endian = "little")))]
+    let pos = 0;
+    let samples = &samples[pos..];
+    let out = &mut out[pos * (bits / 8) as usize..];
+    if bits == 16 {
+        for (&x, row) in samples.iter().zip(out.as_chunks_mut::<2>().0) {
+            row.copy_from_slice(&((x >> 16) as i16).to_le_bytes());
+        }
+    } else {
+        for (&x, row) in samples.iter().zip(out.as_chunks_mut::<3>().0) {
+            row.copy_from_slice(&(x >> 8).to_le_bytes()[..3]);
+        }
+    }
+}
+
+#[cfg(all(target_arch = "aarch64", target_endian = "little"))]
+#[target_feature(enable = "neon")]
+unsafe fn compact_neon(samples: &[i32], bits: u16, out: &mut [u8]) -> usize {
+    use std::arch::aarch64::*;
+    let mut i = 0;
+    if bits == 16 {
+        while i + 16 <= samples.len() {
+            let bytes = vld4q_u8(samples.as_ptr().add(i).cast());
+            vst2q_u8(out.as_mut_ptr().add(i * 2), uint8x16x2_t(bytes.2, bytes.3));
+            i += 16;
+        }
+    } else {
+        while i + 16 <= samples.len() {
+            let bytes = vld4q_u8(samples.as_ptr().add(i).cast());
+            vst3q_u8(
+                out.as_mut_ptr().add(i * 3),
+                uint8x16x3_t(bytes.1, bytes.2, bytes.3),
+            );
+            i += 16;
+        }
+    }
+    i
+}
+
 type RiceFn = fn(&[u32], u32, usize) -> [u64; 3];
 pub(crate) struct RiceKernel(RiceFn);
 impl RiceKernel {
@@ -851,6 +899,25 @@ mod tests {
 #[cfg(test)]
 mod planning_tests {
     use super::*;
+    #[test]
+    fn compact_pcm_preserves_signed_widths_and_all_vector_tails() {
+        for bits in [16, 24] {
+            for n in (0usize..129).chain([4095, 4096, 4097]) {
+                let samples: Vec<i32> = (0..n)
+                    .map(|i| i32::MIN.wrapping_add((i as i32).wrapping_mul(982451653)))
+                    .collect();
+                let mut expected = Vec::new();
+                for &x in &samples {
+                    expected.extend_from_slice(
+                        &(x >> (32 - bits)).to_le_bytes()[..(bits / 8) as usize],
+                    );
+                }
+                let mut actual = vec![0; expected.len()];
+                compact_pcm(&samples, bits, &mut actual);
+                assert_eq!(actual, expected, "bits={bits} n={n}");
+            }
+        }
+    }
     #[test]
     fn rice_costs_and_stereo_interleave_preserve_integer_extremes() {
         for len in [1, 2, 3, 4, 5, 7, 16, 31, 128, 4095, 32768] {

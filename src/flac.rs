@@ -289,17 +289,7 @@ impl Encoder {
         })
     }
     fn push(&mut self, samples: &[i32]) -> Result<()> {
-        let nbytes = (self.spec.bits_per_sample / 8) as usize;
-        self.raw.resize(samples.len() * nbytes, 0);
-        if nbytes == 2 {
-            for (&x, row) in samples.iter().zip(self.raw.as_chunks_mut::<2>().0) {
-                row.copy_from_slice(&((x >> 16) as i16).to_le_bytes());
-            }
-        } else {
-            for (&x, row) in samples.iter().zip(self.raw.as_chunks_mut::<3>().0) {
-                row.copy_from_slice(&(x >> 8).to_le_bytes()[..3]);
-            }
-        }
+        crate::audio::compact_pcm(samples, self.spec.bits_per_sample, &mut self.raw);
         self.md5.update(&self.raw);
         let block = self.profile.block * self.spec.channels as usize;
         let mut pos = 0;

@@ -96,6 +96,50 @@ fn truncation_never_publishes_output() {
     assert!(!dst.exists());
     assert_eq!(std::fs::read_dir(&d.0).unwrap().count(), 1);
 }
+
+#[test]
+fn flac_md5_validation_is_preserved_with_compact_pcm_packing() {
+    let d = Dir::new();
+    let wav = d.0.join("source.wav");
+    let flac = d.0.join("source.flac");
+    ffmpeg(None, &wav, "pcm_s24le");
+    ffmpeg(Some(&wav), &flac, "flac");
+    let (_, expected, _) = pcm_sha256(&wav, Limits::default(), Backend::Scalar).unwrap();
+    assert_eq!(
+        pcm_sha256(&flac, Limits::default(), Backend::detect())
+            .unwrap()
+            .1,
+        expected
+    );
+    let original = std::fs::read(&flac).unwrap();
+    assert_eq!(&original[..4], b"fLaC");
+    let mut bad = original.clone();
+    bad[26] ^= 1; // STREAMINFO's PCM MD5, not a packet CRC.
+    std::fs::write(&flac, bad).unwrap();
+    assert!(matches!(
+        pcm_sha256(&flac, Limits::default(), Backend::detect()),
+        Err(Error::Invalid("FLAC MD5 mismatch"))
+    ));
+    assert!(meter::analyze(&flac, Limits::default(), Backend::detect(), false).is_err());
+    let dst = d.0.join("output.flac");
+    assert!(flac::convert(&flac, &dst, Limits::default(), Backend::detect()).is_err());
+    assert!(!dst.exists());
+    let mut unknown = original;
+    unknown[26..42].fill(0); // FLAC permits an absent STREAMINFO MD5.
+    std::fs::write(&flac, unknown).unwrap();
+    assert_eq!(
+        pcm_sha256(&flac, Limits::default(), Backend::detect())
+            .unwrap()
+            .1,
+        expected
+    );
+    assert_eq!(
+        flac::convert(&flac, &dst, Limits::default(), Backend::detect())
+            .unwrap()
+            .pcm_sha256,
+        expected
+    );
+}
 #[test]
 fn deadline_and_output_no_clobber() {
     let d = Dir::new();

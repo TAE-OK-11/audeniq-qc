@@ -1,4 +1,5 @@
 use crate::{kernels::Backend, AudioSpec, Error, Limits, Result};
+use md5::{Digest as _, Md5};
 use std::{
     fs::File,
     io::{Read, Seek, SeekFrom},
@@ -6,7 +7,7 @@ use std::{
 };
 use symphonia::core::{
     audio::{AudioBufferRef, Signal},
-    codecs::{Decoder, DecoderOptions, CODEC_TYPE_ALAC, CODEC_TYPE_FLAC},
+    codecs::{Decoder, DecoderOptions, VerificationCheck, CODEC_TYPE_ALAC, CODEC_TYPE_FLAC},
     formats::{FormatOptions, FormatReader},
     io::MediaSourceStream,
     meta::MetadataOptions,
@@ -398,6 +399,8 @@ struct Compressed {
     flac_info: Option<[u8; 34]>,
     retain_frame: bool,
     raw_frame: Option<Box<[u8]>>,
+    pcm_md5: Option<(Md5, [u8; 16])>,
+    md5_buffer: Vec<u8>,
 }
 fn decode_err(e: symphonia::core::errors::Error) -> Error {
     match e {
@@ -525,8 +528,16 @@ impl Compressed {
             None
         };
         let decoder = symphonia::default::get_codecs()
-            .make(p, &DecoderOptions { verify: true })
+            .make(p, &DecoderOptions { verify: !is_flac })
             .map_err(decode_err)?;
+        // Keep complete FLAC MD5 validation, but share the efficient compact
+        // PCM packing and RustCrypto MD5 used by our encoder. The decoder's
+        // generic planar/strided packing and second MD5 implementation are not
+        // also run. Packet CRC and header checks remain in the demuxer/decoder.
+        let pcm_md5 = match (is_flac, decoder.codec_params().verification_check) {
+            (true, Some(VerificationCheck::Md5(expected))) => Some((Md5::new(), expected)),
+            _ => None,
+        };
         let track = t.id;
         Ok(Self {
             format,
@@ -536,6 +547,8 @@ impl Compressed {
             flac_info,
             retain_frame: false,
             raw_frame: None,
+            pcm_md5,
+            md5_buffer: Vec::new(),
         })
     }
     fn next(&mut self, out: &mut Vec<i32>, limits: &Limits) -> Result<()> {
@@ -548,6 +561,12 @@ impl Compressed {
             {
                 if self.decoder.finalize().verify_ok == Some(false) {
                     return Err(Error::Invalid("FLAC MD5 mismatch"));
+                }
+                if let Some((md5, expected)) = self.pcm_md5.take() {
+                    let actual: [u8; 16] = md5.finalize().into();
+                    if actual != expected {
+                        return Err(Error::Invalid("FLAC MD5 mismatch"));
+                    }
                 }
                 return Ok(());
             }
@@ -577,6 +596,10 @@ impl Compressed {
             out.resize(buffer.frames() * 2, 0);
             crate::kernels::interleave_i32(buffer.chan(0), buffer.chan(1), out);
         }
+        if let Some((md5, _)) = &mut self.pcm_md5 {
+            compact_pcm(out, self.spec.bits_per_sample, &mut self.md5_buffer);
+            md5.update(&self.md5_buffer);
+        }
         if self.retain_frame {
             let n = packet.data.len();
             if n < 2
@@ -589,6 +612,14 @@ impl Compressed {
         }
         Ok(())
     }
+}
+
+/// FLAC hashes signed little-endian PCM at its original 16/24-bit width.
+/// Specialize the width once, reuse storage and overwrite each sample in place.
+pub(crate) fn compact_pcm(samples: &[i32], bits: u16, raw: &mut Vec<u8>) {
+    assert!(matches!(bits, 16 | 24));
+    raw.resize(samples.len() * (bits / 8) as usize, 0);
+    crate::kernels::compact_pcm(samples, bits, raw);
 }
 
 pub fn pcm_sha256(

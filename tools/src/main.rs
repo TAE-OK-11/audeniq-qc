@@ -52,6 +52,7 @@ fn entry() -> Result<()> {
             "--seconds" => options.seconds = Some(args.next().ok_or("missing --seconds")?.parse()?),
             "--repeats" => options.repeats = args.next().ok_or("missing --repeats")?.parse()?,
             "--fingerprint" => options.fingerprint = true,
+            "--wav-alac-only" => options.wav_alac_only = true,
             _ => return Err(Error::from(format!("unknown argument {arg}"))),
         }
     }

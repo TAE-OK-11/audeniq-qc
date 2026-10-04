@@ -158,6 +158,11 @@ fn metadata(options: &Options, seconds: u32, results: Vec<Value>) -> Result<Valu
     if let Some(binary) = &options.baseline_binary {
         metadata["baseline_binary_sha256"] = json!(file_sha(binary)?);
     }
+    metadata["input_scope"] = json!(if options.wav_alac_only {
+        "WAV/ALAC"
+    } else {
+        "six lossless formats"
+    });
     Ok(metadata)
 }
 pub fn analysis(options: &Options) -> Result<Value> {
@@ -174,6 +179,9 @@ pub fn analysis(options: &Options) -> Result<Value> {
         ("wavpack", "wv"),
         ("tta", "tta"),
     ] {
+        if options.wav_alac_only && !matches!(ext, "wav" | "m4a") {
+            continue;
+        }
         let input = encoded(&wav, root, codec, ext)?;
         let mut commands = BTreeMap::from([
             (
@@ -277,10 +285,10 @@ pub fn convert(options: &Options) -> Result<Value> {
         ("wavpack", "wv"),
         ("tta", "tta"),
     ] {
-        let input = encoded(&wav, root, codec, ext)?;
-        if options.review && !matches!(ext, "wav" | "m4a") {
+        if (options.wav_alac_only || options.review) && !matches!(ext, "wav" | "m4a") {
             continue;
         }
+        let input = encoded(&wav, root, codec, ext)?;
         let mut outputs = BTreeMap::from([
             ("native", root.join("native.flac")),
             ("ffmpeg", root.join("ffmpeg.flac")),

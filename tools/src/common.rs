@@ -18,6 +18,7 @@ pub struct Options {
     pub fingerprint: bool,
     pub baseline_binary: Option<PathBuf>,
     pub review: bool,
+    pub wav_alac_only: bool,
 }
 impl Default for Options {
     fn default() -> Self {
@@ -29,6 +30,7 @@ impl Default for Options {
             fingerprint: false,
             baseline_binary: None,
             review: false,
+            wav_alac_only: false,
         }
     }
 }

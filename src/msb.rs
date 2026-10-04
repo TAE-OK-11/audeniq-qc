@@ -67,6 +67,91 @@ impl<'a> Bits<'a> {
         let x = self.get(n)?;
         Ok(((x << (32 - n)) as i32) >> (32 - n))
     }
+    /// Decode a complete FLAC Rice value from one cache word in the common
+    /// case. Bounds/range checks and a bounded cross-word fallback remain.
+    #[inline]
+    pub fn rice_signed(&mut self, k: u32) -> Result<i32> {
+        if k > 31 {
+            return Err(Error::Invalid("FLAC Rice width"));
+        }
+        if self.available < k + 1 {
+            self.fill();
+        }
+        let q = self.cache.leading_zeros();
+        let consumed = q + 1 + k;
+        let value = if consumed <= self.available {
+            let tail = if k == 0 {
+                0
+            } else {
+                (self.cache >> (64 - consumed)) & ((1u64 << k) - 1)
+            };
+            self.skip(consumed);
+            ((q as u64) << k) | tail
+        } else {
+            let cap = (u32::MAX >> k).saturating_add(1);
+            let q = self.unary(false, cap)?;
+            if q == cap {
+                return Err(Error::Invalid("FLAC residual range"));
+            }
+            ((q as u64) << k) | self.get(k)? as u64
+        };
+        if value > u32::MAX as u64 {
+            return Err(Error::Invalid("FLAC residual range"));
+        }
+        Ok(((value >> 1) as i32) ^ -((value & 1) as i32))
+    }
+    #[inline]
+    pub fn alac_scalar(&mut self, k: u32, bits: u32) -> Result<u32> {
+        if k == 0 || k > 31 || bits > 32 {
+            return Err(Error::Invalid("ALAC Rice width"));
+        }
+        if self.available < 9 {
+            self.fill();
+        }
+        let q = (!self.cache).leading_zeros().min(9);
+        let prefix = if q == 9 { 9 } else { q + 1 };
+        let tail_bits = if q == 9 {
+            bits
+        } else if k == 1 {
+            0
+        } else {
+            k
+        };
+        let required = prefix + tail_bits;
+        if required <= self.available {
+            let tail = if tail_bits == 0 {
+                0
+            } else {
+                (self.cache >> (64 - required)) & ((1u64 << tail_bits) - 1)
+            };
+            let (consumed, value) = if q == 9 {
+                (required, tail)
+            } else if k == 1 {
+                (prefix, q as u64)
+            } else {
+                (
+                    prefix + if tail > 1 { k } else { k - 1 },
+                    ((q as u64) << k) - q as u64 + tail.saturating_sub(1),
+                )
+            };
+            if value > u32::MAX as u64 {
+                return Err(Error::Invalid("ALAC scalar range"));
+            }
+            self.skip(consumed);
+            return Ok(value as u32);
+        }
+        let q = self.unary(true, 9)?;
+        if q == 9 {
+            return self.get(bits);
+        }
+        if k == 1 {
+            return Ok(q);
+        }
+        let tail = self.peek(k)?;
+        let value = ((q as u64) << k) - q as u64 + (tail as u64).saturating_sub(1);
+        self.get(if tail > 1 { k } else { k - 1 })?;
+        u32::try_from(value).map_err(|_| Error::Invalid("ALAC scalar range"))
+    }
     /// Consume up to limit equal bits; consume the terminator only if found.
     #[inline]
     pub fn unary(&mut self, ones: bool, limit: u32) -> Result<u32> {
@@ -125,6 +210,65 @@ impl<'a> Bits<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn fused_rice_reads_match_bitwise_reference_across_word_boundaries() {
+        for offset in 0..64 {
+            for k in 0..=31 {
+                for q in [0u32, 1, 8, 63, 130] {
+                    let value = (q as u64) << k;
+                    if value > u32::MAX as u64 {
+                        continue;
+                    }
+                    let mut w = crate::bits::BeWriter::new();
+                    w.put(offset, 0);
+                    w.unary(q);
+                    w.put(k, 0);
+                    w.align();
+                    let mut b = Bits::new(&w.bytes);
+                    for _ in 0..offset {
+                        b.get(1).unwrap();
+                    }
+                    let expected = ((value >> 1) as i32) ^ -((value & 1) as i32);
+                    assert_eq!(b.rice_signed(k).unwrap(), expected);
+                    assert_eq!(b.pos, offset as usize + q as usize + 1 + k as usize);
+                }
+            }
+        }
+        for offset in 0..64 {
+            for k in 1..=24 {
+                for q in 0..=9 {
+                    for tail in [0u64, 1, 2, 7] {
+                        if k == 1 && tail != 0 {
+                            continue;
+                        }
+                        let mut w = crate::bits::BeWriter::new();
+                        w.put(offset, 0);
+                        w.put(q, (1u64 << q) - 1);
+                        let expected = if q == 9 {
+                            w.put(24, tail);
+                            tail
+                        } else {
+                            w.put(1, 0);
+                            if k == 1 {
+                                q as u64
+                            } else {
+                                let tail = tail & ((1 << k) - 1);
+                                w.put(k, tail);
+                                ((q as u64) << k) - q as u64 + tail.saturating_sub(1)
+                            }
+                        };
+                        w.put(32, 0);
+                        w.align();
+                        let mut b = Bits::new(&w.bytes);
+                        for _ in 0..offset {
+                            b.get(1).unwrap();
+                        }
+                        assert_eq!(b.alac_scalar(k, 24).unwrap(), expected as u32);
+                    }
+                }
+            }
+        }
+    }
     #[test]
     fn cached_reads_match_independent_bits_at_all_boundaries() {
         let data: Vec<u8> = (0..259).map(|i| (i * 73 + 19) as u8).collect();

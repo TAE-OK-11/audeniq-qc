@@ -14,24 +14,7 @@ fn extend(v: i32, bits: u32) -> i32 {
 }
 #[inline]
 fn scalar(b: &mut Bits<'_>, k: u32, bits: u32) -> Result<u32> {
-    let mut x = b.unary(true, 9)?;
-    if x == 9 {
-        return b.get(bits);
-    }
-    if k != 1 {
-        if k == 0 {
-            return Err(Error::Invalid("ALAC Rice parameter"));
-        }
-        let tail = b.peek(k)?;
-        x = (x << k) - x;
-        if tail > 1 {
-            x += tail - 1;
-            b.get(k)?;
-        } else {
-            b.get(k - 1)?;
-        }
-    }
-    Ok(x)
+    b.alac_scalar(k, bits)
 }
 fn rice(
     b: &mut Bits<'_>,

@@ -310,14 +310,32 @@ pub(crate) fn tags(file: &mut File, limits: &Limits) -> Result<Vec<(String, Vec<
                 b"meta" if a.body.len() >= 4 => walk(&a.body[4..], depth + 1, result)?,
                 b"ilst" => {
                     for tag in atoms(a.body)? {
+                        let children = atoms(tag.body)?;
                         let key = match &tag.kind {
                             b"\xa9too" => "encoder",
                             b"\xa9enc" => "encoded_by",
                             b"\xa9cmt" => "comment",
                             b"desc" | b"ldes" => "description",
+                            b"----" => {
+                                let name = children.iter().find(|a| &a.kind == b"name");
+                                let Some(name) = name else { continue };
+                                if name.body.len() < 4 || name.body.len() > 68 {
+                                    return Err(Error::Invalid("MP4 freeform tag name"));
+                                }
+                                match &name.body[4..] {
+                                    b"encoder" => "encoder",
+                                    b"encoded_by" => "encoded_by",
+                                    b"software" => "software",
+                                    b"writing_library" => "writing_library",
+                                    b"creator_tool" => "creator_tool",
+                                    b"comment" => "comment",
+                                    b"description" => "description",
+                                    _ => continue,
+                                }
+                            }
                             _ => continue,
                         };
-                        for data in atoms(tag.body)? {
+                        for data in children {
                             if &data.kind == b"data" && data.body.len() >= 8 && be32(data.body) == 1
                             {
                                 if data.body.len() > 65544 || result.len() >= 128 {

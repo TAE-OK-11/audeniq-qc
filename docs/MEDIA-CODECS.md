@@ -17,6 +17,8 @@ target/release/audeniq-qc-tools benchmark-review --seconds 120 --repeats 5 --ref
 
 The media-codecs workflow runs these three-way comparisons against FFmpeg on native Arm and x86 runners, after qualifying both codec paths. It records repeated CPU/wall/RSS samples, actual CPU identity, binary/input hashes and output sizes. Native/reference QC values and fingerprints must match exactly; every converted output must independently decode to the expected PCM SHA-256 through FFmpeg. Both builds use fused conversion+QC when benchmarking review work. Generic dependencies are retained in both builds.
 
+The first comparison (`c9809254`, workflow 37194355514) passed on EPYC 7763 and Neoverse N2, but exposed slower native conversions, especially ALAC on Arm. Raw measurements are preserved in `benchmark-media-before-arm.json` and `benchmark-media-before-x86.json`. Follow-up optimization decodes whole FLAC/ALAC Rice values directly from the word cache, retains bounded cross-word fallbacks, avoids partial-frame retries using validated STREAMINFO size bounds, and vectorizes stereo reconstruction while preserving sample-range checks. Independent boundary tests cover normal/escaped Rice values across every cache offset. Later results must identify their tested source/CPU rather than presenting these initial results as the optimized engine.
+
 ## Bounds and integrity
 
 * M4A: single ALAC track and description, non-fragmented sample tables, bounded moov/packet/index storage, monotonic non-overlapping chunks inside mdat, exact stts/stsz/chunk counts and ALAC packet frame counts. Audio timescale must match the ALAC configuration. Version-0 audio entries are supported; additional tracks, compact/fragmented tables and other entry versions are rejected.

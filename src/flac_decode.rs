@@ -56,18 +56,7 @@ fn residual(b: &mut Bits<'_>, p: &mut [i32], order: usize) -> Result<()> {
             }
         } else {
             for v in dst {
-                // The cap bounds hostile zero runs; legitimate signed residuals
-                // fit the FLAC 32-bit residual representation.
-                let cap = (u32::MAX >> k).saturating_add(1);
-                let q = b.unary(false, cap)?;
-                if q == cap {
-                    return invalid("FLAC residual range");
-                }
-                let value = ((q as u64) << k) | b.get(k)? as u64;
-                if value > u32::MAX as u64 {
-                    return invalid("FLAC residual range");
-                }
-                *v = ((value >> 1) as i32) ^ -((value & 1) as i32);
+                *v = b.rice_signed(k)?;
             }
         }
     }
@@ -276,10 +265,26 @@ fn decode(
         for (dst, &v) in out.iter_mut().zip(&planes[0]) {
             *dst = v.wrapping_shl(shift as u32);
         }
+    } else if h.mode < 8 {
+        for plane in planes.iter_mut() {
+            for v in plane {
+                *v = v.wrapping_shl(shift as u32);
+            }
+        }
+        crate::kernels::interleave_i32(&planes[0], &planes[1], out);
     } else {
-        for i in 0..h.samples {
-            let a = planes[0][i] as i64;
-            let d = planes[1][i] as i64;
+        // Each subframe is at most 25 signed bits; stereo reconstruction fits
+        // i32 even before validation. Accumulate range failures and check once
+        // so SIMD/vectorization is possible without weakening integrity.
+        let bound = 1i32 << (spec.bits_per_sample - 1);
+        let mut bad = false;
+        for ((dst, &a), &d) in out
+            .as_chunks_mut::<2>()
+            .0
+            .iter_mut()
+            .zip(&planes[0])
+            .zip(&planes[1])
+        {
             let (left, right) = match h.mode {
                 8 => (a, a - d),
                 9 => (a + d, d),
@@ -289,9 +294,12 @@ fn decode(
                 }
                 _ => (a, d),
             };
-            out[i * 2] = checked(left, spec.bits_per_sample as u32)?.wrapping_shl(shift as u32);
-            out[i * 2 + 1] =
-                checked(right, spec.bits_per_sample as u32)?.wrapping_shl(shift as u32);
+            bad |= left < -bound || left >= bound || right < -bound || right >= bound;
+            dst[0] = left.wrapping_shl(shift as u32);
+            dst[1] = right.wrapping_shl(shift as u32);
+        }
+        if bad {
+            return invalid("FLAC reconstructed stereo range");
         }
     }
     Ok((length + 2, h))
@@ -421,11 +429,23 @@ impl Decoder {
             return Ok(None);
         }
         let maximum = u16::from_be_bytes(self.info[2..4].try_into().unwrap()) as usize;
+        let declared_max =
+            u32::from_be_bytes([0, self.info[7], self.info[8], self.info[9]]) as usize;
+        if declared_max > limits.max_packet_bytes {
+            return Err(Error::Limit("FLAC declared packet bytes"));
+        }
         loop {
             limits.check()?;
+            if !self.eof && self.buffer.len() - self.start < declared_max {
+                self.fill(limits.max_packet_bytes)?;
+                continue;
+            }
             let data = &self.buffer[self.start..];
             match decode(data, &self.spec, maximum, &mut self.planes, out) {
                 Ok((n, h)) => {
+                    if declared_max != 0 && n > declared_max {
+                        return invalid("FLAC declared frame size");
+                    }
                     if self.strategy.is_some_and(|s| s != h.variable)
                         || h.number != if h.variable { self.decoded } else { self.frame }
                     {

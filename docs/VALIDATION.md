@@ -1,5 +1,7 @@
 # 검증과 성능 측정
 
+아래 성능 표는 Arm 우선 작업 전 엔진의 기록입니다. 최신 Graviton4 대상 변경·검사·같은 호스트 비교는 [GRAVITON4.md](GRAVITON4.md)에 있습니다. 현재 qualification.json은 후속 검사를 포함하며, 아래 표의 이전 기준 비교 기록은 고정 커밋으로 연결합니다.
+
 검증한 엔진 커밋: `df7e6d57f5d059f95ce1824ee31b5858867b02be`.
 [최종 x86·Arm CI](https://github.com/TAE-OK-11/audeniq-qc/actions/runs/37185830208)에서 빌드·형식 검사·Clippy·전체 테스트·개발용 기준 비교·성능 측정을 모두 통과했습니다. 엔진과 검증·측정 도구의 소스는 Rust이며, 런타임 FFmpeg 의존성과 백엔드 연결은 없습니다.
 
@@ -18,7 +20,7 @@ WAV·AIFF처럼 원래 PCM 내용의 체크섬이 없는 형식은 구조·길�
 | 검사 | 통과 | 내용 |
 |---|---:|---|
 | Rust 단위·회귀 테스트 | 12 | SIMD/기준 구현 동일성, 비트 읽기/쓰기 경계, codec/hash, no-clobber, 기한, 손상 시 게시 금지, PCM 출력·규격, 지문 재현성 |
-| [기준 비교](qualification.json) | 538 | 28 codec/규격 조합, PCM export, 레벨 0~8 및 명시적 FLAC 재인코딩, 손상/잘림, 태그/커버, fractional tail·anti-aliasing |
+| [기준 비교](https://github.com/TAE-OK-11/audeniq-qc/blob/9dacd1e3b47906366b710dad9afd97fdd160d99c/docs/qualification.json) | 538 | 28 codec/규격 조합, PCM export, 레벨 0~8 및 명시적 FLAC 재인코딩, 손상/잘림, 태그/커버, fractional tail·anti-aliasing |
 | [정수 경계 검사](codec-stress.json) | 288 | 16/24-bit × mono/stereo × 8 패턴, FLAC/WavPack 압축 모드·ALAC/TTA, 마지막 1-frame 블록, 독립 생성 PCM 해시 |
 | [합성 EBU 기준](standards-synthesized.json) | 20 | integrated LUFS 5개, True Peak 5개 × 3 rates |
 

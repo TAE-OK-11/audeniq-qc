@@ -183,7 +183,7 @@
       "native_true_peak": -0.7226610191800222
     }
   ],
-  "checks": 538,
+  "checks": 596,
   "fixture_rng": "SplitMix64 seed 1729",
   "harness": "audeniq-qc-tools Rust",
   "lufs_tolerance_lu": 0.11,

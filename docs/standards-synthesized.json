@@ -1,0 +1,200 @@
+{
+  "reference": "EBU Tech 3341 (November 2023), Table 1",
+  "source": "https://tech.ebu.ch/files/live/sites/tech/files/shared/tech/tech3341.pdf",
+  "test_material": "Independently synthesized from published signal descriptions, not original EBU ZIP. ZIP download returned HTTP 403 in development environment.",
+  "scope": "5 integrated loudness tests + 5 true peak tests at 3 rates; cases 6..14 and transient peak cases 20..23 are not covered. Only accepted integer mono/stereo formats are in scope.",
+  "certified": false,
+  "status": "passed",
+  "results": [
+    {
+      "test": 1,
+      "metric": "integrated_lufs",
+      "expected": -23,
+      "actual": -22.9933003211328,
+      "tolerance": 0.1,
+      "passed": true
+    },
+    {
+      "test": 2,
+      "metric": "integrated_lufs",
+      "expected": -33,
+      "actual": -32.99330010347694,
+      "tolerance": 0.1,
+      "passed": true
+    },
+    {
+      "test": 3,
+      "metric": "integrated_lufs",
+      "expected": -23,
+      "actual": -23.01387189656889,
+      "tolerance": 0.1,
+      "passed": true
+    },
+    {
+      "test": 4,
+      "metric": "integrated_lufs",
+      "expected": -23,
+      "actual": -23.013871896568904,
+      "tolerance": 0.1,
+      "passed": true
+    },
+    {
+      "test": 5,
+      "metric": "integrated_lufs",
+      "expected": -23,
+      "actual": -22.97865844697539,
+      "tolerance": 0.1,
+      "passed": true
+    },
+    {
+      "test": 15,
+      "sample_rate": 44100,
+      "metric": "true_peak_dbtp",
+      "expected": -6,
+      "actual": -6.020599913279624,
+      "tolerance_lower": -0.4,
+      "tolerance_upper": 0.2,
+      "passed": true
+    },
+    {
+      "test": 16,
+      "sample_rate": 44100,
+      "metric": "true_peak_dbtp",
+      "expected": -6,
+      "actual": -5.975310063442901,
+      "tolerance_lower": -0.4,
+      "tolerance_upper": 0.2,
+      "passed": true
+    },
+    {
+      "test": 17,
+      "sample_rate": 44100,
+      "metric": "true_peak_dbtp",
+      "expected": -6,
+      "actual": -6.313033042510127,
+      "tolerance_lower": -0.4,
+      "tolerance_upper": 0.2,
+      "passed": true
+    },
+    {
+      "test": 18,
+      "sample_rate": 44100,
+      "metric": "true_peak_dbtp",
+      "expected": -6,
+      "actual": -6.027602300946774,
+      "tolerance_lower": -0.4,
+      "tolerance_upper": 0.2,
+      "passed": true
+    },
+    {
+      "test": 19,
+      "sample_rate": 44100,
+      "metric": "true_peak_dbtp",
+      "expected": 3,
+      "actual": 3.0296717961197754,
+      "tolerance_lower": -0.4,
+      "tolerance_upper": 0.2,
+      "passed": true
+    },
+    {
+      "test": 15,
+      "sample_rate": 48000,
+      "metric": "true_peak_dbtp",
+      "expected": -6,
+      "actual": -6.020599913279624,
+      "tolerance_lower": -0.4,
+      "tolerance_upper": 0.2,
+      "passed": true
+    },
+    {
+      "test": 16,
+      "sample_rate": 48000,
+      "metric": "true_peak_dbtp",
+      "expected": -6,
+      "actual": -5.975907515201719,
+      "tolerance_lower": -0.4,
+      "tolerance_upper": 0.2,
+      "passed": true
+    },
+    {
+      "test": 17,
+      "sample_rate": 48000,
+      "metric": "true_peak_dbtp",
+      "expected": -6,
+      "actual": -6.313275067690753,
+      "tolerance_lower": -0.4,
+      "tolerance_upper": 0.2,
+      "passed": true
+    },
+    {
+      "test": 18,
+      "sample_rate": 48000,
+      "metric": "true_peak_dbtp",
+      "expected": -6,
+      "actual": -6.026488378021884,
+      "tolerance_lower": -0.4,
+      "tolerance_upper": 0.2,
+      "passed": true
+    },
+    {
+      "test": 19,
+      "sample_rate": 48000,
+      "metric": "true_peak_dbtp",
+      "expected": 3,
+      "actual": 3.0290741982228706,
+      "tolerance_lower": -0.4,
+      "tolerance_upper": 0.2,
+      "passed": true
+    },
+    {
+      "test": 15,
+      "sample_rate": 96000,
+      "metric": "true_peak_dbtp",
+      "expected": -6,
+      "actual": -6.020599913279624,
+      "tolerance_lower": -0.4,
+      "tolerance_upper": 0.2,
+      "passed": true
+    },
+    {
+      "test": 16,
+      "sample_rate": 96000,
+      "metric": "true_peak_dbtp",
+      "expected": -6,
+      "actual": -5.975907515201719,
+      "tolerance_lower": -0.4,
+      "tolerance_upper": 0.2,
+      "passed": true
+    },
+    {
+      "test": 17,
+      "sample_rate": 96000,
+      "metric": "true_peak_dbtp",
+      "expected": -6,
+      "actual": -6.314642743776249,
+      "tolerance_lower": -0.4,
+      "tolerance_upper": 0.2,
+      "passed": true
+    },
+    {
+      "test": 18,
+      "sample_rate": 96000,
+      "metric": "true_peak_dbtp",
+      "expected": -6,
+      "actual": -6.027203344688898,
+      "tolerance_lower": -0.4,
+      "tolerance_upper": 0.2,
+      "passed": true
+    },
+    {
+      "test": 19,
+      "sample_rate": 96000,
+      "metric": "true_peak_dbtp",
+      "expected": 3,
+      "actual": 3.0290741982228706,
+      "tolerance_lower": -0.4,
+      "tolerance_upper": 0.2,
+      "passed": true
+    }
+  ]
+}

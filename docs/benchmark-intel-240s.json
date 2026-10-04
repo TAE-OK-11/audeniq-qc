@@ -1,0 +1,571 @@
+{
+  "date_utc": "2026-10-04T02:12:36.981320+00:00",
+  "host_cpu": "INTEL(R) XEON(R) PLATINUM 8573C",
+  "arch": "x86_64",
+  "ffmpeg_version": "ffmpeg version 6.1.1-3ubuntu5 Copyright (c) 2000-2023 the FFmpeg developers",
+  "binary_sha256": "481e50c9f2b24001ad50930137835a06bd96ec36f36c78f49ca1614ca3b09180",
+  "seconds": 240,
+  "sample_rate": 48000,
+  "channels": 2,
+  "bits": 24,
+  "repeats": 5,
+  "qualification": "synthetic tone mixture, warm page cache; not representative production corpus or EPYC/Arm results",
+  "comparison": "Both decode once and measure EBU LUFS/true peak + s32le SHA256. Native additionally measures clipping, silence, zero crossings and block energies. FFmpeg baseline excludes probe/startup for FFprobe and AUDENIQ Rust PCM meter; therefore these are conservative subsystem measurements, not an end-to-end AUDENIQ speedup. Fingerprint tap disabled for both. True-peak algorithms differ; see qualification tolerances.",
+  "results": [
+    {
+      "codec": "pcm_s24le",
+      "file_bytes": 69120102,
+      "fixture_sha256": "28ae590684da5e492d203d8c773d4e05e7fe00ccc1f82155420af6ad80ef151a",
+      "commands": {
+        "native": [
+          "/workspace/scratch/98bcb8925877/audeniq-qc/target/release/audeniq-qc",
+          "analyze",
+          "/tmp/audeniq-qc-bench-fw8rfznz/master.wav"
+        ],
+        "native_scalar": [
+          "/workspace/scratch/98bcb8925877/audeniq-qc/target/release/audeniq-qc",
+          "analyze",
+          "/tmp/audeniq-qc-bench-fw8rfznz/master.wav",
+          "--scalar"
+        ],
+        "ffmpeg": [
+          "ffmpeg",
+          "-nostdin",
+          "-hide_banner",
+          "-nostats",
+          "-threads",
+          "1",
+          "-i",
+          "/tmp/audeniq-qc-bench-fw8rfznz/master.wav",
+          "-map",
+          "0:a:0",
+          "-af",
+          "ebur128=peak=true:framelog=quiet",
+          "-f",
+          "null",
+          "-",
+          "-map",
+          "0:a:0",
+          "-c:a",
+          "pcm_s32le",
+          "-f",
+          "hash",
+          "-hash",
+          "sha256",
+          "-"
+        ]
+      },
+      "runs": {
+        "native": [
+          {
+            "wall_s": 0.43,
+            "user_s": 0.42,
+            "system_s": 0.0,
+            "cpu_s": 0.42,
+            "peak_rss_kib": 2292
+          },
+          {
+            "wall_s": 0.42,
+            "user_s": 0.41,
+            "system_s": 0.0,
+            "cpu_s": 0.41,
+            "peak_rss_kib": 2292
+          },
+          {
+            "wall_s": 0.42,
+            "user_s": 0.41,
+            "system_s": 0.0,
+            "cpu_s": 0.41,
+            "peak_rss_kib": 2152
+          },
+          {
+            "wall_s": 0.42,
+            "user_s": 0.41,
+            "system_s": 0.0,
+            "cpu_s": 0.41,
+            "peak_rss_kib": 2356
+          },
+          {
+            "wall_s": 0.49,
+            "user_s": 0.49,
+            "system_s": 0.0,
+            "cpu_s": 0.49,
+            "peak_rss_kib": 2180
+          }
+        ],
+        "native_scalar": [
+          {
+            "wall_s": 0.44,
+            "user_s": 0.44,
+            "system_s": 0.0,
+            "cpu_s": 0.44,
+            "peak_rss_kib": 2180
+          },
+          {
+            "wall_s": 0.46,
+            "user_s": 0.45,
+            "system_s": 0.0,
+            "cpu_s": 0.45,
+            "peak_rss_kib": 2256
+          },
+          {
+            "wall_s": 0.46,
+            "user_s": 0.44,
+            "system_s": 0.01,
+            "cpu_s": 0.45,
+            "peak_rss_kib": 2196
+          },
+          {
+            "wall_s": 0.45,
+            "user_s": 0.44,
+            "system_s": 0.01,
+            "cpu_s": 0.45,
+            "peak_rss_kib": 2176
+          },
+          {
+            "wall_s": 0.44,
+            "user_s": 0.44,
+            "system_s": 0.0,
+            "cpu_s": 0.44,
+            "peak_rss_kib": 2256
+          }
+        ],
+        "ffmpeg": [
+          {
+            "wall_s": 2.12,
+            "user_s": 1.86,
+            "system_s": 0.56,
+            "cpu_s": 2.42,
+            "peak_rss_kib": 37608
+          },
+          {
+            "wall_s": 2.16,
+            "user_s": 1.83,
+            "system_s": 0.56,
+            "cpu_s": 2.39,
+            "peak_rss_kib": 37604
+          },
+          {
+            "wall_s": 2.28,
+            "user_s": 1.93,
+            "system_s": 0.67,
+            "cpu_s": 2.6,
+            "peak_rss_kib": 37604
+          },
+          {
+            "wall_s": 2.32,
+            "user_s": 1.99,
+            "system_s": 0.51,
+            "cpu_s": 2.5,
+            "peak_rss_kib": 37608
+          },
+          {
+            "wall_s": 2.42,
+            "user_s": 2.24,
+            "system_s": 0.54,
+            "cpu_s": 2.7800000000000002,
+            "peak_rss_kib": 37348
+          }
+        ]
+      },
+      "median": {
+        "native": {
+          "wall_s": 0.42,
+          "user_s": 0.41,
+          "system_s": 0.0,
+          "cpu_s": 0.41,
+          "peak_rss_kib": 2292
+        },
+        "native_scalar": {
+          "wall_s": 0.45,
+          "user_s": 0.44,
+          "system_s": 0.0,
+          "cpu_s": 0.45,
+          "peak_rss_kib": 2196
+        },
+        "ffmpeg": {
+          "wall_s": 2.28,
+          "user_s": 1.93,
+          "system_s": 0.56,
+          "cpu_s": 2.5,
+          "peak_rss_kib": 37604
+        }
+      },
+      "ffmpeg_div_native": {
+        "wall_s": 5.428571428571428,
+        "cpu_s": 6.097560975609756,
+        "peak_rss_kib": 16.406631762652705
+      }
+    },
+    {
+      "codec": "flac",
+      "file_bytes": 32261824,
+      "fixture_sha256": "b37ade626abd5a2272dfdfd62d1392a4ded2bbdc92622cef272fe04e4051b887",
+      "commands": {
+        "native": [
+          "/workspace/scratch/98bcb8925877/audeniq-qc/target/release/audeniq-qc",
+          "analyze",
+          "/tmp/audeniq-qc-bench-fw8rfznz/master.flac"
+        ],
+        "native_scalar": [
+          "/workspace/scratch/98bcb8925877/audeniq-qc/target/release/audeniq-qc",
+          "analyze",
+          "/tmp/audeniq-qc-bench-fw8rfznz/master.flac",
+          "--scalar"
+        ],
+        "ffmpeg": [
+          "ffmpeg",
+          "-nostdin",
+          "-hide_banner",
+          "-nostats",
+          "-threads",
+          "1",
+          "-i",
+          "/tmp/audeniq-qc-bench-fw8rfznz/master.flac",
+          "-map",
+          "0:a:0",
+          "-af",
+          "ebur128=peak=true:framelog=quiet",
+          "-f",
+          "null",
+          "-",
+          "-map",
+          "0:a:0",
+          "-c:a",
+          "pcm_s32le",
+          "-f",
+          "hash",
+          "-hash",
+          "sha256",
+          "-"
+        ]
+      },
+      "runs": {
+        "native": [
+          {
+            "wall_s": 0.82,
+            "user_s": 0.81,
+            "system_s": 0.0,
+            "cpu_s": 0.81,
+            "peak_rss_kib": 5196
+          },
+          {
+            "wall_s": 0.81,
+            "user_s": 0.8,
+            "system_s": 0.0,
+            "cpu_s": 0.8,
+            "peak_rss_kib": 5100
+          },
+          {
+            "wall_s": 0.83,
+            "user_s": 0.82,
+            "system_s": 0.01,
+            "cpu_s": 0.83,
+            "peak_rss_kib": 5160
+          },
+          {
+            "wall_s": 0.81,
+            "user_s": 0.8,
+            "system_s": 0.0,
+            "cpu_s": 0.8,
+            "peak_rss_kib": 5176
+          },
+          {
+            "wall_s": 0.81,
+            "user_s": 0.81,
+            "system_s": 0.0,
+            "cpu_s": 0.81,
+            "peak_rss_kib": 5148
+          }
+        ],
+        "native_scalar": [
+          {
+            "wall_s": 0.85,
+            "user_s": 0.84,
+            "system_s": 0.0,
+            "cpu_s": 0.84,
+            "peak_rss_kib": 5152
+          },
+          {
+            "wall_s": 0.81,
+            "user_s": 0.8,
+            "system_s": 0.0,
+            "cpu_s": 0.8,
+            "peak_rss_kib": 5196
+          },
+          {
+            "wall_s": 0.83,
+            "user_s": 0.82,
+            "system_s": 0.0,
+            "cpu_s": 0.82,
+            "peak_rss_kib": 5148
+          },
+          {
+            "wall_s": 0.87,
+            "user_s": 0.85,
+            "system_s": 0.01,
+            "cpu_s": 0.86,
+            "peak_rss_kib": 5240
+          },
+          {
+            "wall_s": 0.83,
+            "user_s": 0.82,
+            "system_s": 0.0,
+            "cpu_s": 0.82,
+            "peak_rss_kib": 5152
+          }
+        ],
+        "ffmpeg": [
+          {
+            "wall_s": 1.72,
+            "user_s": 1.86,
+            "system_s": 0.18,
+            "cpu_s": 2.04,
+            "peak_rss_kib": 36576
+          },
+          {
+            "wall_s": 1.77,
+            "user_s": 1.88,
+            "system_s": 0.13,
+            "cpu_s": 2.01,
+            "peak_rss_kib": 36584
+          },
+          {
+            "wall_s": 1.71,
+            "user_s": 1.87,
+            "system_s": 0.15,
+            "cpu_s": 2.02,
+            "peak_rss_kib": 36576
+          },
+          {
+            "wall_s": 1.73,
+            "user_s": 1.89,
+            "system_s": 0.17,
+            "cpu_s": 2.06,
+            "peak_rss_kib": 36580
+          },
+          {
+            "wall_s": 1.65,
+            "user_s": 1.82,
+            "system_s": 0.17,
+            "cpu_s": 1.99,
+            "peak_rss_kib": 36580
+          }
+        ]
+      },
+      "median": {
+        "native": {
+          "wall_s": 0.81,
+          "user_s": 0.81,
+          "system_s": 0.0,
+          "cpu_s": 0.81,
+          "peak_rss_kib": 5160
+        },
+        "native_scalar": {
+          "wall_s": 0.83,
+          "user_s": 0.82,
+          "system_s": 0.0,
+          "cpu_s": 0.82,
+          "peak_rss_kib": 5152
+        },
+        "ffmpeg": {
+          "wall_s": 1.72,
+          "user_s": 1.87,
+          "system_s": 0.17,
+          "cpu_s": 2.02,
+          "peak_rss_kib": 36580
+        }
+      },
+      "ffmpeg_div_native": {
+        "wall_s": 2.1234567901234565,
+        "cpu_s": 2.493827160493827,
+        "peak_rss_kib": 7.089147286821706
+      }
+    },
+    {
+      "codec": "alac",
+      "file_bytes": 47216360,
+      "fixture_sha256": "89225739d5f69f647afded9fb2355c81bf67938c6e997fb061ba1aab89aff636",
+      "commands": {
+        "native": [
+          "/workspace/scratch/98bcb8925877/audeniq-qc/target/release/audeniq-qc",
+          "analyze",
+          "/tmp/audeniq-qc-bench-fw8rfznz/master.m4a"
+        ],
+        "native_scalar": [
+          "/workspace/scratch/98bcb8925877/audeniq-qc/target/release/audeniq-qc",
+          "analyze",
+          "/tmp/audeniq-qc-bench-fw8rfznz/master.m4a",
+          "--scalar"
+        ],
+        "ffmpeg": [
+          "ffmpeg",
+          "-nostdin",
+          "-hide_banner",
+          "-nostats",
+          "-threads",
+          "1",
+          "-i",
+          "/tmp/audeniq-qc-bench-fw8rfznz/master.m4a",
+          "-map",
+          "0:a:0",
+          "-af",
+          "ebur128=peak=true:framelog=quiet",
+          "-f",
+          "null",
+          "-",
+          "-map",
+          "0:a:0",
+          "-c:a",
+          "pcm_s32le",
+          "-f",
+          "hash",
+          "-hash",
+          "sha256",
+          "-"
+        ]
+      },
+      "runs": {
+        "native": [
+          {
+            "wall_s": 0.99,
+            "user_s": 0.98,
+            "system_s": 0.0,
+            "cpu_s": 0.98,
+            "peak_rss_kib": 2604
+          },
+          {
+            "wall_s": 1.01,
+            "user_s": 1.0,
+            "system_s": 0.01,
+            "cpu_s": 1.01,
+            "peak_rss_kib": 2588
+          },
+          {
+            "wall_s": 1.09,
+            "user_s": 1.08,
+            "system_s": 0.0,
+            "cpu_s": 1.08,
+            "peak_rss_kib": 2484
+          },
+          {
+            "wall_s": 1.04,
+            "user_s": 1.02,
+            "system_s": 0.01,
+            "cpu_s": 1.03,
+            "peak_rss_kib": 2580
+          },
+          {
+            "wall_s": 1.03,
+            "user_s": 1.02,
+            "system_s": 0.01,
+            "cpu_s": 1.03,
+            "peak_rss_kib": 2648
+          }
+        ],
+        "native_scalar": [
+          {
+            "wall_s": 1.17,
+            "user_s": 1.15,
+            "system_s": 0.02,
+            "cpu_s": 1.17,
+            "peak_rss_kib": 2536
+          },
+          {
+            "wall_s": 1.06,
+            "user_s": 1.05,
+            "system_s": 0.01,
+            "cpu_s": 1.06,
+            "peak_rss_kib": 2580
+          },
+          {
+            "wall_s": 1.02,
+            "user_s": 1.01,
+            "system_s": 0.01,
+            "cpu_s": 1.02,
+            "peak_rss_kib": 2680
+          },
+          {
+            "wall_s": 1.06,
+            "user_s": 1.04,
+            "system_s": 0.02,
+            "cpu_s": 1.06,
+            "peak_rss_kib": 2616
+          },
+          {
+            "wall_s": 1.04,
+            "user_s": 1.04,
+            "system_s": 0.0,
+            "cpu_s": 1.04,
+            "peak_rss_kib": 2604
+          }
+        ],
+        "ffmpeg": [
+          {
+            "wall_s": 2.25,
+            "user_s": 2.3,
+            "system_s": 0.18,
+            "cpu_s": 2.48,
+            "peak_rss_kib": 36604
+          },
+          {
+            "wall_s": 2.12,
+            "user_s": 2.26,
+            "system_s": 0.18,
+            "cpu_s": 2.44,
+            "peak_rss_kib": 36732
+          },
+          {
+            "wall_s": 2.16,
+            "user_s": 2.31,
+            "system_s": 0.16,
+            "cpu_s": 2.47,
+            "peak_rss_kib": 36728
+          },
+          {
+            "wall_s": 2.15,
+            "user_s": 2.36,
+            "system_s": 0.14,
+            "cpu_s": 2.5,
+            "peak_rss_kib": 36744
+          },
+          {
+            "wall_s": 2.11,
+            "user_s": 2.23,
+            "system_s": 0.14,
+            "cpu_s": 2.37,
+            "peak_rss_kib": 36732
+          }
+        ]
+      },
+      "median": {
+        "native": {
+          "wall_s": 1.03,
+          "user_s": 1.02,
+          "system_s": 0.01,
+          "cpu_s": 1.03,
+          "peak_rss_kib": 2588
+        },
+        "native_scalar": {
+          "wall_s": 1.06,
+          "user_s": 1.04,
+          "system_s": 0.01,
+          "cpu_s": 1.06,
+          "peak_rss_kib": 2604
+        },
+        "ffmpeg": {
+          "wall_s": 2.15,
+          "user_s": 2.3,
+          "system_s": 0.16,
+          "cpu_s": 2.47,
+          "peak_rss_kib": 36732
+        }
+      },
+      "ffmpeg_div_native": {
+        "wall_s": 2.087378640776699,
+        "cpu_s": 2.3980582524271847,
+        "peak_rss_kib": 14.193199381761978
+      }
+    }
+  ]
+}

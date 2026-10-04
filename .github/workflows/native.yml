@@ -1,0 +1,27 @@
+name: Native Rust qualification
+on: [push, pull_request, workflow_dispatch]
+permissions:
+  contents: read
+jobs:
+  qualify:
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [ubuntu-24.04, ubuntu-24.04-arm]
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - name: Toolchain and development oracle
+        run: |
+          rustc --version
+          cargo --version
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq ffmpeg python3
+      - run: cargo fmt --check
+      - run: cargo clippy --locked --all-targets -- -D warnings
+      - run: cargo test --locked
+      - run: cargo build --locked --release
+      - run: target/release/audeniq-qc capabilities
+      - run: python3 scripts/qualify.py
+      - run: python3 scripts/standards.py

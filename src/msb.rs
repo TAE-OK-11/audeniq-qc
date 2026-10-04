@@ -385,7 +385,7 @@ mod tests {
                     assert_eq!(fast.pos, slow.pos);
                     assert_eq!(fast.get(13).unwrap(), 0x1abc);
                     // Truncation inside the run must fail, never read past it.
-                    let cut = (slow.pos - 1) / 8;
+                    let cut = slow.pos.saturating_sub(1) / 8;
                     if !values.is_empty() && cut * 8 >= offset as usize {
                         let mut b = Bits::new(&w.bytes[..cut]);
                         b.get(offset).unwrap();

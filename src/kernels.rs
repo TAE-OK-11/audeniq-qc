@@ -424,6 +424,9 @@ pub struct Dot64Kernel(fn(&[f64], &[f64]) -> f64);
 /// Integer LPC prediction across consecutive samples. Widening multiplication
 /// preserves all bits; a coefficient has at most 15 signed bits, so eight
 /// products of i32 samples cannot overflow the i64 accumulator.
+// The backend selects an explicit AVX2 build on x86; AArch64 always uses
+// the baseline-NEON auto-vectorized loops.
+#[cfg_attr(not(target_arch = "x86_64"), allow(dead_code))]
 pub(crate) struct LpcKernel(Backend);
 impl LpcKernel {
     pub(crate) fn new(backend: Backend) -> Self {

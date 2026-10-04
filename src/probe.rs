@@ -12,6 +12,13 @@ type Tags = BTreeMap<String, String>;
 /// The shared probe boundary used by AUDENIQ for audio and cover images.
 pub fn media(path: &Path, limits: Limits) -> Result<Value> {
     limits.check()?;
+    let meta = std::fs::metadata(path)?;
+    if !meta.is_file() {
+        return Err(Error::Unsupported("regular local files only"));
+    }
+    if meta.len() > limits.max_file_bytes {
+        return Err(Error::Limit("input bytes"));
+    }
     let mut h = [0; 12];
     File::open(path)?.read_exact(&mut h)?;
     if h.starts_with(b"\x89PNG\r\n\x1a\n") || h.starts_with(b"\xff\xd8\xff") {
@@ -31,7 +38,11 @@ pub fn audio(path: &Path, limits: Limits) -> Result<Value> {
 }
 pub fn cover(path: &Path, limits: Limits) -> Result<Value> {
     limits.check()?;
-    if std::fs::metadata(path)?.len() > 64 * 1024 * 1024 {
+    let meta = std::fs::metadata(path)?;
+    if !meta.is_file() {
+        return Err(Error::Unsupported("regular local files only"));
+    }
+    if meta.len() > (64 * 1024 * 1024).min(limits.max_file_bytes) {
         return Err(Error::Limit("cover bytes"));
     }
     let mut reader = image::io::Reader::open(path)?.with_guessed_format()?;
@@ -79,6 +90,9 @@ pub fn tags(path: &Path, limits: &Limits) -> Result<Tags> {
     limits.check()?;
     let mut f = File::open(path)?;
     let len = f.metadata()?.len();
+    if !f.metadata()?.is_file() {
+        return Err(Error::Unsupported("regular local files only"));
+    }
     if len > limits.max_file_bytes {
         return Err(Error::Limit("input bytes"));
     }

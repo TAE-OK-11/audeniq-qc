@@ -7,10 +7,10 @@
 use crate::{
     audio::{pcm_sha256, AudioReader},
     bits::{crc16, crc8, BeWriter},
-    kernels::Backend,
+    kernels::{Backend, Dot64Kernel},
     AudioSpec, Error, Limits, Result,
 };
-use md5::Md5;
+use md5::{Digest as _, Md5};
 use serde::Serialize;
 use sha2::{Digest, Sha256};
 use std::{
@@ -28,6 +28,12 @@ pub struct Conversion {
     pub pcm_sha256: String,
     pub output_bytes: u64,
     pub encoder: &'static str,
+}
+// One normalizer per command; 296 stack bytes avoid an unnecessary heap box.
+#[allow(clippy::large_enum_variant)]
+enum Normalizer {
+    Copy(File),
+    Encode(Encoder),
 }
 struct Temp(PathBuf);
 impl Drop for Temp {
@@ -55,12 +61,25 @@ pub fn convert(src: &Path, dst: &Path, limits: Limits, backend: Backend) -> Resu
         std::process::id(),
         COUNTER.fetch_add(1, Ordering::Relaxed)
     )));
-    let f = OpenOptions::new()
-        .write(true)
-        .read(true)
-        .create_new(true)
-        .open(&temp.0)?;
-    let mut encoder = Encoder::new(f, spec.clone(), limits.clone())?;
+    let mut options = OpenOptions::new();
+    options.write(true).read(true).create_new(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
+    }
+    let mut f = options.open(&temp.0)?;
+    // Already-valid FLAC needs metadata removal, not another prediction pass.
+    // Preserve only STREAMINFO and CRC-checked audio packets, then independently
+    // decode/hash the resulting file just like newly encoded inputs.
+    let copied = reader.prepare_flac_copy();
+    let mut writer = if let Some(info) = copied {
+        f.write_all(b"fLaC\x80\x00\x00\x22")?;
+        f.write_all(&info)?;
+        Normalizer::Copy(f)
+    } else {
+        Normalizer::Encode(Encoder::new(f, spec.clone(), limits.clone(), backend)?)
+    };
     let mut samples = Vec::new();
     let mut hash = Sha256::new();
     let mut bytes = Vec::new();
@@ -70,13 +89,26 @@ pub fn convert(src: &Path, dst: &Path, limits: Limits, backend: Backend) -> Resu
             bytes.extend_from_slice(&x.to_le_bytes());
         }
         hash.update(&bytes);
-        encoder.push(&samples)?;
+        match &mut writer {
+            Normalizer::Encode(encoder) => encoder.push(&samples)?,
+            Normalizer::Copy(file) => file.write_all(
+                &reader
+                    .take_flac_frame()
+                    .ok_or(Error::Invalid("missing FLAC frame"))?,
+            )?,
+        }
     }
     let frames = reader.decoded_frames();
     let source_hash = crate::hex(&hash.finalize());
-    let f = encoder.finish()?;
+    let f = match writer {
+        Normalizer::Encode(encoder) => encoder.finish()?,
+        Normalizer::Copy(file) => file,
+    };
     f.sync_all()?;
     let output_bytes = f.metadata()?.len();
+    if output_bytes > limits.max_file_bytes {
+        return Err(Error::Limit("FLAC output bytes"));
+    }
     drop(f);
     let (out, out_hash, out_frames) = pcm_sha256(&temp.0, limits, backend)?;
     if out_hash != source_hash
@@ -94,7 +126,11 @@ pub fn convert(src: &Path, dst: &Path, limits: Limits, backend: Backend) -> Resu
         frames,
         pcm_sha256: source_hash,
         output_bytes,
-        encoder: "adaptive-lpc8-rice-v1",
+        encoder: if copied.is_some() {
+            "verified-flac-frame-copy-v1"
+        } else {
+            "adaptive-lpc8-rice-v1"
+        },
     })
 }
 
@@ -109,9 +145,10 @@ struct Encoder {
     bytes: u64,
     min_frame: usize,
     max_frame: usize,
+    dot: Dot64Kernel,
 }
 impl Encoder {
-    fn new(mut file: File, spec: AudioSpec, limits: Limits) -> Result<Self> {
+    fn new(mut file: File, spec: AudioSpec, limits: Limits, backend: Backend) -> Result<Self> {
         file.write_all(b"fLaC\x80\x00\x00\x22")?;
         file.write_all(&[0u8; 34])?;
         Ok(Self {
@@ -125,6 +162,7 @@ impl Encoder {
             bytes: 42,
             min_frame: usize::MAX,
             max_frame: 0,
+            dot: Dot64Kernel::new(backend),
         })
     }
     fn push(&mut self, samples: &[i32]) -> Result<()> {
@@ -162,24 +200,37 @@ impl Encoder {
                 right.push(row[1] >> shift);
             }
         }
-        let l = Plan::new(&left, depth);
+        let l = Plan::new(&left, depth, &self.dot);
         let r = if channels == 2 {
-            Some(Plan::new(&right, depth))
+            Some(Plan::new(&right, depth, &self.dot))
         } else {
             None
         };
         let mut mid = Vec::new();
         let mut side = Vec::new();
         let mut ms = None;
-        if channels == 2 {
+        // Uncorrelated stereo usually gains nothing from mid-side. A cheap
+        // covariance check avoids planning two extra subframes in that case.
+        let correlated = if channels == 2 {
+            let (mut ll, mut rr, mut lr) = (0.0f64, 0.0f64, 0.0f64);
+            for (&a, &b) in left.iter().zip(&right) {
+                ll += (a as f64) * (a as f64);
+                rr += (b as f64) * (b as f64);
+                lr += (a as f64) * (b as f64);
+            }
+            lr * lr > 0.015625 * ll * rr
+        } else {
+            false
+        };
+        if correlated {
             mid.reserve(n);
             side.reserve(n);
             for (&a, &b) in left.iter().zip(&right) {
                 mid.push((a + b) >> 1);
                 side.push(a - b);
             }
-            let m = Plan::new(&mid, depth);
-            let s = Plan::new(&side, depth + 1);
+            let m = Plan::new(&mid, depth, &self.dot);
+            let s = Plan::new(&side, depth + 1, &self.dot);
             if m.cost + s.cost < l.cost + r.as_ref().unwrap().cost {
                 ms = Some((m, s));
             }
@@ -269,7 +320,7 @@ struct Plan {
     mode: Mode,
 }
 impl Plan {
-    fn new(samples: &[i32], depth: u32) -> Self {
+    fn new(samples: &[i32], depth: u32, dot: &Dot64Kernel) -> Self {
         if samples.iter().all(|x| *x == samples[0]) {
             return Self {
                 cost: 8 + depth as u64,
@@ -336,11 +387,7 @@ impl Plan {
                 .collect();
             let mut r = [0.0f64; 9];
             for (lag, energy) in r.iter_mut().enumerate() {
-                *energy = windowed[lag..]
-                    .iter()
-                    .zip(&windowed)
-                    .map(|(a, b)| a * b)
-                    .sum();
+                *energy = dot.apply(&windowed[lag..], &windowed[..n - lag]);
             }
             let mut a = [0.0f64; 8];
             let mut error = r[0];

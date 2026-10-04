@@ -1,0 +1,265 @@
+{
+  "status": "passed",
+  "checks": 288,
+  "source": "independent deterministic PCM integers + FFmpeg development oracle",
+  "sample_rate": 48000,
+  "frames_per_case": 8193,
+  "cases": [
+    {
+      "depth": 16,
+      "channels": 1,
+      "pattern": "zero",
+      "profiles": 8,
+      "pcm_exact": true,
+      "native_flac_exact": true
+    },
+    {
+      "depth": 16,
+      "channels": 1,
+      "pattern": "constant",
+      "profiles": 8,
+      "pcm_exact": true,
+      "native_flac_exact": true
+    },
+    {
+      "depth": 16,
+      "channels": 1,
+      "pattern": "impulse",
+      "profiles": 8,
+      "pcm_exact": true,
+      "native_flac_exact": true
+    },
+    {
+      "depth": 16,
+      "channels": 1,
+      "pattern": "ramp",
+      "profiles": 8,
+      "pcm_exact": true,
+      "native_flac_exact": true
+    },
+    {
+      "depth": 16,
+      "channels": 1,
+      "pattern": "limits",
+      "profiles": 8,
+      "pcm_exact": true,
+      "native_flac_exact": true
+    },
+    {
+      "depth": 16,
+      "channels": 1,
+      "pattern": "random",
+      "profiles": 8,
+      "pcm_exact": true,
+      "native_flac_exact": true
+    },
+    {
+      "depth": 16,
+      "channels": 1,
+      "pattern": "identical",
+      "profiles": 8,
+      "pcm_exact": true,
+      "native_flac_exact": true
+    },
+    {
+      "depth": 16,
+      "channels": 1,
+      "pattern": "opposite",
+      "profiles": 8,
+      "pcm_exact": true,
+      "native_flac_exact": true
+    },
+    {
+      "depth": 16,
+      "channels": 2,
+      "pattern": "zero",
+      "profiles": 8,
+      "pcm_exact": true,
+      "native_flac_exact": true
+    },
+    {
+      "depth": 16,
+      "channels": 2,
+      "pattern": "constant",
+      "profiles": 8,
+      "pcm_exact": true,
+      "native_flac_exact": true
+    },
+    {
+      "depth": 16,
+      "channels": 2,
+      "pattern": "impulse",
+      "profiles": 8,
+      "pcm_exact": true,
+      "native_flac_exact": true
+    },
+    {
+      "depth": 16,
+      "channels": 2,
+      "pattern": "ramp",
+      "profiles": 8,
+      "pcm_exact": true,
+      "native_flac_exact": true
+    },
+    {
+      "depth": 16,
+      "channels": 2,
+      "pattern": "limits",
+      "profiles": 8,
+      "pcm_exact": true,
+      "native_flac_exact": true
+    },
+    {
+      "depth": 16,
+      "channels": 2,
+      "pattern": "random",
+      "profiles": 8,
+      "pcm_exact": true,
+      "native_flac_exact": true
+    },
+    {
+      "depth": 16,
+      "channels": 2,
+      "pattern": "identical",
+      "profiles": 8,
+      "pcm_exact": true,
+      "native_flac_exact": true
+    },
+    {
+      "depth": 16,
+      "channels": 2,
+      "pattern": "opposite",
+      "profiles": 8,
+      "pcm_exact": true,
+      "native_flac_exact": true
+    },
+    {
+      "depth": 24,
+      "channels": 1,
+      "pattern": "zero",
+      "profiles": 8,
+      "pcm_exact": true,
+      "native_flac_exact": true
+    },
+    {
+      "depth": 24,
+      "channels": 1,
+      "pattern": "constant",
+      "profiles": 8,
+      "pcm_exact": true,
+      "native_flac_exact": true
+    },
+    {
+      "depth": 24,
+      "channels": 1,
+      "pattern": "impulse",
+      "profiles": 8,
+      "pcm_exact": true,
+      "native_flac_exact": true
+    },
+    {
+      "depth": 24,
+      "channels": 1,
+      "pattern": "ramp",
+      "profiles": 8,
+      "pcm_exact": true,
+      "native_flac_exact": true
+    },
+    {
+      "depth": 24,
+      "channels": 1,
+      "pattern": "limits",
+      "profiles": 8,
+      "pcm_exact": true,
+      "native_flac_exact": true
+    },
+    {
+      "depth": 24,
+      "channels": 1,
+      "pattern": "random",
+      "profiles": 8,
+      "pcm_exact": true,
+      "native_flac_exact": true
+    },
+    {
+      "depth": 24,
+      "channels": 1,
+      "pattern": "identical",
+      "profiles": 8,
+      "pcm_exact": true,
+      "native_flac_exact": true
+    },
+    {
+      "depth": 24,
+      "channels": 1,
+      "pattern": "opposite",
+      "profiles": 8,
+      "pcm_exact": true,
+      "native_flac_exact": true
+    },
+    {
+      "depth": 24,
+      "channels": 2,
+      "pattern": "zero",
+      "profiles": 8,
+      "pcm_exact": true,
+      "native_flac_exact": true
+    },
+    {
+      "depth": 24,
+      "channels": 2,
+      "pattern": "constant",
+      "profiles": 8,
+      "pcm_exact": true,
+      "native_flac_exact": true
+    },
+    {
+      "depth": 24,
+      "channels": 2,
+      "pattern": "impulse",
+      "profiles": 8,
+      "pcm_exact": true,
+      "native_flac_exact": true
+    },
+    {
+      "depth": 24,
+      "channels": 2,
+      "pattern": "ramp",
+      "profiles": 8,
+      "pcm_exact": true,
+      "native_flac_exact": true
+    },
+    {
+      "depth": 24,
+      "channels": 2,
+      "pattern": "limits",
+      "profiles": 8,
+      "pcm_exact": true,
+      "native_flac_exact": true
+    },
+    {
+      "depth": 24,
+      "channels": 2,
+      "pattern": "random",
+      "profiles": 8,
+      "pcm_exact": true,
+      "native_flac_exact": true
+    },
+    {
+      "depth": 24,
+      "channels": 2,
+      "pattern": "identical",
+      "profiles": 8,
+      "pcm_exact": true,
+      "native_flac_exact": true
+    },
+    {
+      "depth": 24,
+      "channels": 2,
+      "pattern": "opposite",
+      "profiles": 8,
+      "pcm_exact": true,
+      "native_flac_exact": true
+    }
+  ]
+}

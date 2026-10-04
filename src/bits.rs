@@ -85,30 +85,26 @@ impl BeWriter {
     }
 }
 
-const fn crc_tables() -> ([u8; 256], [u16; 256], [u32; 256]) {
+const fn crc_tables() -> ([u8; 256], [u16; 256]) {
     let mut c8 = [0; 256];
     let mut c16 = [0; 256];
-    let mut c32 = [0; 256];
     let mut i = 0;
     while i < 256 {
         let mut a = i as u8;
         let mut b = (i as u16) << 8;
-        let mut c = i as u32;
         let mut j = 0;
         while j < 8 {
             a = (a << 1) ^ if a & 0x80 != 0 { 7 } else { 0 };
             b = (b << 1) ^ if b & 0x8000 != 0 { 0x8005 } else { 0 };
-            c = (c >> 1) ^ (0xedb88320 & 0u32.wrapping_sub(c & 1));
             j += 1;
         }
         c8[i] = a;
         c16[i] = b;
-        c32[i] = c;
         i += 1;
     }
-    (c8, c16, c32)
+    (c8, c16)
 }
-const CRC: ([u8; 256], [u16; 256], [u32; 256]) = crc_tables();
+const CRC: ([u8; 256], [u16; 256]) = crc_tables();
 
 pub fn crc8(data: &[u8]) -> u8 {
     let mut crc = 0u8;
@@ -125,9 +121,7 @@ pub fn crc16(data: &[u8]) -> u16 {
     crc
 }
 pub fn crc32(data: &[u8]) -> u32 {
-    let mut crc = !0u32;
-    for b in data {
-        crc = (crc >> 8) ^ CRC.2[((crc as u8) ^ b) as usize];
-    }
-    !crc
+    // IEEE CRC32, not the incompatible x86 SSE4.2 CRC32C polynomial.
+    // crc32fast selects PCLMULQDQ on x86 or CRC instructions on AArch64.
+    crc32fast::hash(data)
 }

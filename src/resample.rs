@@ -198,15 +198,18 @@ impl FingerprintTap {
                 (duration - 30.0, 30.0),
             ]
         };
-        let ranges = spans
-            .iter()
-            .map(|(s, n)| {
-                (
-                    (s * 11025.0).round() as u64,
-                    ((s + n) * 11025.0).round() as u64,
-                )
-            })
-            .collect();
+        // Derive cardinality with integer rational arithmetic. Floating-point
+        // window ends and a floor at EOF previously lost one tail sample.
+        let denominator = rate as u64;
+        let numerator = frames * 11025;
+        let end = (numerator + denominator / 2) / denominator;
+        let ranges = if frames <= 90 * denominator {
+            vec![(0, end)]
+        } else {
+            let len = 30 * 11025;
+            let middle = (numerator - len * denominator + denominator) / (2 * denominator);
+            vec![(0, len), (middle, middle + len), (end - len, end)]
+        };
         let windows = spans
             .iter()
             .map(|(s, n)| Window {
@@ -256,7 +259,7 @@ impl FingerprintTap {
         }
     }
     pub fn finish(mut self, frames: u64) -> Vec<Window> {
-        let end = frames * 11025 / self.rate as u64;
+        let end = (frames * 11025 + self.rate as u64 / 2) / self.rate as u64;
         for _ in 0..33 {
             if self.output >= end {
                 break;

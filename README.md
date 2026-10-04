@@ -2,7 +2,7 @@
 
 AUDENIQ 전용 Rust 오디오 엔진. 실제 AUDENIQ 소스의 FFmpeg·FFprobe·LUFS 사용처를 [먼저 조사](docs/AUDIT.md)하고, 필요한 무손실 처리와 QC만 구현했습니다. 런타임 FFmpeg, libav*, C FFI는 없습니다.
 
-현재는 검증 가능한 첫 구현입니다. 이 저장소의 엔진은 동작하지만, 운영 AUDENIQ를 자동 배포하거나 기존 지문을 새 버전으로 이관하지 않았습니다. 전체 공식 EBU 파일 세트, 실제 음악 코퍼스, EPYC Zen3/요청한 Arm 장비의 검증은 별도입니다. FFmpeg보다 항상 빠르거나 더 정확하다고 주장하지 않습니다.
+현재는 검증 가능한 첫 구현입니다. 요청에 따라 백엔드 연결·배포·지문 이관은 작업 범위에서 제외합니다. 전체 공식 EBU 파일 세트, 실제 음악 코퍼스, EPYC Zen3/요청한 Arm 장비의 검증은 별도입니다. FFmpeg보다 항상 빠르거나 더 정확하다고 주장하지 않습니다.
 
 ## 구현 범위
 
@@ -13,9 +13,9 @@ AUDENIQ 전용 Rust 오디오 엔진. 실제 AUDENIQ 소스의 FFmpeg·FFprobe·
 | 분석 | 한 번의 스트리밍 디코딩으로 LUFS, True Peak, 샘플 피크, 클리핑, 50ms 무음/에너지, 영교차, PCM SHA-256 |
 | 정규화 | 샘플을 변경하지 않는 FLAC 16/24-bit, 출력 재디코딩·해시 검증 후 원자적 게시 |
 | 지문 입력 | 연속 필터 상태의 11025Hz mono s16, head/middle/tail 합계 최대 90초만 보관 |
-| CPU 커널 | 런타임 AVX2/NEON 선택: PCM unpack, True Peak 4상 FIR, 지문 FIR; scalar fallback |
+| CPU 커널 | 런타임 AVX2/NEON 선택: PCM unpack, True Peak 4상 FIR, 지문 FIR, FLAC LPC autocorrelation; scalar fallback |
 
-1~2채널, 16/24-bit 정수, 44100~192000Hz가 경계입니다. 비디오, 네트워크, 손실 코덱, float/32-bit PCM, hybrid/DSD/float WavPack, fragmented MP4는 지원하지 않습니다. RF64 확장 ds64 테이블은 지원하지 않습니다. 지원 불가나 손상은 오류이며 부분 성공으로 처리하지 않습니다.
+1~2채널, 16/24-bit 정수, 44100~192000Hz가 경계입니다. 비디오, 네트워크, 손실 코덱, float/32-bit PCM, hybrid/DSD/float WavPack, fragmented MP4는 지원하지 않습니다. RF64 확장 ds64 테이블과 샘플 수가 선언되지 않은 FLAC도 지원하지 않습니다. 지원 불가나 손상은 오류이며 부분 성공으로 처리하지 않습니다.
 
 FLAC/ALAC 디코더는 필요한 기능만 켠 Symphonia의 기존 Rust 구현입니다. TTA/WavPack 및 FLAC 인코더·K-weighting은 고정한 FFmpeg 소스를 참고/포팅했고, 버퍼·검증·계산 경로를 재설계했습니다. [출처와 라이선스](THIRD_PARTY.md)를 유지합니다.
 
@@ -45,6 +45,7 @@ cargo test --locked
 cargo clippy --locked --all-targets -- -D warnings
 python3 scripts/qualify.py --output qualification.json
 python3 scripts/standards.py --output standards.json
+python3 scripts/codec_stress.py --output codec-stress.json
 python3 scripts/benchmark.py --seconds 240 --repeats 5 --output benchmark.json
 python3 scripts/benchmark_convert.py --seconds 60 --repeats 3 --output normalization.json
 ```

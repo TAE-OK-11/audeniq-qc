@@ -50,11 +50,11 @@ pub fn pcm_le(bytes: &[u8], depth: u16, dst: &mut [i32], backend: Backend) {
 
 fn pcm_scalar(bytes: &[u8], depth: u16, dst: &mut [i32]) {
     if depth == 16 {
-        for (s, b) in dst.iter_mut().zip(bytes.chunks_exact(2)) {
+        for (s, b) in dst.iter_mut().zip(bytes.as_chunks::<2>().0) {
             *s = i16::from_le_bytes([b[0], b[1]]) as i32 * 65536;
         }
     } else {
-        for (s, b) in dst.iter_mut().zip(bytes.chunks_exact(3)) {
+        for (s, b) in dst.iter_mut().zip(bytes.as_chunks::<3>().0) {
             *s = i32::from_le_bytes([0, b[0], b[1], b[2]]);
         }
     }
@@ -71,12 +71,83 @@ pub fn dot(a: &[f32], b: &[f32], backend: Backend) -> f32 {
     if backend == Backend::Neon {
         return unsafe { dot_neon(a, b) };
     }
-    a.iter().zip(b).map(|(x, y)| x * y).sum()
+    dot_scalar(a, b)
+}
+
+// Fixed eight-lane reduction makes fingerprint quantization identical across
+// scalar, AVX2 and NEON, rather than letting their accumulation orders differ.
+fn dot_scalar(a: &[f32], b: &[f32]) -> f32 {
+    let mut sums = [0.0f32; 8];
+    let mut i = 0;
+    while i + 8 <= a.len() {
+        for lane in 0..8 {
+            sums[lane] += a[i + lane] * b[i + lane];
+        }
+        i += 8;
+    }
+    sums.iter().sum::<f32>() + a[i..].iter().zip(&b[i..]).map(|(x, y)| x * y).sum::<f32>()
 }
 
 /// Resolve once outside FIR sample loops. Checking CPU features per tap/sample
 /// wastes instructions even when CPUID results themselves are cached.
 pub struct DotKernel(fn(&[f32], &[f32]) -> f32);
+
+/// FLAC LPC autocorrelation needs f64 stability, including near-singular tones.
+pub struct Dot64Kernel(fn(&[f64], &[f64]) -> f64);
+impl Dot64Kernel {
+    pub fn new(backend: Backend) -> Self {
+        assert!(backend.available());
+        #[cfg(target_arch = "x86_64")]
+        if backend == Backend::Avx2 {
+            return Self(|a, b| unsafe { dot64_avx2(a, b) });
+        }
+        #[cfg(target_arch = "aarch64")]
+        if backend == Backend::Neon {
+            return Self(|a, b| unsafe { dot64_neon(a, b) });
+        }
+        Self(|a, b| a.iter().zip(b).map(|(x, y)| x * y).sum())
+    }
+    pub fn apply(&self, a: &[f64], b: &[f64]) -> f64 {
+        assert_eq!(a.len(), b.len());
+        (self.0)(a, b)
+    }
+}
+
+#[cfg(target_arch = "x86_64")]
+#[target_feature(enable = "avx2")]
+unsafe fn dot64_avx2(a: &[f64], b: &[f64]) -> f64 {
+    use std::arch::x86_64::*;
+    let mut v = _mm256_setzero_pd();
+    let mut i = 0;
+    while i + 4 <= a.len() {
+        v = _mm256_add_pd(
+            v,
+            _mm256_mul_pd(
+                _mm256_loadu_pd(a.as_ptr().add(i)),
+                _mm256_loadu_pd(b.as_ptr().add(i)),
+            ),
+        );
+        i += 4;
+    }
+    let mut sums = [0.0; 4];
+    _mm256_storeu_pd(sums.as_mut_ptr(), v);
+    sums.iter().sum::<f64>() + a[i..].iter().zip(&b[i..]).map(|(x, y)| x * y).sum::<f64>()
+}
+#[cfg(target_arch = "aarch64")]
+#[target_feature(enable = "neon")]
+unsafe fn dot64_neon(a: &[f64], b: &[f64]) -> f64 {
+    use std::arch::aarch64::*;
+    let mut v = vdupq_n_f64(0.0);
+    let mut i = 0;
+    while i + 2 <= a.len() {
+        v = vaddq_f64(
+            v,
+            vmulq_f64(vld1q_f64(a.as_ptr().add(i)), vld1q_f64(b.as_ptr().add(i))),
+        );
+        i += 2;
+    }
+    vaddvq_f64(v) + a[i..].iter().zip(&b[i..]).map(|(x, y)| x * y).sum::<f64>()
+}
 
 type PeakFn = fn(&[f32], &[f32], &[[f32; 4]; 12]) -> f32;
 pub struct PeakKernel(PeakFn);
@@ -155,7 +226,7 @@ impl DotKernel {
         if backend == Backend::Neon {
             return Self(|a, b| unsafe { dot_neon(a, b) });
         }
-        Self(|a, b| a.iter().zip(b).map(|(x, y)| x * y).sum())
+        Self(dot_scalar)
     }
     #[inline]
     pub fn apply(&self, a: &[f32], b: &[f32]) -> f32 {
@@ -244,16 +315,27 @@ unsafe fn pcm_neon(bytes: &[u8], depth: u16, dst: &mut [i32]) {
 unsafe fn dot_neon(a: &[f32], b: &[f32]) -> f32 {
     use std::arch::aarch64::*;
     let mut v = vdupq_n_f32(0.0);
+    let mut w = vdupq_n_f32(0.0);
     let mut i = 0;
-    while i + 4 <= a.len() {
+    while i + 8 <= a.len() {
         // Separate multiply/add retains the same rounding policy as AVX2.
         v = vaddq_f32(
             v,
             vmulq_f32(vld1q_f32(a.as_ptr().add(i)), vld1q_f32(b.as_ptr().add(i))),
         );
-        i += 4;
+        w = vaddq_f32(
+            w,
+            vmulq_f32(
+                vld1q_f32(a.as_ptr().add(i + 4)),
+                vld1q_f32(b.as_ptr().add(i + 4)),
+            ),
+        );
+        i += 8;
     }
-    vaddvq_f32(v) + a[i..].iter().zip(&b[i..]).map(|(x, y)| x * y).sum::<f32>()
+    let mut sums = [0.0f32; 8];
+    vst1q_f32(sums.as_mut_ptr(), v);
+    vst1q_f32(sums.as_mut_ptr().add(4), w);
+    sums.iter().sum::<f32>() + a[i..].iter().zip(&b[i..]).map(|(x, y)| x * y).sum::<f32>()
 }
 
 #[cfg(test)]
@@ -278,7 +360,17 @@ mod tests {
     fn dot_tails_match() {
         for n in 0..129 {
             let a: Vec<_> = (0..n).map(|i| (i as f32).sin()).collect();
-            assert!((dot(&a, &a, Backend::Scalar) - dot(&a, &a, Backend::detect())).abs() < 0.0001);
+            assert_eq!(
+                dot(&a, &a, Backend::Scalar).to_bits(),
+                dot(&a, &a, Backend::detect()).to_bits()
+            );
+            let b: Vec<_> = a.iter().map(|x| *x as f64).collect();
+            assert!(
+                (Dot64Kernel::new(Backend::Scalar).apply(&b, &b)
+                    - Dot64Kernel::new(Backend::detect()).apply(&b, &b))
+                .abs()
+                    < 1e-10
+            );
         }
     }
 }

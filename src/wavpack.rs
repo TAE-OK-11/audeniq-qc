@@ -268,6 +268,27 @@ impl Wavpack {
         if end != self.position {
             return Err(Error::Invalid("unrecognized WavPack tail / hidden blocks"));
         }
+        // An APE size must not conceal additional hybrid/audio blocks. Match
+        // AUDENIQ's conservative tail policy using bounded streaming storage.
+        self.file.seek(SeekFrom::Start(end))?;
+        let mut remaining = len - end;
+        let mut buf = [0; 8192];
+        let mut window = [0; 4];
+        let mut used = 0usize;
+        while remaining != 0 {
+            limits.check()?;
+            let n = (remaining as usize).min(buf.len());
+            self.file.read_exact(&mut buf[..n])?;
+            for &b in &buf[..n] {
+                window.rotate_left(1);
+                window[3] = b;
+                used += 1;
+                if used >= 4 && &window == b"wvpk" {
+                    return Err(Error::Invalid("WavPack block concealed by tags"));
+                }
+            }
+            remaining -= n as u64;
+        }
         Ok(())
     }
 }
@@ -386,7 +407,7 @@ impl<'a> Context<'a> {
                     }
                 }
                 3 => {
-                    if seen & (1 << 2) == 0 || d.len() % (if stereo { 2 } else { 1 }) != 0 {
+                    if seen & (1 << 2) == 0 || !d.len().is_multiple_of(if stereo { 2 } else { 1 }) {
                         return Err(Error::Invalid("WavPack weights"));
                     }
                     let mut i = 0;

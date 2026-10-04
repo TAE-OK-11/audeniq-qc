@@ -17,6 +17,7 @@ Rust translations change storage, bounds handling, error propagation, work limit
 * image (MIT): JPEG/PNG decoding only; default features disabled.
 * serde/serde_json (MIT OR Apache-2.0): typed reports.
 * RustCrypto sha2/md-5 (MIT OR Apache-2.0): canonical SHA-256 and required FLAC PCM MD5. SHA-256 uses runtime CPU feature dispatch from RustCrypto; MD5 is a format integrity field, not a security authenticator.
+* crc32fast (MIT OR Apache-2.0): IEEE CRC32, with runtime PCLMULQDQ/AArch64 CRC dispatch. Already present through PNG; also used for TTA frame/header verification. Wider VPCLMUL paths depend on compiler/CPU support.
 
 Cargo.lock pins transitive dependencies. Dependency sources/license notices remain available through crates.io. Linking into other applications requires complying with each applicable license; no claim is made that optimization removes copyleft obligations.
 

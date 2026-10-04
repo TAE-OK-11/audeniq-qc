@@ -46,7 +46,12 @@ impl Tta {
         if crc32(&table[..frames * 4]) != le32(&table[frames * 4..]) {
             return Err(Error::Invalid("TTA seektable CRC"));
         }
-        let sizes: Vec<_> = table[..frames * 4].chunks_exact(4).map(le32).collect();
+        let sizes: Vec<_> = table[..frames * 4]
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .map(|b| le32(b))
+            .collect();
         let mut total = 22 + table.len() as u64;
         for size in &sizes {
             if *size < 4 || *size as usize > limits.max_packet_bytes {

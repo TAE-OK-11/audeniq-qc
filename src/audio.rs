@@ -81,7 +81,7 @@ impl AudioReader {
             Source::Tta(p) => p.next(samples, &self.limits)?,
             Source::Wavpack(p) => p.next(samples, &self.limits)?,
         }
-        if samples.len() % self.spec.channels as usize != 0 {
+        if !samples.len().is_multiple_of(self.spec.channels as usize) {
             return Err(Error::Invalid("partial sample frame"));
         }
         self.decoded += (samples.len() / self.spec.channels as usize) as u64;
@@ -100,6 +100,22 @@ impl AudioReader {
     }
     pub fn decoded_frames(&self) -> u64 {
         self.decoded
+    }
+    pub(crate) fn prepare_flac_copy(&mut self) -> Option<[u8; 34]> {
+        if let Source::Compressed(c) = &mut self.source {
+            if let Some(info) = c.flac_info {
+                c.retain_frame = true;
+                return Some(info);
+            }
+        }
+        None
+    }
+    pub(crate) fn take_flac_frame(&mut self) -> Option<Box<[u8]>> {
+        if let Source::Compressed(c) = &mut self.source {
+            c.raw_frame.take()
+        } else {
+            None
+        }
     }
 }
 
@@ -362,11 +378,11 @@ impl Pcm {
         if !self.big_endian {
             crate::kernels::pcm_le(&self.bytes[..n], self.spec.bits_per_sample, out, backend);
         } else if self.spec.bits_per_sample == 16 {
-            for (s, b) in out.iter_mut().zip(self.bytes[..n].chunks_exact(2)) {
+            for (s, b) in out.iter_mut().zip(self.bytes[..n].as_chunks::<2>().0) {
                 *s = (i16::from_be_bytes([b[0], b[1]]) as i32) * 65536;
             }
         } else {
-            for (s, b) in out.iter_mut().zip(self.bytes[..n].chunks_exact(3)) {
+            for (s, b) in out.iter_mut().zip(self.bytes[..n].as_chunks::<3>().0) {
                 *s = i32::from_be_bytes([b[0], b[1], b[2], 0]);
             }
         }
@@ -380,6 +396,9 @@ struct Compressed {
     spec: AudioSpec,
     track: u32,
     buffer: Option<SampleBuffer<i32>>,
+    flac_info: Option<[u8; 34]>,
+    retain_frame: bool,
+    raw_frame: Option<Box<[u8]>>,
 }
 fn decode_err(e: symphonia::core::errors::Error) -> Error {
     match e {
@@ -479,6 +498,11 @@ impl Compressed {
             frames: p.n_frames,
         };
         spec.validate()?;
+        if spec.frames.is_none() || spec.frames == Some(0) {
+            return Err(Error::Unsupported(
+                "compressed audio requires declared sample count",
+            ));
+        }
         if p.codec == CODEC_TYPE_ALAC {
             let d = p
                 .extra_data
@@ -496,6 +520,11 @@ impl Compressed {
                 return Err(Error::Limit("ALAC block configuration"));
             }
         }
+        let flac_info = if is_flac {
+            p.extra_data.as_deref().and_then(|b| b.try_into().ok())
+        } else {
+            None
+        };
         let decoder = symphonia::default::get_codecs()
             .make(p, &DecoderOptions { verify: true })
             .map_err(decode_err)?;
@@ -506,10 +535,14 @@ impl Compressed {
             spec,
             track,
             buffer: None,
+            flac_info,
+            retain_frame: false,
+            raw_frame: None,
         })
     }
     fn next(&mut self, out: &mut Vec<i32>, limits: &Limits) -> Result<()> {
         out.clear();
+        self.raw_frame = None;
         let packet = match self.format.next_packet() {
             Ok(p) => p,
             Err(symphonia::core::errors::Error::IoError(e))
@@ -535,9 +568,11 @@ impl Compressed {
         {
             return Err(Error::Invalid("midstream format change / oversized block"));
         }
-        if self.buffer.as_ref().map_or(true, |b| {
-            b.capacity() < decoded.capacity() * self.spec.channels as usize
-        }) {
+        if self
+            .buffer
+            .as_ref()
+            .is_none_or(|b| b.capacity() < decoded.capacity() * self.spec.channels as usize)
+        {
             self.buffer = Some(SampleBuffer::<i32>::new(
                 decoded.capacity() as u64,
                 *decoded.spec(),
@@ -546,6 +581,16 @@ impl Compressed {
         let b = self.buffer.as_mut().unwrap();
         b.copy_interleaved_ref(decoded);
         out.extend_from_slice(b.samples());
+        if self.retain_frame {
+            let n = packet.data.len();
+            if n < 2
+                || crate::bits::crc16(&packet.data[..n - 2])
+                    != u16::from_be_bytes(packet.data[n - 2..].try_into().unwrap())
+            {
+                return Err(Error::Invalid("FLAC copied frame CRC"));
+            }
+            self.raw_frame = Some(packet.data);
+        }
         Ok(())
     }
 }

@@ -115,7 +115,7 @@ impl Loudness {
         self.ring[self.index] = energy;
         self.index = (self.index + 1) % 8;
         self.filled += 1;
-        if self.filled < 8 || self.filled % 2 != 0 {
+        if self.filled < 8 || !self.filled.is_multiple_of(2) {
             return;
         }
         let e = self.ring.iter().sum::<f64>() / 8.0;

@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Compare verified normalization, including output decode and PCM equality."""
 import argparse, datetime, hashlib, json, pathlib, platform, shutil, statistics, subprocess, tempfile
+from benchmark import cpu_identity
 
 def main():
     p=argparse.ArgumentParser()
@@ -44,6 +45,6 @@ def main():
             medians={name:{key:statistics.median(r[key] for r in values) for key in values[0]} for name,values in runs.items()}
             row={'codec':codec,'source_bytes':src.stat().st_size,'fixture_sha256':hashlib.sha256(src.read_bytes()).hexdigest(),'pcm_sha256':expected,'commands':commands,'ffmpeg_verification_command':oracle(outputs['ffmpeg']),'output_bytes':sizes,'runs':runs,'median':medians,'ffmpeg_div_native':{key:medians['ffmpeg'][key]/medians['native'][key] for key in ['wall_s','cpu_s','peak_rss_kib']}}
             rows.append(row);print(codec,json.dumps(medians),sizes,flush=True)
-        report={'date_utc':datetime.datetime.now(datetime.timezone.utc).isoformat(),'host_cpu':next((line.split(':',1)[1].strip() for line in pathlib.Path('/proc/cpuinfo').read_text().splitlines() if line.startswith('model name')),platform.processor()),'arch':platform.machine(),'binary_sha256':hashlib.sha256(binary.read_bytes()).hexdigest(),'ffmpeg_version':subprocess.check_output(['ffmpeg','-version'],text=True).splitlines()[0],'seconds':a.seconds,'sample_rate':48000,'channels':2,'bits':24,'repeats':a.repeats,'qualification':'Synthetic tones, warm cache. Both source decode/hash/FLAC encode and output decode/hash are timed. Native includes fsync and no-clobber publication. FFmpeg excludes separate probe and backend parsing overhead. Fixed-Rice and FFmpeg LPC level 5 produce different sizes; report sizes rather than claiming equal compression. Not end-to-end AUDENIQ or EPYC/Arm measurements.','results':rows}
+        report={'date_utc':datetime.datetime.now(datetime.timezone.utc).isoformat(),'host_cpu':cpu_identity(),'arch':platform.machine(),'binary_sha256':hashlib.sha256(binary.read_bytes()).hexdigest(),'ffmpeg_version':subprocess.check_output(['ffmpeg','-version'],text=True).splitlines()[0],'seconds':a.seconds,'sample_rate':48000,'channels':2,'bits':24,'repeats':a.repeats,'qualification':'Synthetic tones, warm cache. Both source decode/hash/FLAC encode and output decode/hash are timed. Native includes fsync and no-clobber publication. FFmpeg excludes separate probe and backend parsing overhead. Adaptive LPC/Rice or verified FLAC frame-copy and FFmpeg LPC level 5 produce different sizes; report sizes rather than claiming equal compression. Subsystem measurements, not end-to-end AUDENIQ. Host identity is reported; do not generalize to other machines.','results':rows}
         a.output.parent.mkdir(parents=True,exist_ok=True);a.output.write_text(json.dumps(report,indent=2)+'\n')
 if __name__=='__main__':main()

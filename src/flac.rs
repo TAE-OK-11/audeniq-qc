@@ -7,7 +7,7 @@
 use crate::{
     audio::{pcm_sha256, AudioReader},
     bits::{crc16, crc8, BeWriter},
-    kernels::{Backend, Dot64Kernel},
+    kernels::{Backend, Dot64Kernel, LpcKernel},
     AudioSpec, Error, Limits, Result,
 };
 use md5::{Digest as _, Md5};
@@ -29,7 +29,7 @@ pub struct Conversion {
     pub output_bytes: u64,
     pub encoder: &'static str,
 }
-// One normalizer per command; 296 stack bytes avoid an unnecessary heap box.
+// One normalizer per command; stack storage avoids an unnecessary heap box.
 #[allow(clippy::large_enum_variant)]
 enum Normalizer {
     Copy(File),
@@ -146,6 +146,7 @@ struct Encoder {
     min_frame: usize,
     max_frame: usize,
     dot: Dot64Kernel,
+    lpc: LpcKernel,
 }
 impl Encoder {
     fn new(mut file: File, spec: AudioSpec, limits: Limits, backend: Backend) -> Result<Self> {
@@ -163,6 +164,7 @@ impl Encoder {
             min_frame: usize::MAX,
             max_frame: 0,
             dot: Dot64Kernel::new(backend),
+            lpc: LpcKernel::new(backend),
         })
     }
     fn push(&mut self, samples: &[i32]) -> Result<()> {
@@ -200,9 +202,9 @@ impl Encoder {
                 right.push(row[1] >> shift);
             }
         }
-        let l = Plan::new(&left, depth, &self.dot);
+        let l = Plan::new(&left, depth, &self.dot, &self.lpc);
         let r = if channels == 2 {
-            Some(Plan::new(&right, depth, &self.dot))
+            Some(Plan::new(&right, depth, &self.dot, &self.lpc))
         } else {
             None
         };
@@ -229,8 +231,8 @@ impl Encoder {
                 mid.push((a + b) >> 1);
                 side.push(a - b);
             }
-            let m = Plan::new(&mid, depth, &self.dot);
-            let s = Plan::new(&side, depth + 1, &self.dot);
+            let m = Plan::new(&mid, depth, &self.dot, &self.lpc);
+            let s = Plan::new(&side, depth + 1, &self.dot, &self.lpc);
             if m.cost + s.cost < l.cost + r.as_ref().unwrap().cost {
                 ms = Some((m, s));
             }
@@ -320,7 +322,7 @@ struct Plan {
     mode: Mode,
 }
 impl Plan {
-    fn new(samples: &[i32], depth: u32, dot: &Dot64Kernel) -> Self {
+    fn new(samples: &[i32], depth: u32, dot: &Dot64Kernel, lpc: &LpcKernel) -> Self {
         if samples.iter().all(|x| *x == samples[0]) {
             return Self {
                 cost: 8 + depth as u64,
@@ -419,24 +421,9 @@ impl Plan {
                     .iter()
                     .map(|x| (x * (1u32 << shift) as f64).round() as i32)
                     .collect();
-                let mut residual = Vec::with_capacity(n - order);
-                let mut valid = true;
-                for i in order..n {
-                    let prediction: i64 = coefficients
-                        .iter()
-                        .enumerate()
-                        .map(|(j, &c)| c as i64 * samples[i - j - 1] as i64)
-                        .sum();
-                    let delta = samples[i] as i64 - (prediction >> shift);
-                    if i32::try_from(delta).is_err() {
-                        valid = false;
-                        break;
-                    }
-                    residual.push(((delta << 1) ^ (delta >> 63)) as u32);
-                }
-                if !valid {
+                let Some(residual) = lpc.residual(samples, &coefficients, shift) else {
                     continue;
-                }
+                };
                 let mean = residual.iter().map(|x| *x as u64).sum::<u64>() / residual.len() as u64;
                 let estimate = if mean == 0 {
                     0
@@ -491,8 +478,7 @@ impl Plan {
                 bw.put(4, 0);
                 bw.put(5, k as u64);
                 for v in residual {
-                    bw.unary(v >> k);
-                    bw.put(k, (v & ((1u32 << k) - 1)) as u64);
+                    bw.rice(v, k);
                 }
             }
             Mode::Lpc {
@@ -515,8 +501,7 @@ impl Plan {
                 bw.put(4, 0);
                 bw.put(5, k as u64);
                 for v in residual {
-                    bw.unary(v >> k);
-                    bw.put(k, (v & ((1u32 << k) - 1)) as u64);
+                    bw.rice(v, k);
                 }
             }
         }

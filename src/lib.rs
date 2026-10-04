@@ -1,4 +1,4 @@
-//! Local, lossless-only audio QC. No FFmpeg executable or C FFI at runtime.
+//! Local, lossless-only audio QC. No FFmpeg or native media-codec FFI at runtime.
 pub mod audio;
 mod bits;
 pub mod flac;

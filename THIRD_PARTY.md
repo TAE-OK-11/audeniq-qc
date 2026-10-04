@@ -9,7 +9,7 @@ Pinned FFmpeg commit: `12c589a37d093cc55618f8377b092dc21416806f`.
 * `src/flac.rs`: FLAC fixed/LPC residual prediction, Rice mapping, frame/subframe structure from `libavcodec/flacenc.c` and Welch/Levinson approach from `lpc.c`; Justin Ruggles (2006). Reworked selection, buffers, verification and commit logic.
 * `src/meter.rs`: K-weighting coefficient equations from `libavfilter/ebur128.c`; Jan Kokemüller (2011). That source also includes the libebur128 MIT notice below.
 
-Rust translations change storage, bounds handling, error propagation, work limits and dispatch; they do not remove upstream attribution. No FFmpeg binary, libav* library, GPL-only filter, assembler file, or C FFI is linked. Full LGPL text: LICENSE; referenced GPL text: COPYING.GPLv2.
+Rust translations change storage, bounds handling, error propagation, work limits and dispatch; they do not remove upstream attribution. No FFmpeg binary, libav* library, GPL-only filter, or native media-codec FFI is linked. Media processing is Rust, including CPU intrinsics; normal Rust system-runtime libraries still apply. Full LGPL text: LICENSE; referenced GPL text: COPYING.GPLv2.
 
 ## Rust dependencies
 

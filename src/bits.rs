@@ -53,6 +53,25 @@ impl BeWriter {
         }
     }
     pub fn put(&mut self, n: u32, value: u64) {
+        // Most FLAC writes fit in one word. Append its bytes in one copy,
+        // including the partial final byte needed by header CRC consumers.
+        if n == 0 {
+            return;
+        }
+        if n <= 56 {
+            let previous = if self.used == 0 {
+                0
+            } else {
+                self.bytes.pop().unwrap() as u64
+            };
+            let total = n + self.used as u32;
+            let word = (previous << 56) | ((value & ((1u64 << n) - 1)) << (64 - total));
+            self.bytes
+                .extend_from_slice(&word.to_be_bytes()[..total.div_ceil(8) as usize]);
+            self.used = (total & 7) as u8;
+            return;
+        }
+        assert!(n <= 64);
         let mut left = n;
         while left != 0 {
             if self.used == 0 {
@@ -64,6 +83,18 @@ impl BeWriter {
                 << (8 - self.used - take as u8);
             self.used = (self.used + take as u8) & 7;
             left -= take;
+        }
+    }
+    pub fn rice(&mut self, value: u32, k: u32) {
+        let zeros = value >> k;
+        let n = zeros as u64 + k as u64 + 1;
+        let suffix = (1u64 << k) | (value as u64 & ((1u64 << k) - 1));
+        if n <= 56 {
+            // Quotient zeros, terminator and remainder share one append.
+            self.put(n as u32, suffix);
+        } else {
+            self.unary(zeros);
+            self.put(k, value as u64);
         }
     }
     pub fn unary(&mut self, zeros: u32) {
@@ -124,4 +155,46 @@ pub fn crc32(data: &[u8]) -> u32 {
     // IEEE CRC32, not the incompatible x86 SSE4.2 CRC32C polynomial.
     // crc32fast selects PCLMULQDQ on x86 or CRC instructions on AArch64.
     crc32fast::hash(data)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn word_writer_matches_bit_reference() {
+        let mut writer = BeWriter::new();
+        let mut reference = Vec::<bool>::new();
+        for offset in 0..8 {
+            for n in 0..=64 {
+                let value = 0x8fedcba987654321u64.rotate_left(n);
+                writer.put(offset, value);
+                for i in (0..offset).rev() {
+                    reference.push(value >> i & 1 != 0);
+                }
+                writer.put(n, value);
+                for i in (0..n).rev() {
+                    reference.push(value >> i & 1 != 0);
+                }
+            }
+            for k in [0, 1, 15, 30] {
+                for quotient in [0, 1, 7, 31, 56, 65] {
+                    let value = ((quotient as u64) << k).min(u32::MAX as u64) as u32;
+                    writer.rice(value, k);
+                    reference.extend(std::iter::repeat_n(false, (value >> k) as usize));
+                    reference.push(true);
+                    for i in (0..k).rev() {
+                        reference.push(value >> i & 1 != 0);
+                    }
+                }
+            }
+        }
+        writer.align();
+        let mut expected = vec![0u8; reference.len().div_ceil(8)];
+        for (i, bit) in reference.into_iter().enumerate() {
+            if bit {
+                expected[i / 8] |= 1 << (7 - i % 8);
+            }
+        }
+        assert_eq!(writer.bytes, expected);
+    }
 }

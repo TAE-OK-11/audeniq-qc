@@ -94,6 +94,132 @@ pub struct DotKernel(fn(&[f32], &[f32]) -> f32);
 
 /// FLAC LPC autocorrelation needs f64 stability, including near-singular tones.
 pub struct Dot64Kernel(fn(&[f64], &[f64]) -> f64);
+
+/// Integer LPC prediction across consecutive samples. Widening multiplication
+/// preserves all bits; a coefficient has at most 12 signed bits, so eight
+/// products of i32 samples cannot overflow the i64 accumulator.
+pub(crate) struct LpcKernel(Backend);
+impl LpcKernel {
+    pub(crate) fn new(backend: Backend) -> Self {
+        assert!(backend.available());
+        Self(backend)
+    }
+    pub(crate) fn residual(
+        &self,
+        samples: &[i32],
+        coefficients: &[i32],
+        shift: u32,
+    ) -> Option<Vec<u32>> {
+        assert!(shift <= 15);
+        assert!(coefficients.iter().all(|&c| (-2048..=2047).contains(&c)));
+        assert!(samples.len() >= coefficients.len());
+        match coefficients.len() {
+            2 => self.compute::<2>(samples, coefficients, shift),
+            4 => self.compute::<4>(samples, coefficients, shift),
+            8 => self.compute::<8>(samples, coefficients, shift),
+            _ => unreachable!("unsupported LPC order"),
+        }
+    }
+    fn compute<const N: usize>(
+        &self,
+        samples: &[i32],
+        coefficients: &[i32],
+        shift: u32,
+    ) -> Option<Vec<u32>> {
+        #[cfg(target_arch = "x86_64")]
+        if self.0 == Backend::Avx2 {
+            // SAFETY: selected at construction; all loads are bounded below.
+            return unsafe { lpc_avx2::<N>(samples, coefficients, shift) };
+        }
+        #[cfg(target_arch = "aarch64")]
+        if self.0 == Backend::Neon {
+            return unsafe { lpc_neon::<N>(samples, coefficients, shift) };
+        }
+        let mut out = Vec::with_capacity(samples.len() - N);
+        lpc_tail::<N>(samples, coefficients, shift, N, &mut out)?;
+        Some(out)
+    }
+}
+
+fn fold_residual(sample: i32, prediction: i64, shift: u32) -> Option<u32> {
+    let delta = sample as i64 - (prediction >> shift);
+    i32::try_from(delta).ok()?;
+    Some(((delta << 1) ^ (delta >> 63)) as u32)
+}
+fn lpc_tail<const N: usize>(
+    samples: &[i32],
+    coefficients: &[i32],
+    shift: u32,
+    start: usize,
+    out: &mut Vec<u32>,
+) -> Option<()> {
+    for i in start..samples.len() {
+        let mut prediction = 0i64;
+        for j in 0..N {
+            prediction += coefficients[j] as i64 * samples[i - j - 1] as i64;
+        }
+        out.push(fold_residual(samples[i], prediction, shift)?);
+    }
+    Some(())
+}
+
+#[cfg(target_arch = "x86_64")]
+#[target_feature(enable = "avx2")]
+unsafe fn lpc_avx2<const N: usize>(
+    samples: &[i32],
+    coefficients: &[i32],
+    shift: u32,
+) -> Option<Vec<u32>> {
+    use std::arch::x86_64::*;
+    let mut out = Vec::with_capacity(samples.len() - N);
+    let mut i = N;
+    while i + 4 <= samples.len() {
+        let mut sum = _mm256_setzero_si256();
+        for (j, &c) in coefficients.iter().enumerate().take(N) {
+            let past = _mm_loadu_si128(samples.as_ptr().add(i - j - 1).cast());
+            let past = _mm256_cvtepi32_epi64(past);
+            sum = _mm256_add_epi64(sum, _mm256_mul_epi32(past, _mm256_set1_epi64x(c as i64)));
+        }
+        let mut predictions = [0i64; 4];
+        _mm256_storeu_si256(predictions.as_mut_ptr().cast(), sum);
+        for lane in 0..4 {
+            out.push(fold_residual(samples[i + lane], predictions[lane], shift)?);
+        }
+        i += 4;
+    }
+    lpc_tail::<N>(samples, coefficients, shift, i, &mut out)?;
+    Some(out)
+}
+
+#[cfg(target_arch = "aarch64")]
+#[target_feature(enable = "neon")]
+unsafe fn lpc_neon<const N: usize>(
+    samples: &[i32],
+    coefficients: &[i32],
+    shift: u32,
+) -> Option<Vec<u32>> {
+    use std::arch::aarch64::*;
+    let mut out = Vec::with_capacity(samples.len() - N);
+    let mut i = N;
+    while i + 4 <= samples.len() {
+        let mut lo = vdupq_n_s64(0);
+        let mut hi = vdupq_n_s64(0);
+        for (j, &c) in coefficients.iter().enumerate().take(N) {
+            let past = vld1q_s32(samples.as_ptr().add(i - j - 1));
+            lo = vmlal_n_s32(lo, vget_low_s32(past), c);
+            hi = vmlal_n_s32(hi, vget_high_s32(past), c);
+        }
+        let mut predictions = [0i64; 4];
+        vst1q_s64(predictions.as_mut_ptr(), lo);
+        vst1q_s64(predictions.as_mut_ptr().add(2), hi);
+        for lane in 0..4 {
+            out.push(fold_residual(samples[i + lane], predictions[lane], shift)?);
+        }
+        i += 4;
+    }
+    lpc_tail::<N>(samples, coefficients, shift, i, &mut out)?;
+    Some(out)
+}
 impl Dot64Kernel {
     pub fn new(backend: Backend) -> Self {
         assert!(backend.available());
@@ -341,6 +467,56 @@ unsafe fn dot_neon(a: &[f32], b: &[f32]) -> f32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn integer_lpc_matches_independent_reference() {
+        for order in [2, 4, 8] {
+            for n in order..=129 {
+                let samples: Vec<i32> = (0..n)
+                    .map(|i| (i as u32).wrapping_mul(2654435761) as i32)
+                    .collect();
+                for shift in [0, 7, 15] {
+                    for extreme in [false, true] {
+                        let coefficients: Vec<i32> = (0..order)
+                            .map(|i| {
+                                if extreme {
+                                    if i % 2 == 0 {
+                                        -2048
+                                    } else {
+                                        2047
+                                    }
+                                } else {
+                                    if i % 2 == 0 {
+                                        -1
+                                    } else {
+                                        1
+                                    }
+                                }
+                            })
+                            .collect();
+                        let expected: Option<Vec<u32>> = (order..n)
+                            .map(|i| {
+                                let prediction: i64 = coefficients
+                                    .iter()
+                                    .enumerate()
+                                    .map(|(j, &c)| c as i64 * samples[i - j - 1] as i64)
+                                    .sum();
+                                let delta =
+                                    i32::try_from(samples[i] as i64 - (prediction >> shift))
+                                        .ok()?;
+                                Some(((delta as i64 * 2) ^ (delta as i64 >> 63)) as u32)
+                            })
+                            .collect();
+                        for backend in [Backend::Scalar, Backend::detect()] {
+                            assert_eq!(
+                                LpcKernel::new(backend).residual(&samples, &coefficients, shift),
+                                expected
+                            );
+                        }
+                    }
+                }
+            }
+        }
+    }
     #[test]
     fn tails_and_extremes_match() {
         for depth in [16, 24] {

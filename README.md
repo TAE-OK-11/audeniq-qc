@@ -71,6 +71,8 @@ target/release/audeniq-qc tags master.wv
 
 ## 정확도와 측정
 
+[인코더·외부 의존성 자체화 조사](docs/DEPENDENCY-AUDIT.md)에 이미 자체 구현한 부분, 남은 MD5/SHA-256/CRC32/JPEG/PNG/JSON 의존성과 다음 최적화 후보를 정리했습니다. 후보의 성능 개선은 아직 측정된 결과가 아닙니다.
+
 [FFmpeg·자체·일부 외부 코덱 3개 재측정](docs/BENCHMARK-THREEWAY-RERUN.md)을 N2와 EPYC 9V74에서 완료했습니다. WAV/ALAC 변환, QC, 변환+QC의 CPU·처리 시간·RAM·파일 크기와 반복 원시값을 공개합니다. 이번 x86 결과는 이전 EPYC 7763 Zen3 측정과 구분합니다.
 
 최신 [자체 코덱·컨테이너 병목 개선 결과](docs/NATIVE-BOTTLENECKS.md)는 `b8918279`를 Neoverse N2와 EPYC 7763에서 검증했습니다. 같은 서버의 이전 자체 구현 대비 ALAC 디코딩 CPU는 각각 21.1%/19.2%, ALAC→FLAC은 8.5%/8.1%, 변환+QC는 7.0%/5.6% 감소했습니다. WAV 변환 CPU는 거의 같았습니다. 복사·버퍼 생성 감소, 제거한 느린 SIMD 후보, 남은 느린 경로와 전체 원시 반복을 함께 공개합니다. N2 측정은 Graviton4 실측을 대신하지 않습니다.

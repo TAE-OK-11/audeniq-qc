@@ -1,0 +1,269 @@
+{
+  "audit_source_commit": "519093c86010b2c8ebea711e6fef208dec0ef172",
+  "engine_source_commit": "b8918279c97a5069ea8e479e6343b9ba3092901c",
+  "default_dependency_tree": {
+    "workflow_run": 37209634333,
+    "workflow_attempt": 3,
+    "workflow_job": 111467079517,
+    "command": "cargo tree --locked -e normal",
+    "text": "audeniq-qc v0.1.0 (/home/runner/work/audeniq-qc/audeniq-qc)\n├── crc32fast v1.5.2\n│   └── cfg-if v1.0.5\n├── image v0.24.9\n│   ├── bytemuck v1.25.2\n│   ├── byteorder v1.5.0\n│   ├── color_quant v1.1.0\n│   ├── jpeg-decoder v0.3.2\n│   ├── num-traits v0.2.19\n│   └── png v0.17.16\n│       ├── bitflags v1.3.2\n│       ├── crc32fast v1.5.2 (*)\n│       ├── fdeflate v0.3.7\n│       │   └── simd-adler32 v0.3.10\n│       ├── flate2 v1.1.10\n│       │   ├── crc32fast v1.5.2 (*)\n│       │   └── miniz_oxide v0.9.1\n│       │       ├── adler2 v2.0.1\n│       │       └── simd-adler32 v0.3.10\n│       └── miniz_oxide v0.8.9\n│           ├── adler2 v2.0.1\n│           └── simd-adler32 v0.3.10\n├── md-5 v0.10.6\n│   ├── cfg-if v1.0.5\n│   └── digest v0.10.7\n│       ├── block-buffer v0.10.4\n│       │   └── generic-array v0.14.7\n│       │       └── typenum v1.20.1\n│       └── crypto-common v0.1.7\n│           ├── generic-array v0.14.7 (*)\n│           └── typenum v1.20.1\n├── serde v1.0.219\n│   └── serde_derive v1.0.219 (proc-macro)\n│       ├── proc-macro2 v1.0.107\n│       │   └── unicode-ident v1.0.26\n│       ├── quote v1.0.47\n│       │   └── proc-macro2 v1.0.107 (*)\n│       └── syn v2.0.119\n│           ├── proc-macro2 v1.0.107 (*)\n│           ├── quote v1.0.47 (*)\n│           └── unicode-ident v1.0.26\n├── serde_json v1.0.140\n│   ├── itoa v1.0.18\n│   ├── memchr v2.8.3\n│   ├── ryu v1.0.23\n│   └── serde v1.0.219 (*)\n└── sha2 v0.11.0\n    ├── cfg-if v1.0.5\n    ├── cpufeatures v0.3.1\n    └── digest v0.11.3\n        ├── block-buffer v0.12.1\n        │   └── hybrid-array v0.4.15\n        │       └── typenum v1.20.1\n        ├── const-oid v0.10.2\n        └── crypto-common v0.2.2\n            └── hybrid-array v0.4.15 (*)\n",
+    "packages_including_compile_time_proc_macros": [
+      {
+        "name": "crc32fast",
+        "version": "1.5.2"
+      },
+      {
+        "name": "cfg-if",
+        "version": "1.0.5"
+      },
+      {
+        "name": "image",
+        "version": "0.24.9"
+      },
+      {
+        "name": "bytemuck",
+        "version": "1.25.2"
+      },
+      {
+        "name": "byteorder",
+        "version": "1.5.0"
+      },
+      {
+        "name": "color_quant",
+        "version": "1.1.0"
+      },
+      {
+        "name": "jpeg-decoder",
+        "version": "0.3.2"
+      },
+      {
+        "name": "num-traits",
+        "version": "0.2.19"
+      },
+      {
+        "name": "png",
+        "version": "0.17.16"
+      },
+      {
+        "name": "bitflags",
+        "version": "1.3.2"
+      },
+      {
+        "name": "fdeflate",
+        "version": "0.3.7"
+      },
+      {
+        "name": "simd-adler32",
+        "version": "0.3.10"
+      },
+      {
+        "name": "flate2",
+        "version": "1.1.10"
+      },
+      {
+        "name": "miniz_oxide",
+        "version": "0.9.1"
+      },
+      {
+        "name": "adler2",
+        "version": "2.0.1"
+      },
+      {
+        "name": "miniz_oxide",
+        "version": "0.8.9"
+      },
+      {
+        "name": "md-5",
+        "version": "0.10.6"
+      },
+      {
+        "name": "digest",
+        "version": "0.10.7"
+      },
+      {
+        "name": "block-buffer",
+        "version": "0.10.4"
+      },
+      {
+        "name": "generic-array",
+        "version": "0.14.7"
+      },
+      {
+        "name": "typenum",
+        "version": "1.20.1"
+      },
+      {
+        "name": "crypto-common",
+        "version": "0.1.7"
+      },
+      {
+        "name": "serde",
+        "version": "1.0.219"
+      },
+      {
+        "name": "serde_derive",
+        "version": "1.0.219"
+      },
+      {
+        "name": "proc-macro2",
+        "version": "1.0.107"
+      },
+      {
+        "name": "unicode-ident",
+        "version": "1.0.26"
+      },
+      {
+        "name": "quote",
+        "version": "1.0.47"
+      },
+      {
+        "name": "syn",
+        "version": "2.0.119"
+      },
+      {
+        "name": "serde_json",
+        "version": "1.0.140"
+      },
+      {
+        "name": "itoa",
+        "version": "1.0.18"
+      },
+      {
+        "name": "memchr",
+        "version": "2.8.3"
+      },
+      {
+        "name": "ryu",
+        "version": "1.0.23"
+      },
+      {
+        "name": "sha2",
+        "version": "0.11.0"
+      },
+      {
+        "name": "cpufeatures",
+        "version": "0.3.1"
+      },
+      {
+        "name": "digest",
+        "version": "0.11.3"
+      },
+      {
+        "name": "block-buffer",
+        "version": "0.12.1"
+      },
+      {
+        "name": "hybrid-array",
+        "version": "0.4.15"
+      },
+      {
+        "name": "const-oid",
+        "version": "0.10.2"
+      },
+      {
+        "name": "crypto-common",
+        "version": "0.2.2"
+      }
+    ]
+  },
+  "direct_dependencies": {
+    "default": [
+      "serde =1.0.219",
+      "serde_json =1.0.140",
+      "sha2 =0.11.0",
+      "md-5 =0.10.6",
+      "crc32fast =1.5.2",
+      "image =0.24.9 (jpeg,png; defaults disabled)"
+    ],
+    "optional_reference": [
+      "symphonia =0.5.4 (reference-codecs only)"
+    ]
+  },
+  "arm_profile_provenance": {
+    "workflow_run": 37209634333,
+    "workflow_attempt": 2,
+    "workflow_job": 111464825923,
+    "source_report": "docs/benchmark-threeway-rerun-arm.json",
+    "kind": "inclusive wall time with profiling overhead; nested stages overlap; not an additive CPU profile",
+    "conversion_qc_snapshot": {
+      "native_profile": {
+        "alac_predictor_orders": {
+          "6": {
+            "calls": 5626,
+            "samples": 23040000
+          }
+        },
+        "counters": {
+          "encoder_residual_fresh_buffers": 3,
+          "encoder_residual_reused_buffers": 33753,
+          "flac_borrowed_bytes": 0,
+          "mono_buffer_swaps": 0,
+          "packet_borrowed_bytes": 36770253,
+          "packet_copied_bytes": 13911571,
+          "size_table_read_requests": 3
+        },
+        "kind": "inclusive wall time with profiling overhead; stages overlap, do not sum",
+        "stages": {
+          "alac_output": {
+            "calls": 2813,
+            "wall_ns": 6566127
+          },
+          "alac_predict": {
+            "calls": 5626,
+            "wall_ns": 174564665
+          },
+          "alac_rice": {
+            "calls": 5626,
+            "wall_ns": 182738303
+          },
+          "encoder": {
+            "calls": 2813,
+            "wall_ns": 486236875
+          },
+          "encoder_plan": {
+            "calls": 5626,
+            "wall_ns": 281554121
+          },
+          "flac_md5": {
+            "calls": 2813,
+            "wall_ns": 102211795
+          },
+          "flac_output": {
+            "calls": 2813,
+            "wall_ns": 2426315
+          },
+          "flac_predict": {
+            "calls": 5626,
+            "wall_ns": 81891263
+          },
+          "flac_residual": {
+            "calls": 5626,
+            "wall_ns": 100706024
+          },
+          "m4a_open": {
+            "calls": 1,
+            "wall_ns": 69691
+          },
+          "output_verify": {
+            "calls": 1,
+            "wall_ns": 359046629
+          },
+          "packet_read": {
+            "calls": 3585,
+            "wall_ns": 7041030
+          },
+          "qc": {
+            "calls": 2813,
+            "wall_ns": 309373968
+          },
+          "source_hash": {
+            "calls": 2813,
+            "wall_ns": 49522152
+          }
+        }
+      },
+      "success": true
+    }
+  },
+  "finding_status": "audit only; primitive rewrite and source-inspected encoder candidates are not implemented or separately benchmarked"
+}

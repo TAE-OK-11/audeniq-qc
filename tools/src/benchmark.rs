@@ -470,7 +470,12 @@ pub fn convert(options: &Options) -> Result<Value> {
         } else {
             None
         };
-        results.push(json!({"codec":codec,"source_bytes":fs::metadata(&input)?.len(),"fixture_sha256":file_sha(&input)?,"pcm_sha256":expected,"commands":commands,"baseline_analysis_command":baseline_analysis_command,"ffmpeg_verification_command":oracle_command(&outputs["ffmpeg"]),"output_bytes":sizes,"runs":runs,"median":median,"ffmpeg_div_native":ratio}));
+        let native_baseline_flac_bytes_equal = if let Some(baseline) = outputs.get("baseline") {
+            Some(file_sha(baseline)? == file_sha(&outputs["native"])?)
+        } else {
+            None
+        };
+        results.push(json!({"codec":codec,"source_bytes":fs::metadata(&input)?.len(),"fixture_sha256":file_sha(&input)?,"pcm_sha256":expected,"commands":commands,"baseline_analysis_command":baseline_analysis_command,"ffmpeg_verification_command":oracle_command(&outputs["ffmpeg"]),"output_bytes":sizes,"native_baseline_flac_bytes_equal":native_baseline_flac_bytes_equal,"runs":runs,"median":median,"ffmpeg_div_native":ratio}));
     }
     let mut report = metadata(options, seconds, results)?;
     report["review"] = json!(options.review);

@@ -77,6 +77,10 @@ impl BeWriter {
             used: 0,
         }
     }
+    pub fn reuse(mut bytes: Vec<u8>) -> Self {
+        bytes.clear();
+        Self { bytes, used: 0 }
+    }
     pub fn put(&mut self, n: u32, value: u64) {
         // Most FLAC writes fit in one word. Append its bytes in one copy,
         // including the partial final byte needed by header CRC consumers.
@@ -122,6 +126,55 @@ impl BeWriter {
             self.put(k, value as u64);
         }
     }
+    /// Keep a whole residual block in a word accumulator. Most Rice codes fit
+    /// in one word, so Vec length/capacity work happens once per eight bytes,
+    /// rather than popping and appending a partial byte for every sample.
+    pub fn rice_block(&mut self, residual: &[u32], k: u32) {
+        assert!(k <= 30);
+        let mut used = self.used as u32;
+        let mut word = if used == 0 {
+            0
+        } else {
+            (self.bytes.pop().unwrap() as u64) << 56
+        };
+        for &value in residual {
+            let n = (value >> k) as u64 + k as u64 + 1;
+            let suffix = (1u64 << k) | (value as u64 & ((1u64 << k) - 1));
+            if n <= 64 {
+                let n = n as u32;
+                let total = used + n;
+                if total < 64 {
+                    word |= suffix << (64 - total);
+                    used = total;
+                } else if total == 64 {
+                    self.bytes.extend_from_slice(&(word | suffix).to_be_bytes());
+                    word = 0;
+                    used = 0;
+                } else {
+                    let remaining = total - 64;
+                    self.bytes
+                        .extend_from_slice(&(word | (suffix >> remaining)).to_be_bytes());
+                    word = suffix << (64 - remaining);
+                    used = remaining;
+                }
+            } else {
+                // A rare large quotient uses the bounded bulk-zero path.
+                self.bytes
+                    .extend_from_slice(&word.to_be_bytes()[..used.div_ceil(8) as usize]);
+                self.used = (used & 7) as u8;
+                self.rice(value, k);
+                used = self.used as u32;
+                word = if used == 0 {
+                    0
+                } else {
+                    (self.bytes.pop().unwrap() as u64) << 56
+                };
+            }
+        }
+        self.bytes
+            .extend_from_slice(&word.to_be_bytes()[..used.div_ceil(8) as usize]);
+        self.used = (used & 7) as u8;
+    }
     pub fn unary(&mut self, zeros: u32) {
         // Aligned bulk zero fill avoids a loop per residual quotient bit.
         let mut left = zeros;
@@ -162,6 +215,23 @@ const fn crc_tables() -> ([u8; 256], [u16; 256]) {
 }
 const CRC: ([u8; 256], [u16; 256]) = crc_tables();
 
+const fn crc16_slices() -> [[u16; 256]; 8] {
+    let mut tables = [[0; 256]; 8];
+    tables[0] = CRC.1;
+    let mut slice = 1;
+    while slice < 8 {
+        let mut i = 0;
+        while i < 256 {
+            let previous = tables[slice - 1][i];
+            tables[slice][i] = (previous << 8) ^ CRC.1[(previous >> 8) as usize];
+            i += 1;
+        }
+        slice += 1;
+    }
+    tables
+}
+const CRC16: [[u16; 256]; 8] = crc16_slices();
+
 pub fn crc8(data: &[u8]) -> u8 {
     let mut crc = 0u8;
     for b in data {
@@ -171,7 +241,18 @@ pub fn crc8(data: &[u8]) -> u8 {
 }
 pub fn crc16(data: &[u8]) -> u16 {
     let mut crc = 0u16;
-    for b in data {
+    let (blocks, tail) = data.as_chunks::<8>();
+    for b in blocks {
+        crc = CRC16[7][((crc >> 8) as u8 ^ b[0]) as usize]
+            ^ CRC16[6][(crc as u8 ^ b[1]) as usize]
+            ^ CRC16[5][b[2] as usize]
+            ^ CRC16[4][b[3] as usize]
+            ^ CRC16[3][b[4] as usize]
+            ^ CRC16[2][b[5] as usize]
+            ^ CRC16[1][b[6] as usize]
+            ^ CRC16[0][b[7] as usize];
+    }
+    for b in tail {
         crc = (crc << 8) ^ CRC.1[((crc >> 8) as u8 ^ b) as usize];
     }
     crc
@@ -263,5 +344,49 @@ mod tests {
             }
         }
         assert_eq!(writer.bytes, expected);
+    }
+    #[test]
+    fn batched_rice_and_sliced_crc_match_references() {
+        for offset in 0..8 {
+            for k in 0..=30 {
+                let residual: Vec<u32> = [0, 1, 7, 31, 56, 63, 64, 65, 127, 259]
+                    .into_iter()
+                    .map(|q| {
+                        (((q as u64) << k) | (0x89abcdefu64 & ((1 << k) - 1))).min(u32::MAX as u64)
+                            as u32
+                    })
+                    .collect();
+                let mut reference = BeWriter::new();
+                let mut actual = BeWriter::new();
+                reference.put(offset, 0x55);
+                actual.put(offset, 0x55);
+                for _ in 0..3 {
+                    for &r in &residual {
+                        reference.rice(r, k);
+                    }
+                    actual.rice_block(&residual, k);
+                    reference.put(11, 0x765);
+                    actual.put(11, 0x765);
+                }
+                reference.align();
+                actual.align();
+                assert_eq!(actual.bytes, reference.bytes, "offset={offset} k={k}");
+            }
+        }
+        let data: Vec<u8> = (0..1025).map(|i| (i * 137 + 29) as u8).collect();
+        for offset in 0..8 {
+            for len in 0..=1024 - offset {
+                let input = &data[offset..offset + len];
+                let mut reference = 0u16;
+                for &b in input {
+                    reference ^= (b as u16) << 8;
+                    for _ in 0..8 {
+                        reference =
+                            (reference << 1) ^ if reference & 0x8000 != 0 { 0x8005 } else { 0 };
+                    }
+                }
+                assert_eq!(crc16(input), reference);
+            }
+        }
     }
 }

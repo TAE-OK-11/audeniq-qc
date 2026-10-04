@@ -16,6 +16,11 @@ jobs:
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - name: Engine before conversion optimization
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: 4590086dc742aa7c6d47cb892ebeabe76cc56d3f
+          path: conversion-parent
       - name: Toolchain and comparison tools
         run: |
           rustc --version
@@ -25,9 +30,10 @@ jobs:
       - run: cargo fmt --all --check
       - run: cargo clippy --workspace --locked --all-targets -- -D warnings
       - run: cargo build --workspace --locked --release
+      - run: cargo build --manifest-path conversion-parent/Cargo.toml --locked --release --target-dir conversion-parent/target
       - run: target/release/audeniq-qc capabilities
       - name: Seven repeated runs on four-minute WAV and ALAC
         run: |
-          target/release/audeniq-qc-tools benchmark-convert --wav-alac-only --seconds 240 --repeats 7 --output normalization-benchmark.json
-          target/release/audeniq-qc-tools benchmark --wav-alac-only --seconds 240 --repeats 7 --output analysis-benchmark.json
+          target/release/audeniq-qc-tools benchmark-convert --wav-alac-only --seconds 240 --repeats 7 --baseline-binary conversion-parent/target/release/audeniq-qc --output normalization-benchmark.json
+          target/release/audeniq-qc-tools benchmark --wav-alac-only --seconds 240 --repeats 7 --baseline-binary conversion-parent/target/release/audeniq-qc --output analysis-benchmark.json
           target/release/audeniq-qc-tools ci-report

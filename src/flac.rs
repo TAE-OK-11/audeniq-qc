@@ -251,6 +251,9 @@ struct Encoder {
     rice: RiceKernel,
     profile: Profile,
     raw: Vec<u8>,
+    frame_buffer: Vec<u8>,
+    channel_buffers: [Vec<i32>; 4],
+    planner: Planner,
 }
 impl Encoder {
     fn new(
@@ -280,15 +283,22 @@ impl Encoder {
             rice: RiceKernel::new(backend),
             profile,
             raw: Vec::with_capacity(raw_capacity),
+            frame_buffer: Vec::with_capacity(raw_capacity + 128),
+            channel_buffers: std::array::from_fn(|_| Vec::new()),
+            planner: Planner::default(),
         })
     }
     fn push(&mut self, samples: &[i32]) -> Result<()> {
-        let shift = 32 - self.spec.bits_per_sample;
         let nbytes = (self.spec.bits_per_sample / 8) as usize;
-        self.raw.clear();
-        for x in samples {
-            self.raw
-                .extend_from_slice(&(x >> shift).to_le_bytes()[..nbytes]);
+        self.raw.resize(samples.len() * nbytes, 0);
+        if nbytes == 2 {
+            for (&x, row) in samples.iter().zip(self.raw.as_chunks_mut::<2>().0) {
+                row.copy_from_slice(&((x >> 16) as i16).to_le_bytes());
+            }
+        } else {
+            for (&x, row) in samples.iter().zip(self.raw.as_chunks_mut::<3>().0) {
+                row.copy_from_slice(&(x >> 8).to_le_bytes()[..3]);
+            }
         }
         self.md5.update(&self.raw);
         let block = self.profile.block * self.spec.channels as usize;
@@ -310,35 +320,45 @@ impl Encoder {
         let n = self.pending.len() / channels;
         let depth = self.spec.bits_per_sample as u32;
         let shift = 32 - depth;
-        let mut left = Vec::with_capacity(n);
-        let mut right = Vec::with_capacity(n);
+        let [left, right, mid, side] = &mut self.channel_buffers;
+        left.clear();
+        right.clear();
+        mid.clear();
+        side.clear();
         for row in self.pending.chunks_exact(channels) {
             left.push(row[0] >> shift);
             if channels == 2 {
                 right.push(row[1] >> shift);
             }
         }
-        let l = Plan::new(&left, depth, &self.dot, &self.lpc, &self.rice, self.profile);
+        let l = Plan::new(
+            left,
+            depth,
+            &self.dot,
+            &self.lpc,
+            &self.rice,
+            self.profile,
+            &mut self.planner,
+        );
         let r = if channels == 2 {
             Some(Plan::new(
-                &right,
+                right,
                 depth,
                 &self.dot,
                 &self.lpc,
                 &self.rice,
                 self.profile,
+                &mut self.planner,
             ))
         } else {
             None
         };
-        let mut mid = Vec::new();
-        let mut side = Vec::new();
         let mut ms = None;
         // Uncorrelated stereo usually gains nothing from mid-side. A cheap
         // covariance check avoids planning two extra subframes in that case.
         let correlated = if channels == 2 && self.profile.level >= 3 {
             let (mut ll, mut rr, mut lr) = (0.0f64, 0.0f64, 0.0f64);
-            for (&a, &b) in left.iter().zip(&right) {
+            for (&a, &b) in left.iter().zip(right.iter()) {
                 ll += (a as f64) * (a as f64);
                 rr += (b as f64) * (b as f64);
                 lr += (a as f64) * (b as f64);
@@ -348,26 +368,33 @@ impl Encoder {
             false
         };
         if correlated {
-            mid.reserve(n);
-            side.reserve(n);
-            for (&a, &b) in left.iter().zip(&right) {
+            for (&a, &b) in left.iter().zip(right.iter()) {
                 mid.push((a + b) >> 1);
                 side.push(a - b);
             }
-            let m = Plan::new(&mid, depth, &self.dot, &self.lpc, &self.rice, self.profile);
+            let m = Plan::new(
+                mid,
+                depth,
+                &self.dot,
+                &self.lpc,
+                &self.rice,
+                self.profile,
+                &mut self.planner,
+            );
             let s = Plan::new(
-                &side,
+                side,
                 depth + 1,
                 &self.dot,
                 &self.lpc,
                 &self.rice,
                 self.profile,
+                &mut self.planner,
             );
             if m.cost + s.cost < l.cost + r.as_ref().unwrap().cost {
                 ms = Some((m, s));
             }
         }
-        let mut bw = BeWriter::new();
+        let mut bw = BeWriter::reuse(std::mem::take(&mut self.frame_buffer));
         bw.put(16, 0xfff8);
         bw.put(4, 7);
         bw.put(4, 0);
@@ -386,12 +413,12 @@ impl Encoder {
         let crc = crc8(&bw.bytes);
         bw.put(8, crc as u64);
         if let Some((m, s)) = ms {
-            m.write(&mut bw, &mid, depth);
-            s.write(&mut bw, &side, depth + 1);
+            m.write(&mut bw, mid, depth);
+            s.write(&mut bw, side, depth + 1);
         } else {
-            l.write(&mut bw, &left, depth);
+            l.write(&mut bw, left, depth);
             if let Some(r) = r {
-                r.write(&mut bw, &right, depth);
+                r.write(&mut bw, right, depth);
             }
         }
         bw.align();
@@ -404,6 +431,7 @@ impl Encoder {
         self.min_frame = self.min_frame.min(bw.bytes.len());
         self.max_frame = self.max_frame.max(bw.bytes.len());
         self.file.write_all(&bw.bytes)?;
+        self.frame_buffer = bw.bytes;
         self.frames += n as u64;
         self.number += 1;
         Ok(())
@@ -456,6 +484,12 @@ struct LpcCandidate {
     shift: u32,
     estimate: u64,
 }
+#[derive(Default)]
+struct Planner {
+    diff: Vec<i64>,
+    window: Vec<f64>,
+    windowed: Vec<f64>,
+}
 // Uniformly spaced integer residuals rank prediction models without repeatedly
 // computing whole blocks. This changes compression choices only; reconstruction
 // still uses checked exact residuals for every sample and verifies output PCM.
@@ -503,6 +537,7 @@ impl Plan {
         lpc: &LpcKernel,
         rice: &RiceKernel,
         profile: Profile,
+        planner: &mut Planner,
     ) -> Self {
         if samples.iter().all(|x| *x == samples[0]) {
             return Self {
@@ -514,7 +549,9 @@ impl Plan {
             cost: 8 + samples.len() as u64 * depth as u64,
             mode: Mode::Verbatim,
         };
-        let mut diff: Vec<i64> = samples.iter().map(|x| *x as i64).collect();
+        let diff = &mut planner.diff;
+        diff.clear();
+        diff.extend(samples.iter().map(|x| *x as i64));
         for order in 0..=profile.fixed.min(samples.len() - 1) {
             if order > 0 {
                 for i in (order..samples.len()).rev() {
@@ -541,16 +578,21 @@ impl Plan {
         // eight. Integer residual costs decide; no lossy reconstruction.
         if samples.len() > 16 && profile.lpc > 0 {
             let n = samples.len();
-            let windowed: Vec<f64> = samples
-                .iter()
-                .enumerate()
-                .map(|(i, &x)| {
-                    let d = 2.0 * i as f64 / (n - 1) as f64 - 1.0;
-                    x as f64 * (1.0 - d * d)
-                })
-                .collect();
+            if planner.window.len() != n {
+                planner.window = (0..n)
+                    .map(|i| {
+                        let d = 2.0 * i as f64 / (n - 1) as f64 - 1.0;
+                        1.0 - d * d
+                    })
+                    .collect();
+            }
+            let windowed = &mut planner.windowed;
+            windowed.resize(n, 0.0);
+            for ((v, &x), &w) in windowed.iter_mut().zip(samples).zip(&planner.window) {
+                *v = x as f64 * w;
+            }
             let mut r = [0.0f64; 9];
-            for (lag, energy) in r.iter_mut().enumerate() {
+            for (lag, energy) in r[..=profile.lpc].iter_mut().enumerate() {
                 *energy = dot.apply(&windowed[lag..], &windowed[..n - lag]);
             }
             let mut a = [0.0f64; 8];
@@ -649,9 +691,7 @@ impl Plan {
                 bw.put(2, 1);
                 bw.put(4, 0);
                 bw.put(5, k as u64);
-                for v in residual {
-                    bw.rice(v, k);
-                }
+                bw.rice_block(&residual, k);
             }
             Mode::Lpc {
                 coefficients,
@@ -672,9 +712,7 @@ impl Plan {
                 bw.put(2, 1);
                 bw.put(4, 0);
                 bw.put(5, k as u64);
-                for v in residual {
-                    bw.rice(v, k);
-                }
+                bw.rice_block(&residual, k);
             }
         }
     }

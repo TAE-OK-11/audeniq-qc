@@ -1,265 +1,267 @@
 {
-  "status": "passed",
-  "checks": 288,
-  "source": "independent deterministic PCM integers + FFmpeg development oracle",
-  "sample_rate": 48000,
-  "frames_per_case": 8193,
   "cases": [
     {
-      "depth": 16,
       "channels": 1,
+      "depth": 16,
+      "native_flac_exact": true,
       "pattern": "zero",
-      "profiles": 8,
       "pcm_exact": true,
-      "native_flac_exact": true
+      "profiles": 8
     },
     {
-      "depth": 16,
       "channels": 1,
+      "depth": 16,
+      "native_flac_exact": true,
       "pattern": "constant",
-      "profiles": 8,
       "pcm_exact": true,
-      "native_flac_exact": true
+      "profiles": 8
     },
     {
-      "depth": 16,
       "channels": 1,
+      "depth": 16,
+      "native_flac_exact": true,
       "pattern": "impulse",
-      "profiles": 8,
       "pcm_exact": true,
-      "native_flac_exact": true
+      "profiles": 8
     },
     {
-      "depth": 16,
       "channels": 1,
+      "depth": 16,
+      "native_flac_exact": true,
       "pattern": "ramp",
-      "profiles": 8,
       "pcm_exact": true,
-      "native_flac_exact": true
+      "profiles": 8
     },
     {
-      "depth": 16,
       "channels": 1,
+      "depth": 16,
+      "native_flac_exact": true,
       "pattern": "limits",
-      "profiles": 8,
       "pcm_exact": true,
-      "native_flac_exact": true
+      "profiles": 8
     },
     {
-      "depth": 16,
       "channels": 1,
+      "depth": 16,
+      "native_flac_exact": true,
       "pattern": "random",
-      "profiles": 8,
       "pcm_exact": true,
-      "native_flac_exact": true
+      "profiles": 8
     },
     {
-      "depth": 16,
       "channels": 1,
+      "depth": 16,
+      "native_flac_exact": true,
       "pattern": "identical",
-      "profiles": 8,
       "pcm_exact": true,
-      "native_flac_exact": true
+      "profiles": 8
     },
     {
-      "depth": 16,
       "channels": 1,
+      "depth": 16,
+      "native_flac_exact": true,
       "pattern": "opposite",
-      "profiles": 8,
       "pcm_exact": true,
-      "native_flac_exact": true
+      "profiles": 8
     },
     {
-      "depth": 16,
       "channels": 2,
+      "depth": 16,
+      "native_flac_exact": true,
       "pattern": "zero",
-      "profiles": 8,
       "pcm_exact": true,
-      "native_flac_exact": true
+      "profiles": 8
     },
     {
-      "depth": 16,
       "channels": 2,
+      "depth": 16,
+      "native_flac_exact": true,
       "pattern": "constant",
-      "profiles": 8,
       "pcm_exact": true,
-      "native_flac_exact": true
+      "profiles": 8
     },
     {
-      "depth": 16,
       "channels": 2,
+      "depth": 16,
+      "native_flac_exact": true,
       "pattern": "impulse",
-      "profiles": 8,
       "pcm_exact": true,
-      "native_flac_exact": true
+      "profiles": 8
     },
     {
-      "depth": 16,
       "channels": 2,
+      "depth": 16,
+      "native_flac_exact": true,
       "pattern": "ramp",
-      "profiles": 8,
       "pcm_exact": true,
-      "native_flac_exact": true
+      "profiles": 8
     },
     {
-      "depth": 16,
       "channels": 2,
+      "depth": 16,
+      "native_flac_exact": true,
       "pattern": "limits",
-      "profiles": 8,
       "pcm_exact": true,
-      "native_flac_exact": true
+      "profiles": 8
     },
     {
-      "depth": 16,
       "channels": 2,
+      "depth": 16,
+      "native_flac_exact": true,
       "pattern": "random",
-      "profiles": 8,
       "pcm_exact": true,
-      "native_flac_exact": true
+      "profiles": 8
     },
     {
-      "depth": 16,
       "channels": 2,
+      "depth": 16,
+      "native_flac_exact": true,
       "pattern": "identical",
-      "profiles": 8,
       "pcm_exact": true,
-      "native_flac_exact": true
+      "profiles": 8
     },
     {
-      "depth": 16,
       "channels": 2,
+      "depth": 16,
+      "native_flac_exact": true,
       "pattern": "opposite",
-      "profiles": 8,
       "pcm_exact": true,
-      "native_flac_exact": true
+      "profiles": 8
     },
     {
-      "depth": 24,
       "channels": 1,
+      "depth": 24,
+      "native_flac_exact": true,
       "pattern": "zero",
-      "profiles": 8,
       "pcm_exact": true,
-      "native_flac_exact": true
+      "profiles": 8
     },
     {
-      "depth": 24,
       "channels": 1,
+      "depth": 24,
+      "native_flac_exact": true,
       "pattern": "constant",
-      "profiles": 8,
       "pcm_exact": true,
-      "native_flac_exact": true
+      "profiles": 8
     },
     {
-      "depth": 24,
       "channels": 1,
+      "depth": 24,
+      "native_flac_exact": true,
       "pattern": "impulse",
-      "profiles": 8,
       "pcm_exact": true,
-      "native_flac_exact": true
+      "profiles": 8
     },
     {
-      "depth": 24,
       "channels": 1,
+      "depth": 24,
+      "native_flac_exact": true,
       "pattern": "ramp",
-      "profiles": 8,
       "pcm_exact": true,
-      "native_flac_exact": true
+      "profiles": 8
     },
     {
-      "depth": 24,
       "channels": 1,
+      "depth": 24,
+      "native_flac_exact": true,
       "pattern": "limits",
-      "profiles": 8,
       "pcm_exact": true,
-      "native_flac_exact": true
+      "profiles": 8
     },
     {
-      "depth": 24,
       "channels": 1,
+      "depth": 24,
+      "native_flac_exact": true,
       "pattern": "random",
-      "profiles": 8,
       "pcm_exact": true,
-      "native_flac_exact": true
+      "profiles": 8
     },
     {
-      "depth": 24,
       "channels": 1,
+      "depth": 24,
+      "native_flac_exact": true,
       "pattern": "identical",
-      "profiles": 8,
       "pcm_exact": true,
-      "native_flac_exact": true
+      "profiles": 8
     },
     {
-      "depth": 24,
       "channels": 1,
+      "depth": 24,
+      "native_flac_exact": true,
       "pattern": "opposite",
-      "profiles": 8,
       "pcm_exact": true,
-      "native_flac_exact": true
+      "profiles": 8
     },
     {
-      "depth": 24,
       "channels": 2,
+      "depth": 24,
+      "native_flac_exact": true,
       "pattern": "zero",
-      "profiles": 8,
       "pcm_exact": true,
-      "native_flac_exact": true
+      "profiles": 8
     },
     {
-      "depth": 24,
       "channels": 2,
+      "depth": 24,
+      "native_flac_exact": true,
       "pattern": "constant",
-      "profiles": 8,
       "pcm_exact": true,
-      "native_flac_exact": true
+      "profiles": 8
     },
     {
-      "depth": 24,
       "channels": 2,
+      "depth": 24,
+      "native_flac_exact": true,
       "pattern": "impulse",
-      "profiles": 8,
       "pcm_exact": true,
-      "native_flac_exact": true
+      "profiles": 8
     },
     {
-      "depth": 24,
       "channels": 2,
+      "depth": 24,
+      "native_flac_exact": true,
       "pattern": "ramp",
-      "profiles": 8,
       "pcm_exact": true,
-      "native_flac_exact": true
+      "profiles": 8
     },
     {
-      "depth": 24,
       "channels": 2,
+      "depth": 24,
+      "native_flac_exact": true,
       "pattern": "limits",
-      "profiles": 8,
       "pcm_exact": true,
-      "native_flac_exact": true
+      "profiles": 8
     },
     {
-      "depth": 24,
       "channels": 2,
+      "depth": 24,
+      "native_flac_exact": true,
       "pattern": "random",
-      "profiles": 8,
       "pcm_exact": true,
-      "native_flac_exact": true
+      "profiles": 8
     },
     {
-      "depth": 24,
       "channels": 2,
+      "depth": 24,
+      "native_flac_exact": true,
       "pattern": "identical",
-      "profiles": 8,
       "pcm_exact": true,
-      "native_flac_exact": true
+      "profiles": 8
     },
     {
-      "depth": 24,
       "channels": 2,
+      "depth": 24,
+      "native_flac_exact": true,
       "pattern": "opposite",
-      "profiles": 8,
       "pcm_exact": true,
-      "native_flac_exact": true
+      "profiles": 8
     }
-  ]
+  ],
+  "checks": 288,
+  "fixture_rng": "SplitMix64 seed 1729",
+  "frames_per_case": 8193,
+  "harness": "audeniq-qc-tools Rust",
+  "sample_rate": 48000,
+  "source": "independent deterministic PCM integers + FFmpeg development oracle",
+  "status": "passed"
 }

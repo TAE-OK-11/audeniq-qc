@@ -1,6 +1,4 @@
 {
-  "checks": 272,
-  "status": "passed",
   "cases": [
     {
       "case": "44100-16-1.encoded.wav",
@@ -144,49 +142,53 @@
     },
     {
       "case": "tone",
-      "native_lufs": -7.30669647920734,
       "ffmpeg_lufs": -7.3,
-      "native_true_peak": -6.744842646063343,
-      "ffmpeg_true_peak": -6.7
+      "ffmpeg_true_peak": -6.7,
+      "native_lufs": -7.30669647920734,
+      "native_true_peak": -6.744842646063343
     },
     {
       "case": "silence",
-      "native_lufs": null,
       "ffmpeg_lufs": -70.0,
-      "native_true_peak": null,
-      "ffmpeg_true_peak": null
+      "ffmpeg_true_peak": null,
+      "native_lufs": null,
+      "native_true_peak": null
     },
     {
       "case": "noise",
-      "native_lufs": 1.394305547276026,
       "ffmpeg_lufs": 1.4,
-      "native_true_peak": 4.827895583834209,
-      "ffmpeg_true_peak": 5.4
+      "ffmpeg_true_peak": 5.5,
+      "native_lufs": 1.3751582638012074,
+      "native_true_peak": 4.629395435079041
     },
     {
       "case": "clip",
-      "native_lufs": 3.73431543137906,
       "ffmpeg_lufs": 3.7,
-      "native_true_peak": 1.0981234282899996,
-      "ffmpeg_true_peak": 1.2
+      "ffmpeg_true_peak": 1.2,
+      "native_lufs": 3.73431543137906,
+      "native_true_peak": 1.0981234282899996
     },
     {
       "case": "gated",
-      "native_lufs": -8.393722351101419,
       "ffmpeg_lufs": -8.4,
-      "native_true_peak": -7.3053775013755455,
-      "ffmpeg_true_peak": -7.2
+      "ffmpeg_true_peak": -7.2,
+      "native_lufs": -8.393722351101419,
+      "native_true_peak": -7.3053775013755455
     },
     {
       "case": "near_nyquist",
-      "native_lufs": 2.4278696570474327,
       "ffmpeg_lufs": 2.4,
-      "native_true_peak": -0.7226610191800222,
-      "ffmpeg_true_peak": -0.9
+      "ffmpeg_true_peak": -0.9,
+      "native_lufs": 2.4278696570474327,
+      "native_true_peak": -0.7226610191800222
     }
   ],
-  "true_peak_tolerance_db": 0.5,
-  "true_peak_comparison_exclusions": "Full-band unfiltered white noise: not band-limited to EBU 20kHz tolerance range. Difference recorded, not claimed bit-identical. Abrupt high-frequency tone replaced by 10ms fade as EBU specifies.",
+  "checks": 538,
+  "fixture_rng": "SplitMix64 seed 1729",
+  "harness": "audeniq-qc-tools Rust",
   "lufs_tolerance_lu": 0.11,
-  "true_peak_certified": false
+  "status": "passed",
+  "true_peak_certified": false,
+  "true_peak_comparison_exclusions": "Full-band white noise difference is recorded and is not claimed bit-identical. Near-Nyquist tone has 10ms fade.",
+  "true_peak_tolerance_db": 0.5
 }

@@ -12,6 +12,7 @@ Never load an uploaded media parser directly into the API/worker process.
 | fingerprint fallback | `fingerprint PATH` | Retain continuous-filter head/mid/tail windows; existing AUDENIQ Philips FFT stays in backend |
 | lossless normalization | `convert INPUT OUTPUT.flac` | Use a private writable staging directory; check declared expansion/file limit; publish only verified result |
 | PCM comparison | `pcm-hash PATH` | Canonical interleaved left-aligned s32le SHA256 |
+| PCM export | `decode INPUT OUTPUT --format wav\|s32le` | Source/output specs are separate; WAV preserves effective depth, raw s32le stores it left-aligned in 32 bits |
 | provenance fallback | `tags PATH` | Map only needed tags; unsupported/missing tags do not establish rights or AI absence |
 
 Default library limits: 4GiB file, 1,382,400,000 decoded frames, 16MiB packet,
@@ -24,6 +25,11 @@ The converter creates a temporary sibling and verifies it before a no-clobber
 hard link. Its writable grant must cover only a new **private staging directory**,
 not an upload parent. Move/rename the finished FLAC from that directory in the
 parent. Do not pass an existing pre-created empty output file: no-clobber rejects it.
+
+PCM export has the same staging/no-clobber contract. Explicit
+`convert --compression-level 0..8` uses this engine's presets and forces FLAC
+re-encoding. Without that option, FLAC frames are preserved after full validation;
+other inputs use profile 5. These levels are not FFmpeg/libFLAC-equivalent numbers.
 
 Version boundaries:
 
@@ -41,6 +47,10 @@ duration cannot feed segmented fingerprints. Unsupported inputs must fail closed
 
 Production qualification still needs the complete official EBU corpus, real
 accepted/rejected upload corpus, hostile-parser fuzzing, sandbox smoke tests,
-EPYC Zen3 and the actual requested Arm machine. Synthetic/oracle results in this
+deployment-host concurrency and the actual requested Arm machine. An earlier CI
+run verified AVX2 on AMD EPYC 7763 (Zen3); the final engine was validated on AMD
+EPYC 9V45 and an AArch64 NEON host. See VALIDATION.md for the exact source commits
+and CPU identities. Those runs do not substitute for qualification on the user's
+deployment hosts. Synthetic/oracle results in this
 repository are evidence for the tested cases, not a universal performance or
 accuracy guarantee.

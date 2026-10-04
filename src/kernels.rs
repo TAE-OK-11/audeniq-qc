@@ -422,7 +422,7 @@ pub struct DotKernel(fn(&[f32], &[f32]) -> f32);
 pub struct Dot64Kernel(fn(&[f64], &[f64]) -> f64);
 
 /// Integer LPC prediction across consecutive samples. Widening multiplication
-/// preserves all bits; a coefficient has at most 12 signed bits, so eight
+/// preserves all bits; a coefficient has at most 15 signed bits, so eight
 /// products of i32 samples cannot overflow the i64 accumulator.
 pub(crate) struct LpcKernel(Backend);
 impl LpcKernel {
@@ -444,13 +444,18 @@ impl LpcKernel {
         out: &mut Vec<u32>,
     ) -> Option<()> {
         assert!(shift <= 15);
-        assert!(coefficients.iter().all(|&c| (-2048..=2047).contains(&c)));
+        assert!(coefficients.iter().all(|&c| (-16384..=16383).contains(&c)));
         assert!(samples.len() >= coefficients.len());
         out.clear();
         out.reserve(samples.len() - coefficients.len());
         match coefficients.len() {
+            1 => self.compute::<1>(samples, coefficients, shift, out),
             2 => self.compute::<2>(samples, coefficients, shift, out),
+            3 => self.compute::<3>(samples, coefficients, shift, out),
             4 => self.compute::<4>(samples, coefficients, shift, out),
+            5 => self.compute::<5>(samples, coefficients, shift, out),
+            6 => self.compute::<6>(samples, coefficients, shift, out),
+            7 => self.compute::<7>(samples, coefficients, shift, out),
             8 => self.compute::<8>(samples, coefficients, shift, out),
             _ => unreachable!("unsupported LPC order"),
         }
@@ -462,96 +467,135 @@ impl LpcKernel {
         shift: u32,
         out: &mut Vec<u32>,
     ) -> Option<()> {
+        out.resize(samples.len() - N, 0);
         #[cfg(target_arch = "x86_64")]
         if self.0 == Backend::Avx2 {
-            // SAFETY: selected at construction; all loads are bounded below.
-            return unsafe { lpc_avx2::<N>(samples, coefficients, shift, out) };
+            // SAFETY: AVX2 selected at construction; the body is safe Rust.
+            return unsafe { lpc_store_avx2::<N>(samples, coefficients, shift, out) }.then_some(());
         }
-        #[cfg(target_arch = "aarch64")]
-        if self.0 == Backend::Neon {
-            return unsafe { lpc_neon::<N>(samples, coefficients, shift, out) };
-        }
-        lpc_tail::<N>(samples, coefficients, shift, N, out)
+        lpc_store::<N>(samples, coefficients, shift, out).then_some(())
     }
 }
 
-fn fold_residual(sample: i32, prediction: i64, shift: u32) -> Option<u32> {
-    let delta = sample as i64 - (prediction >> shift);
-    i32::try_from(delta).ok()?;
-    Some(((delta << 1) ^ (delta >> 63)) as u32)
-}
-fn lpc_tail<const N: usize>(
+/// Store folded residuals for every sample from N. Fixed-size windows and an
+/// accumulated range flag (instead of an early return per lane) let LLVM
+/// vectorize the widening multiply-accumulate on AVX2 and baseline NEON.
+#[inline(always)]
+fn lpc_store<const N: usize>(
     samples: &[i32],
     coefficients: &[i32],
     shift: u32,
-    start: usize,
-    out: &mut Vec<u32>,
-) -> Option<()> {
-    for i in start..samples.len() {
+    out: &mut [u32],
+) -> bool {
+    let mut c = [0i64; N];
+    for (c, &x) in c.iter_mut().zip(coefficients) {
+        *c = x as i64;
+    }
+    let mut bad = 0u64;
+    for ((window, &x), o) in samples.windows(N).zip(&samples[N..]).zip(out.iter_mut()) {
+        let window: &[i32; N] = window.try_into().unwrap();
         let mut prediction = 0i64;
         for j in 0..N {
-            prediction += coefficients[j] as i64 * samples[i - j - 1] as i64;
+            prediction += c[j] * window[N - 1 - j] as i64;
         }
-        out.push(fold_residual(samples[i], prediction, shift)?);
+        let r = x as i64 - (prediction >> shift);
+        bad |= (r.wrapping_add(1 << 31) as u64) >> 32;
+        *o = ((r << 1) ^ (r >> 63)) as u32;
     }
-    Some(())
+    bad == 0
 }
 
 #[cfg(target_arch = "x86_64")]
 #[target_feature(enable = "avx2")]
-unsafe fn lpc_avx2<const N: usize>(
+unsafe fn lpc_store_avx2<const N: usize>(
     samples: &[i32],
     coefficients: &[i32],
     shift: u32,
-    out: &mut Vec<u32>,
-) -> Option<()> {
-    use std::arch::x86_64::*;
-    let mut i = N;
-    while i + 4 <= samples.len() {
-        let mut sum = _mm256_setzero_si256();
-        for (j, &c) in coefficients.iter().enumerate().take(N) {
-            let past = _mm_loadu_si128(samples.as_ptr().add(i - j - 1).cast());
-            let past = _mm256_cvtepi32_epi64(past);
-            sum = _mm256_add_epi64(sum, _mm256_mul_epi32(past, _mm256_set1_epi64x(c as i64)));
-        }
-        let mut predictions = [0i64; 4];
-        _mm256_storeu_si256(predictions.as_mut_ptr().cast(), sum);
-        for lane in 0..4 {
-            out.push(fold_residual(samples[i + lane], predictions[lane], shift)?);
-        }
-        i += 4;
-    }
-    lpc_tail::<N>(samples, coefficients, shift, i, out)
+    out: &mut [u32],
+) -> bool {
+    lpc_store::<N>(samples, coefficients, shift, out)
 }
 
-#[cfg(target_arch = "aarch64")]
-#[target_feature(enable = "neon")]
-unsafe fn lpc_neon<const N: usize>(
+impl LpcKernel {
+    /// Per-partition sums of folded LPC residuals without storing them, for
+    /// ranking models. `sums[p]` covers samples `p * size..(p + 1) * size`,
+    /// excluding the first `order` warm-up samples. Returns false when any
+    /// residual is outside i32 (FLAC cannot code that model).
+    pub(crate) fn partition_sums(
+        &self,
+        samples: &[i32],
+        coefficients: &[i32],
+        shift: u32,
+        size: usize,
+        sums: &mut [u64],
+    ) -> bool {
+        assert!(shift <= 15 && size > coefficients.len());
+        assert!(sums.len() * size <= samples.len());
+        assert!(coefficients.iter().all(|&c| (-16384..=16383).contains(&c)));
+        macro_rules! dispatch {
+            ($($n:literal)*) => {
+                match coefficients.len() {
+                    $($n => {
+                        #[cfg(target_arch = "x86_64")]
+                        if self.0 == Backend::Avx2 {
+                            // SAFETY: AVX2 selected at construction; the generic
+                            // body is bounds-checked safe Rust.
+                            return unsafe { lpc_sums_avx2::<$n>(samples, coefficients, shift, size, sums) };
+                        }
+                        lpc_sums::<$n>(samples, coefficients, shift, size, sums)
+                    })*
+                    _ => unreachable!("unsupported LPC order"),
+                }
+            };
+        }
+        dispatch!(1 2 3 4 5 6 7 8)
+    }
+}
+
+#[inline(always)]
+fn lpc_sums<const N: usize>(
     samples: &[i32],
     coefficients: &[i32],
     shift: u32,
-    out: &mut Vec<u32>,
-) -> Option<()> {
-    use std::arch::aarch64::*;
-    let mut i = N;
-    while i + 4 <= samples.len() {
-        let mut lo = vdupq_n_s64(0);
-        let mut hi = vdupq_n_s64(0);
-        for (j, &c) in coefficients.iter().enumerate().take(N) {
-            let past = vld1q_s32(samples.as_ptr().add(i - j - 1));
-            lo = vmlal_n_s32(lo, vget_low_s32(past), c);
-            hi = vmlal_n_s32(hi, vget_high_s32(past), c);
-        }
-        let mut predictions = [0i64; 4];
-        vst1q_s64(predictions.as_mut_ptr(), lo);
-        vst1q_s64(predictions.as_mut_ptr().add(2), hi);
-        for lane in 0..4 {
-            out.push(fold_residual(samples[i + lane], predictions[lane], shift)?);
-        }
-        i += 4;
+    size: usize,
+    sums: &mut [u64],
+) -> bool {
+    let mut c = [0i64; N];
+    for (c, &x) in c.iter_mut().zip(coefficients) {
+        *c = x as i64;
     }
-    lpc_tail::<N>(samples, coefficients, shift, i, out)
+    let mut bad = 0u64;
+    for (p, sum) in sums.iter_mut().enumerate() {
+        let start = (p * size).max(N);
+        let end = (p + 1) * size;
+        let mut total = 0u64;
+        for i in start..end {
+            let window: &[i32; N] = samples[i - N..i].try_into().unwrap();
+            let mut prediction = 0i64;
+            for j in 0..N {
+                prediction += c[j] * window[N - 1 - j] as i64;
+            }
+            let r = samples[i] as i64 - (prediction >> shift);
+            bad |= (r.wrapping_add(1 << 31) as u64) >> 32;
+            total += ((r << 1) ^ (r >> 63)) as u64;
+        }
+        *sum = total;
+    }
+    bad == 0
 }
+
+#[cfg(target_arch = "x86_64")]
+#[target_feature(enable = "avx2")]
+unsafe fn lpc_sums_avx2<const N: usize>(
+    samples: &[i32],
+    coefficients: &[i32],
+    shift: u32,
+    size: usize,
+    sums: &mut [u64],
+) -> bool {
+    lpc_sums::<N>(samples, coefficients, shift, size, sums)
+}
+
 impl Dot64Kernel {
     pub fn new(backend: Backend) -> Self {
         assert!(backend.available());
@@ -894,6 +938,46 @@ mod tests {
                                 .residual_into(&zeros, &coefficients, shift, &mut reused)
                                 .is_some());
                             assert_eq!(reused, vec![0; zeros.len() - order]);
+                        }
+                    }
+                }
+            }
+        }
+    }
+    #[test]
+    fn lpc_partition_sums_match_stored_residuals() {
+        let mut seed = 1729u32;
+        let samples: Vec<i32> = (0..4608)
+            .map(|i| {
+                seed = seed.wrapping_mul(1664525).wrapping_add(1013904223);
+                let tone = ((i as f64 * 0.02).sin() * 8_000_000.0) as i32;
+                tone + ((seed as i32) >> 12)
+            })
+            .collect();
+        for order in 1..=8 {
+            for shift in [0, 5, 15] {
+                for size in [18, 72, 4608] {
+                    let coefficients: Vec<i32> = (0..order)
+                        .map(|j| [16383, -16384, 9000, -1, 0, 77, -5000, 3][j])
+                        .collect();
+                    for backend in [Backend::Scalar, Backend::detect()] {
+                        let kernel = LpcKernel::new(backend);
+                        let mut residual = Vec::new();
+                        let stored = kernel
+                            .residual_into(&samples, &coefficients, shift, &mut residual)
+                            .is_some();
+                        let mut sums = vec![u64::MAX; samples.len() / size];
+                        let ok =
+                            kernel.partition_sums(&samples, &coefficients, shift, size, &mut sums);
+                        assert_eq!(ok, stored, "order {order} shift {shift}");
+                        if ok {
+                            for (p, &sum) in sums.iter().enumerate() {
+                                let start = (p * size).max(order) - order;
+                                let end = (p + 1) * size - order;
+                                let expected: u64 =
+                                    residual[start..end].iter().map(|&r| r as u64).sum();
+                                assert_eq!(sum, expected);
+                            }
                         }
                     }
                 }

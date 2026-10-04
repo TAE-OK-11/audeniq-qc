@@ -160,6 +160,19 @@ impl<'a> Bits<'a> {
         }
         Ok(())
     }
+    /// Top the cache up to 56..=63 bits with one unaligned load when eight
+    /// unread bytes remain (see `rice_run`); otherwise leave it to `fill`.
+    #[inline(always)]
+    pub fn refill(&mut self) {
+        if self.data.len() - self.loaded >= 8 {
+            let word =
+                u64::from_be_bytes(self.data[self.loaded..self.loaded + 8].try_into().unwrap());
+            self.cache |= word >> self.available;
+            let bytes = (63 - self.available) >> 3;
+            self.loaded += bytes as usize;
+            self.available += bytes * 8;
+        }
+    }
     #[inline]
     pub fn alac_scalar(&mut self, k: u32, bits: u32) -> Result<u32> {
         if k == 0 || k > 31 || bits > 32 {

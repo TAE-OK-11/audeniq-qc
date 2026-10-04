@@ -14,6 +14,9 @@ fn extend(v: i32, bits: u32) -> i32 {
 }
 #[inline]
 fn scalar(b: &mut Bits<'_>, k: u32, bits: u32) -> Result<u32> {
+    // A complete ALAC code is at most 9 + 32 bits, so after a 56-bit refill
+    // the cached fast path in `alac_scalar` always applies.
+    b.refill();
     b.alac_scalar(k, bits)
 }
 fn rice(

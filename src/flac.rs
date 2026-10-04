@@ -387,6 +387,50 @@ struct Plan {
     cost: u64,
     mode: Mode,
 }
+struct LpcCandidate {
+    coefficients: Vec<i32>,
+    shift: u32,
+    estimate: u64,
+}
+// Uniformly spaced integer residuals rank prediction models without repeatedly
+// computing whole blocks. This changes compression choices only; reconstruction
+// still uses checked exact residuals for every sample and verifies output PCM.
+fn sampled_lpc_cost(samples: &[i32], coefficients: &[i32], shift: u32, depth: u32) -> u64 {
+    let order = coefficients.len();
+    let count = 128.min(samples.len() - order);
+    let mut sampled = [0u32; 128];
+    let residual = &mut sampled[..count];
+    for (point, value) in residual.iter_mut().enumerate() {
+        let i = order + point * (samples.len() - order - 1) / (count - 1).max(1);
+        let prediction: i64 = coefficients
+            .iter()
+            .enumerate()
+            .map(|(j, &c)| c as i64 * samples[i - j - 1] as i64)
+            .sum();
+        let delta = samples[i] as i64 - (prediction >> shift);
+        if i32::try_from(delta).is_err() {
+            return u64::MAX;
+        }
+        *value = ((delta << 1) ^ (delta >> 63)) as u32;
+    }
+    let mean = residual.iter().map(|&r| r as u64).sum::<u64>() / count as u64;
+    let estimate = if mean == 0 {
+        0
+    } else {
+        63 - mean.leading_zeros()
+    };
+    let overhead = 8 + order as u64 * depth as u64 + 4 + 5 + order as u64 * 12 + 11;
+    (estimate.saturating_sub(1)..=(estimate + 1).min(30))
+        .map(|k| {
+            let bits = residual
+                .iter()
+                .map(|&r| (r as u64 >> k) + 1 + k as u64)
+                .sum::<u64>();
+            overhead + bits * (samples.len() - order) as u64 / count as u64
+        })
+        .min()
+        .unwrap_or(u64::MAX)
+}
 impl Plan {
     fn new(
         samples: &[i32],
@@ -465,6 +509,7 @@ impl Plan {
             }
             let mut a = [0.0f64; 8];
             let mut error = r[0];
+            let mut candidates = Vec::with_capacity(3);
             for index in 0..profile.lpc {
                 if error <= r[0] * 1e-12 || !error.is_finite() {
                     break;
@@ -493,6 +538,31 @@ impl Plan {
                     .iter()
                     .map(|x| (x * (1u32 << shift) as f64).round() as i32)
                     .collect();
+                let estimate = if profile.level <= 5 {
+                    sampled_lpc_cost(samples, &coefficients, shift, depth)
+                } else {
+                    0
+                };
+                candidates.push(LpcCandidate {
+                    coefficients,
+                    shift,
+                    estimate,
+                });
+            }
+            if profile.level <= 5 {
+                candidates.sort_by_key(|c| c.estimate);
+                candidates.truncate(1);
+                if candidates.first().is_some_and(|c| c.estimate >= best.cost) {
+                    candidates.clear();
+                }
+            }
+            for candidate in candidates {
+                let LpcCandidate {
+                    coefficients,
+                    shift,
+                    ..
+                } = candidate;
+                let order = coefficients.len();
                 let Some(residual) = lpc.residual(samples, &coefficients, shift) else {
                     continue;
                 };

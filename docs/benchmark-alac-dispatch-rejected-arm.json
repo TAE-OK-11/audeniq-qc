@@ -1,0 +1,1168 @@
+{
+  "source_commit": "6d3a2fc4307584b6b36d37d94ed3be210d760cc2",
+  "workflow_run": 37209080021,
+  "workflow_job": 111456363441,
+  "production_status": "NEON orders 4 and 8 rejected after native forced-order measurements; production uses specialized scalar",
+  "native_profile_snapshots": [
+    {
+      "native_profile": {
+        "alac_predictor_orders": {
+          "4": {
+            "calls": 1408,
+            "samples": 5760000
+          }
+        },
+        "counters": {
+          "encoder_residual_fresh_buffers": 0,
+          "encoder_residual_reused_buffers": 0,
+          "flac_borrowed_bytes": 0,
+          "mono_buffer_swaps": 0,
+          "packet_borrowed_bytes": 9102421,
+          "packet_copied_bytes": 3344896,
+          "size_table_read_requests": 1
+        },
+        "kind": "inclusive wall time with profiling overhead; stages overlap, do not sum",
+        "stages": {
+          "alac_output": {
+            "calls": 704,
+            "wall_ns": 1065994
+          },
+          "alac_predict": {
+            "calls": 1408,
+            "wall_ns": 57727624
+          },
+          "alac_rice": {
+            "calls": 1408,
+            "wall_ns": 45613043
+          },
+          "encoder": {
+            "calls": 0,
+            "wall_ns": 0
+          },
+          "encoder_plan": {
+            "calls": 0,
+            "wall_ns": 0
+          },
+          "flac_md5": {
+            "calls": 0,
+            "wall_ns": 0
+          },
+          "flac_output": {
+            "calls": 0,
+            "wall_ns": 0
+          },
+          "flac_predict": {
+            "calls": 0,
+            "wall_ns": 0
+          },
+          "flac_residual": {
+            "calls": 0,
+            "wall_ns": 0
+          },
+          "m4a_open": {
+            "calls": 1,
+            "wall_ns": 41418
+          },
+          "output_verify": {
+            "calls": 0,
+            "wall_ns": 0
+          },
+          "packet_read": {
+            "calls": 893,
+            "wall_ns": 1674943
+          },
+          "qc": {
+            "calls": 0,
+            "wall_ns": 0
+          },
+          "source_hash": {
+            "calls": 0,
+            "wall_ns": 0
+          }
+        }
+      },
+      "success": true
+    },
+    {
+      "native_profile": {
+        "alac_predictor_orders": {
+          "4": {
+            "calls": 1408,
+            "samples": 5760000
+          }
+        },
+        "counters": {
+          "encoder_residual_fresh_buffers": 0,
+          "encoder_residual_reused_buffers": 0,
+          "flac_borrowed_bytes": 0,
+          "mono_buffer_swaps": 0,
+          "packet_borrowed_bytes": 9102421,
+          "packet_copied_bytes": 3344896,
+          "size_table_read_requests": 1
+        },
+        "kind": "inclusive wall time with profiling overhead; stages overlap, do not sum",
+        "stages": {
+          "alac_output": {
+            "calls": 704,
+            "wall_ns": 1065206
+          },
+          "alac_predict": {
+            "calls": 1408,
+            "wall_ns": 35167024
+          },
+          "alac_rice": {
+            "calls": 1408,
+            "wall_ns": 45744848
+          },
+          "encoder": {
+            "calls": 0,
+            "wall_ns": 0
+          },
+          "encoder_plan": {
+            "calls": 0,
+            "wall_ns": 0
+          },
+          "flac_md5": {
+            "calls": 0,
+            "wall_ns": 0
+          },
+          "flac_output": {
+            "calls": 0,
+            "wall_ns": 0
+          },
+          "flac_predict": {
+            "calls": 0,
+            "wall_ns": 0
+          },
+          "flac_residual": {
+            "calls": 0,
+            "wall_ns": 0
+          },
+          "m4a_open": {
+            "calls": 1,
+            "wall_ns": 43842
+          },
+          "output_verify": {
+            "calls": 0,
+            "wall_ns": 0
+          },
+          "packet_read": {
+            "calls": 893,
+            "wall_ns": 1667363
+          },
+          "qc": {
+            "calls": 0,
+            "wall_ns": 0
+          },
+          "source_hash": {
+            "calls": 0,
+            "wall_ns": 0
+          }
+        }
+      },
+      "success": true
+    },
+    {
+      "native_profile": {
+        "alac_predictor_orders": {
+          "6": {
+            "calls": 1408,
+            "samples": 5760000
+          }
+        },
+        "counters": {
+          "encoder_residual_fresh_buffers": 0,
+          "encoder_residual_reused_buffers": 0,
+          "flac_borrowed_bytes": 0,
+          "mono_buffer_swaps": 0,
+          "packet_borrowed_bytes": 8779004,
+          "packet_copied_bytes": 3022543,
+          "size_table_read_requests": 1
+        },
+        "kind": "inclusive wall time with profiling overhead; stages overlap, do not sum",
+        "stages": {
+          "alac_output": {
+            "calls": 704,
+            "wall_ns": 1066804
+          },
+          "alac_predict": {
+            "calls": 1408,
+            "wall_ns": 40231646
+          },
+          "alac_rice": {
+            "calls": 1408,
+            "wall_ns": 44947572
+          },
+          "encoder": {
+            "calls": 0,
+            "wall_ns": 0
+          },
+          "encoder_plan": {
+            "calls": 0,
+            "wall_ns": 0
+          },
+          "flac_md5": {
+            "calls": 0,
+            "wall_ns": 0
+          },
+          "flac_output": {
+            "calls": 0,
+            "wall_ns": 0
+          },
+          "flac_predict": {
+            "calls": 0,
+            "wall_ns": 0
+          },
+          "flac_residual": {
+            "calls": 0,
+            "wall_ns": 0
+          },
+          "m4a_open": {
+            "calls": 1,
+            "wall_ns": 41362
+          },
+          "output_verify": {
+            "calls": 0,
+            "wall_ns": 0
+          },
+          "packet_read": {
+            "calls": 884,
+            "wall_ns": 1559499
+          },
+          "qc": {
+            "calls": 0,
+            "wall_ns": 0
+          },
+          "source_hash": {
+            "calls": 0,
+            "wall_ns": 0
+          }
+        }
+      },
+      "success": true
+    },
+    {
+      "native_profile": {
+        "alac_predictor_orders": {
+          "6": {
+            "calls": 1408,
+            "samples": 5760000
+          }
+        },
+        "counters": {
+          "encoder_residual_fresh_buffers": 0,
+          "encoder_residual_reused_buffers": 0,
+          "flac_borrowed_bytes": 0,
+          "mono_buffer_swaps": 0,
+          "packet_borrowed_bytes": 8779004,
+          "packet_copied_bytes": 3022543,
+          "size_table_read_requests": 1
+        },
+        "kind": "inclusive wall time with profiling overhead; stages overlap, do not sum",
+        "stages": {
+          "alac_output": {
+            "calls": 704,
+            "wall_ns": 1066204
+          },
+          "alac_predict": {
+            "calls": 1408,
+            "wall_ns": 40271587
+          },
+          "alac_rice": {
+            "calls": 1408,
+            "wall_ns": 44962255
+          },
+          "encoder": {
+            "calls": 0,
+            "wall_ns": 0
+          },
+          "encoder_plan": {
+            "calls": 0,
+            "wall_ns": 0
+          },
+          "flac_md5": {
+            "calls": 0,
+            "wall_ns": 0
+          },
+          "flac_output": {
+            "calls": 0,
+            "wall_ns": 0
+          },
+          "flac_predict": {
+            "calls": 0,
+            "wall_ns": 0
+          },
+          "flac_residual": {
+            "calls": 0,
+            "wall_ns": 0
+          },
+          "m4a_open": {
+            "calls": 1,
+            "wall_ns": 46418
+          },
+          "output_verify": {
+            "calls": 0,
+            "wall_ns": 0
+          },
+          "packet_read": {
+            "calls": 884,
+            "wall_ns": 1610609
+          },
+          "qc": {
+            "calls": 0,
+            "wall_ns": 0
+          },
+          "source_hash": {
+            "calls": 0,
+            "wall_ns": 0
+          }
+        }
+      },
+      "success": true
+    },
+    {
+      "native_profile": {
+        "alac_predictor_orders": {
+          "8": {
+            "calls": 1408,
+            "samples": 5760000
+          }
+        },
+        "counters": {
+          "encoder_residual_fresh_buffers": 0,
+          "encoder_residual_reused_buffers": 0,
+          "flac_borrowed_bytes": 0,
+          "mono_buffer_swaps": 0,
+          "packet_borrowed_bytes": 8913600,
+          "packet_copied_bytes": 3134841,
+          "size_table_read_requests": 1
+        },
+        "kind": "inclusive wall time with profiling overhead; stages overlap, do not sum",
+        "stages": {
+          "alac_output": {
+            "calls": 704,
+            "wall_ns": 1068502
+          },
+          "alac_predict": {
+            "calls": 1408,
+            "wall_ns": 64493461
+          },
+          "alac_rice": {
+            "calls": 1408,
+            "wall_ns": 45179608
+          },
+          "encoder": {
+            "calls": 0,
+            "wall_ns": 0
+          },
+          "encoder_plan": {
+            "calls": 0,
+            "wall_ns": 0
+          },
+          "flac_md5": {
+            "calls": 0,
+            "wall_ns": 0
+          },
+          "flac_output": {
+            "calls": 0,
+            "wall_ns": 0
+          },
+          "flac_predict": {
+            "calls": 0,
+            "wall_ns": 0
+          },
+          "flac_residual": {
+            "calls": 0,
+            "wall_ns": 0
+          },
+          "m4a_open": {
+            "calls": 1,
+            "wall_ns": 41145
+          },
+          "output_verify": {
+            "calls": 0,
+            "wall_ns": 0
+          },
+          "packet_read": {
+            "calls": 887,
+            "wall_ns": 1609221
+          },
+          "qc": {
+            "calls": 0,
+            "wall_ns": 0
+          },
+          "source_hash": {
+            "calls": 0,
+            "wall_ns": 0
+          }
+        }
+      },
+      "success": true
+    },
+    {
+      "native_profile": {
+        "alac_predictor_orders": {
+          "8": {
+            "calls": 1408,
+            "samples": 5760000
+          }
+        },
+        "counters": {
+          "encoder_residual_fresh_buffers": 0,
+          "encoder_residual_reused_buffers": 0,
+          "flac_borrowed_bytes": 0,
+          "mono_buffer_swaps": 0,
+          "packet_borrowed_bytes": 8913600,
+          "packet_copied_bytes": 3134841,
+          "size_table_read_requests": 1
+        },
+        "kind": "inclusive wall time with profiling overhead; stages overlap, do not sum",
+        "stages": {
+          "alac_output": {
+            "calls": 704,
+            "wall_ns": 1065130
+          },
+          "alac_predict": {
+            "calls": 1408,
+            "wall_ns": 41786872
+          },
+          "alac_rice": {
+            "calls": 1408,
+            "wall_ns": 45148784
+          },
+          "encoder": {
+            "calls": 0,
+            "wall_ns": 0
+          },
+          "encoder_plan": {
+            "calls": 0,
+            "wall_ns": 0
+          },
+          "flac_md5": {
+            "calls": 0,
+            "wall_ns": 0
+          },
+          "flac_output": {
+            "calls": 0,
+            "wall_ns": 0
+          },
+          "flac_predict": {
+            "calls": 0,
+            "wall_ns": 0
+          },
+          "flac_residual": {
+            "calls": 0,
+            "wall_ns": 0
+          },
+          "m4a_open": {
+            "calls": 1,
+            "wall_ns": 41577
+          },
+          "output_verify": {
+            "calls": 0,
+            "wall_ns": 0
+          },
+          "packet_read": {
+            "calls": 887,
+            "wall_ns": 1603994
+          },
+          "qc": {
+            "calls": 0,
+            "wall_ns": 0
+          },
+          "source_hash": {
+            "calls": 0,
+            "wall_ns": 0
+          }
+        }
+      },
+      "success": true
+    }
+  ],
+  "reports": {
+    "alac_predictors": {
+      "arch": "aarch64",
+      "binary_sha256": "982b66f8c753349eeb2fd896564e2477d16603b77ead43eeef8d024ced9ccd60",
+      "bits": 24,
+      "channels": 2,
+      "comparison": "Decode and canonical interleaved s32le SHA-256 only; no meter, fingerprint or encoding. Native scalar selects generic DSP while crypto dispatch and PCM layout kernels remain active. FLAC LPC and ALAC order-6 restoration remain specialized scalar after rejecting slower NEON candidates; bounded ALAC order-4/order-8 prediction can use NEON on ARM. Hash and exact frame count checked on every measured run. FLAC native/reference also verify PCM MD5; FFmpeg validates frames but is not claimed to perform the same whole-stream MD5 check.",
+      "date_utc": "2026-10-04T14:25:15Z",
+      "ffmpeg_version": "ffmpeg version 6.1.1-3ubuntu5 Copyright (c) 2000-2023 the FFmpeg developers",
+      "harness": "audeniq-qc-tools Rust",
+      "host_cpu": "CPU architecture: 8; CPU implementer\t: 0x41; CPU part\t: 0xd49; CPU revision\t: 0",
+      "input_scope": "ALAC with FFmpeg min/max prediction order fixed to 4, 6, 8; profile counters identify actual decoded orders",
+      "qualification": "Synthetic tones, warm page cache, median repeated runs. Applies only to the reported host; not a production corpus or end-to-end AUDENIQ measurement.",
+      "repeats": 7,
+      "results": [
+        {
+          "codec": "alac",
+          "commands": {
+            "ffmpeg": [
+              "ffmpeg",
+              "-nostdin",
+              "-v",
+              "error",
+              "-xerror",
+              "-threads",
+              "1",
+              "-i",
+              "/tmp/audeniq-benchmark-decode-5136-1791123866979047459-0/alac-order-4.m4a",
+              "-map",
+              "0:a:0",
+              "-c:a",
+              "pcm_s32le",
+              "-f",
+              "hash",
+              "-hash",
+              "sha256",
+              "-"
+            ],
+            "native": [
+              "/home/runner/work/audeniq-qc/audeniq-qc/target/release/audeniq-qc",
+              "pcm-hash",
+              "/tmp/audeniq-benchmark-decode-5136-1791123866979047459-0/alac-order-4.m4a"
+            ],
+            "native_scalar": [
+              "/home/runner/work/audeniq-qc/audeniq-qc/target/release/audeniq-qc",
+              "pcm-hash",
+              "/tmp/audeniq-benchmark-decode-5136-1791123866979047459-0/alac-order-4.m4a",
+              "--scalar"
+            ]
+          },
+          "ffmpeg_div_native": {
+            "cpu_s": 1.6153846153846154,
+            "peak_rss_kib": 21.042721518987346,
+            "wall_s": 1.150943396226415
+          },
+          "fixture_sha256": "9a85965cc2785b2761558ab32de29e9fc721d6e1d01be3b07e7d805d08832f45",
+          "median": {
+            "ffmpeg": {
+              "cpu_s": 0.8400000000000001,
+              "peak_rss_kib": 53196,
+              "system_s": 0.06,
+              "user_s": 0.79,
+              "wall_s": 0.61
+            },
+            "native": {
+              "cpu_s": 0.52,
+              "peak_rss_kib": 2528,
+              "system_s": 0,
+              "user_s": 0.52,
+              "wall_s": 0.53
+            },
+            "native_scalar": {
+              "cpu_s": 0.43,
+              "peak_rss_kib": 2520,
+              "system_s": 0,
+              "user_s": 0.43,
+              "wall_s": 0.44
+            }
+          },
+          "pcm_sha256": "26cf6f93e903bc9aafb549ccf11626b7bb0bb83278a4288d3f98e3b0ac7e8261",
+          "requested_prediction_order": 4,
+          "runs": {
+            "ffmpeg": [
+              {
+                "cpu_s": 0.8400000000000001,
+                "peak_rss_kib": 53192,
+                "system_s": 0.05,
+                "user_s": 0.79,
+                "wall_s": 0.61
+              },
+              {
+                "cpu_s": 0.8500000000000001,
+                "peak_rss_kib": 53196,
+                "system_s": 0.06,
+                "user_s": 0.79,
+                "wall_s": 0.61
+              },
+              {
+                "cpu_s": 0.8500000000000001,
+                "peak_rss_kib": 53196,
+                "system_s": 0.06,
+                "user_s": 0.79,
+                "wall_s": 0.62
+              },
+              {
+                "cpu_s": 0.8300000000000001,
+                "peak_rss_kib": 53180,
+                "system_s": 0.05,
+                "user_s": 0.78,
+                "wall_s": 0.61
+              },
+              {
+                "cpu_s": 0.8400000000000001,
+                "peak_rss_kib": 53196,
+                "system_s": 0.06,
+                "user_s": 0.78,
+                "wall_s": 0.61
+              },
+              {
+                "cpu_s": 0.8400000000000001,
+                "peak_rss_kib": 53196,
+                "system_s": 0.05,
+                "user_s": 0.79,
+                "wall_s": 0.61
+              },
+              {
+                "cpu_s": 0.8400000000000001,
+                "peak_rss_kib": 53184,
+                "system_s": 0.06,
+                "user_s": 0.78,
+                "wall_s": 0.61
+              }
+            ],
+            "native": [
+              {
+                "cpu_s": 0.53,
+                "peak_rss_kib": 2528,
+                "system_s": 0,
+                "user_s": 0.53,
+                "wall_s": 0.53
+              },
+              {
+                "cpu_s": 0.52,
+                "peak_rss_kib": 2528,
+                "system_s": 0,
+                "user_s": 0.52,
+                "wall_s": 0.53
+              },
+              {
+                "cpu_s": 0.53,
+                "peak_rss_kib": 2528,
+                "system_s": 0,
+                "user_s": 0.53,
+                "wall_s": 0.53
+              },
+              {
+                "cpu_s": 0.52,
+                "peak_rss_kib": 2528,
+                "system_s": 0,
+                "user_s": 0.52,
+                "wall_s": 0.53
+              },
+              {
+                "cpu_s": 0.52,
+                "peak_rss_kib": 2528,
+                "system_s": 0,
+                "user_s": 0.52,
+                "wall_s": 0.53
+              },
+              {
+                "cpu_s": 0.53,
+                "peak_rss_kib": 2520,
+                "system_s": 0.01,
+                "user_s": 0.52,
+                "wall_s": 0.53
+              },
+              {
+                "cpu_s": 0.52,
+                "peak_rss_kib": 2524,
+                "system_s": 0,
+                "user_s": 0.52,
+                "wall_s": 0.53
+              }
+            ],
+            "native_scalar": [
+              {
+                "cpu_s": 0.43,
+                "peak_rss_kib": 2520,
+                "system_s": 0,
+                "user_s": 0.43,
+                "wall_s": 0.44
+              },
+              {
+                "cpu_s": 0.43,
+                "peak_rss_kib": 2520,
+                "system_s": 0,
+                "user_s": 0.43,
+                "wall_s": 0.44
+              },
+              {
+                "cpu_s": 0.43,
+                "peak_rss_kib": 2528,
+                "system_s": 0,
+                "user_s": 0.43,
+                "wall_s": 0.44
+              },
+              {
+                "cpu_s": 0.43,
+                "peak_rss_kib": 2528,
+                "system_s": 0,
+                "user_s": 0.43,
+                "wall_s": 0.44
+              },
+              {
+                "cpu_s": 0.43,
+                "peak_rss_kib": 2516,
+                "system_s": 0,
+                "user_s": 0.43,
+                "wall_s": 0.44
+              },
+              {
+                "cpu_s": 0.43,
+                "peak_rss_kib": 2528,
+                "system_s": 0,
+                "user_s": 0.43,
+                "wall_s": 0.44
+              },
+              {
+                "cpu_s": 0.43,
+                "peak_rss_kib": 2520,
+                "system_s": 0,
+                "user_s": 0.43,
+                "wall_s": 0.44
+              }
+            ]
+          }
+        },
+        {
+          "codec": "alac",
+          "commands": {
+            "ffmpeg": [
+              "ffmpeg",
+              "-nostdin",
+              "-v",
+              "error",
+              "-xerror",
+              "-threads",
+              "1",
+              "-i",
+              "/tmp/audeniq-benchmark-decode-5136-1791123866979047459-0/alac-order-6.m4a",
+              "-map",
+              "0:a:0",
+              "-c:a",
+              "pcm_s32le",
+              "-f",
+              "hash",
+              "-hash",
+              "sha256",
+              "-"
+            ],
+            "native": [
+              "/home/runner/work/audeniq-qc/audeniq-qc/target/release/audeniq-qc",
+              "pcm-hash",
+              "/tmp/audeniq-benchmark-decode-5136-1791123866979047459-0/alac-order-6.m4a"
+            ],
+            "native_scalar": [
+              "/home/runner/work/audeniq-qc/audeniq-qc/target/release/audeniq-qc",
+              "pcm-hash",
+              "/tmp/audeniq-benchmark-decode-5136-1791123866979047459-0/alac-order-6.m4a",
+              "--scalar"
+            ]
+          },
+          "ffmpeg_div_native": {
+            "cpu_s": 1.934782608695652,
+            "peak_rss_kib": 21.042721518987346,
+            "wall_s": 1.4042553191489364
+          },
+          "fixture_sha256": "51437812ff0fcdce9c36b88f31b22103f2f343fb99eda339297585129de87693",
+          "median": {
+            "ffmpeg": {
+              "cpu_s": 0.8899999999999999,
+              "peak_rss_kib": 53196,
+              "system_s": 0.06,
+              "user_s": 0.83,
+              "wall_s": 0.66
+            },
+            "native": {
+              "cpu_s": 0.46,
+              "peak_rss_kib": 2528,
+              "system_s": 0,
+              "user_s": 0.46,
+              "wall_s": 0.47
+            },
+            "native_scalar": {
+              "cpu_s": 0.46,
+              "peak_rss_kib": 2528,
+              "system_s": 0,
+              "user_s": 0.46,
+              "wall_s": 0.47
+            }
+          },
+          "pcm_sha256": "26cf6f93e903bc9aafb549ccf11626b7bb0bb83278a4288d3f98e3b0ac7e8261",
+          "requested_prediction_order": 6,
+          "runs": {
+            "ffmpeg": [
+              {
+                "cpu_s": 0.8899999999999999,
+                "peak_rss_kib": 53196,
+                "system_s": 0.06,
+                "user_s": 0.83,
+                "wall_s": 0.66
+              },
+              {
+                "cpu_s": 0.8899999999999999,
+                "peak_rss_kib": 53192,
+                "system_s": 0.06,
+                "user_s": 0.83,
+                "wall_s": 0.66
+              },
+              {
+                "cpu_s": 0.89,
+                "peak_rss_kib": 53256,
+                "system_s": 0.05,
+                "user_s": 0.84,
+                "wall_s": 0.66
+              },
+              {
+                "cpu_s": 0.89,
+                "peak_rss_kib": 53192,
+                "system_s": 0.04,
+                "user_s": 0.85,
+                "wall_s": 0.66
+              },
+              {
+                "cpu_s": 0.8899999999999999,
+                "peak_rss_kib": 53256,
+                "system_s": 0.06,
+                "user_s": 0.83,
+                "wall_s": 0.66
+              },
+              {
+                "cpu_s": 0.88,
+                "peak_rss_kib": 53184,
+                "system_s": 0.05,
+                "user_s": 0.83,
+                "wall_s": 0.66
+              },
+              {
+                "cpu_s": 0.8899999999999999,
+                "peak_rss_kib": 53256,
+                "system_s": 0.07,
+                "user_s": 0.82,
+                "wall_s": 0.66
+              }
+            ],
+            "native": [
+              {
+                "cpu_s": 0.46,
+                "peak_rss_kib": 2516,
+                "system_s": 0,
+                "user_s": 0.46,
+                "wall_s": 0.47
+              },
+              {
+                "cpu_s": 0.46,
+                "peak_rss_kib": 2528,
+                "system_s": 0,
+                "user_s": 0.46,
+                "wall_s": 0.47
+              },
+              {
+                "cpu_s": 0.46,
+                "peak_rss_kib": 2528,
+                "system_s": 0,
+                "user_s": 0.46,
+                "wall_s": 0.47
+              },
+              {
+                "cpu_s": 0.46,
+                "peak_rss_kib": 2528,
+                "system_s": 0,
+                "user_s": 0.46,
+                "wall_s": 0.47
+              },
+              {
+                "cpu_s": 0.46,
+                "peak_rss_kib": 2528,
+                "system_s": 0,
+                "user_s": 0.46,
+                "wall_s": 0.47
+              },
+              {
+                "cpu_s": 0.46,
+                "peak_rss_kib": 2524,
+                "system_s": 0,
+                "user_s": 0.46,
+                "wall_s": 0.47
+              },
+              {
+                "cpu_s": 0.46,
+                "peak_rss_kib": 2528,
+                "system_s": 0,
+                "user_s": 0.46,
+                "wall_s": 0.47
+              }
+            ],
+            "native_scalar": [
+              {
+                "cpu_s": 0.46,
+                "peak_rss_kib": 2528,
+                "system_s": 0,
+                "user_s": 0.46,
+                "wall_s": 0.47
+              },
+              {
+                "cpu_s": 0.47,
+                "peak_rss_kib": 2516,
+                "system_s": 0.01,
+                "user_s": 0.46,
+                "wall_s": 0.47
+              },
+              {
+                "cpu_s": 0.46,
+                "peak_rss_kib": 2528,
+                "system_s": 0,
+                "user_s": 0.46,
+                "wall_s": 0.47
+              },
+              {
+                "cpu_s": 0.48,
+                "peak_rss_kib": 2528,
+                "system_s": 0,
+                "user_s": 0.48,
+                "wall_s": 0.48
+              },
+              {
+                "cpu_s": 0.46,
+                "peak_rss_kib": 2528,
+                "system_s": 0,
+                "user_s": 0.46,
+                "wall_s": 0.47
+              },
+              {
+                "cpu_s": 0.46,
+                "peak_rss_kib": 2528,
+                "system_s": 0,
+                "user_s": 0.46,
+                "wall_s": 0.47
+              },
+              {
+                "cpu_s": 0.46,
+                "peak_rss_kib": 2528,
+                "system_s": 0,
+                "user_s": 0.46,
+                "wall_s": 0.47
+              }
+            ]
+          }
+        },
+        {
+          "codec": "alac",
+          "commands": {
+            "ffmpeg": [
+              "ffmpeg",
+              "-nostdin",
+              "-v",
+              "error",
+              "-xerror",
+              "-threads",
+              "1",
+              "-i",
+              "/tmp/audeniq-benchmark-decode-5136-1791123866979047459-0/alac-order-8.m4a",
+              "-map",
+              "0:a:0",
+              "-c:a",
+              "pcm_s32le",
+              "-f",
+              "hash",
+              "-hash",
+              "sha256",
+              "-"
+            ],
+            "native": [
+              "/home/runner/work/audeniq-qc/audeniq-qc/target/release/audeniq-qc",
+              "pcm-hash",
+              "/tmp/audeniq-benchmark-decode-5136-1791123866979047459-0/alac-order-8.m4a"
+            ],
+            "native_scalar": [
+              "/home/runner/work/audeniq-qc/audeniq-qc/target/release/audeniq-qc",
+              "pcm-hash",
+              "/tmp/audeniq-benchmark-decode-5136-1791123866979047459-0/alac-order-8.m4a",
+              "--scalar"
+            ]
+          },
+          "ffmpeg_div_native": {
+            "cpu_s": 1.636363636363636,
+            "peak_rss_kib": 21.14308426073132,
+            "wall_s": 1.1785714285714286
+          },
+          "fixture_sha256": "d83a8be164fe73a44480563729aebd7685a0adafd606cf71a6dc548fbf85f1b4",
+          "median": {
+            "ffmpeg": {
+              "cpu_s": 0.8999999999999999,
+              "peak_rss_kib": 53196,
+              "system_s": 0.05,
+              "user_s": 0.84,
+              "wall_s": 0.66
+            },
+            "native": {
+              "cpu_s": 0.55,
+              "peak_rss_kib": 2516,
+              "system_s": 0,
+              "user_s": 0.55,
+              "wall_s": 0.56
+            },
+            "native_scalar": {
+              "cpu_s": 0.47,
+              "peak_rss_kib": 2528,
+              "system_s": 0,
+              "user_s": 0.47,
+              "wall_s": 0.47
+            }
+          },
+          "pcm_sha256": "26cf6f93e903bc9aafb549ccf11626b7bb0bb83278a4288d3f98e3b0ac7e8261",
+          "requested_prediction_order": 8,
+          "runs": {
+            "ffmpeg": [
+              {
+                "cpu_s": 0.9,
+                "peak_rss_kib": 53192,
+                "system_s": 0.05,
+                "user_s": 0.85,
+                "wall_s": 0.66
+              },
+              {
+                "cpu_s": 0.9,
+                "peak_rss_kib": 53188,
+                "system_s": 0.05,
+                "user_s": 0.85,
+                "wall_s": 0.66
+              },
+              {
+                "cpu_s": 0.9,
+                "peak_rss_kib": 53196,
+                "system_s": 0.05,
+                "user_s": 0.85,
+                "wall_s": 0.66
+              },
+              {
+                "cpu_s": 0.8999999999999999,
+                "peak_rss_kib": 53236,
+                "system_s": 0.06,
+                "user_s": 0.84,
+                "wall_s": 0.66
+              },
+              {
+                "cpu_s": 0.8999999999999999,
+                "peak_rss_kib": 53256,
+                "system_s": 0.06,
+                "user_s": 0.84,
+                "wall_s": 0.67
+              },
+              {
+                "cpu_s": 0.8899999999999999,
+                "peak_rss_kib": 53196,
+                "system_s": 0.06,
+                "user_s": 0.83,
+                "wall_s": 0.67
+              },
+              {
+                "cpu_s": 0.89,
+                "peak_rss_kib": 53188,
+                "system_s": 0.05,
+                "user_s": 0.84,
+                "wall_s": 0.67
+              }
+            ],
+            "native": [
+              {
+                "cpu_s": 0.55,
+                "peak_rss_kib": 2512,
+                "system_s": 0,
+                "user_s": 0.55,
+                "wall_s": 0.56
+              },
+              {
+                "cpu_s": 0.55,
+                "peak_rss_kib": 2528,
+                "system_s": 0,
+                "user_s": 0.55,
+                "wall_s": 0.56
+              },
+              {
+                "cpu_s": 0.55,
+                "peak_rss_kib": 2512,
+                "system_s": 0.01,
+                "user_s": 0.54,
+                "wall_s": 0.56
+              },
+              {
+                "cpu_s": 0.55,
+                "peak_rss_kib": 2528,
+                "system_s": 0,
+                "user_s": 0.55,
+                "wall_s": 0.56
+              },
+              {
+                "cpu_s": 0.55,
+                "peak_rss_kib": 2516,
+                "system_s": 0,
+                "user_s": 0.55,
+                "wall_s": 0.56
+              },
+              {
+                "cpu_s": 0.55,
+                "peak_rss_kib": 2528,
+                "system_s": 0,
+                "user_s": 0.55,
+                "wall_s": 0.56
+              },
+              {
+                "cpu_s": 0.55,
+                "peak_rss_kib": 2516,
+                "system_s": 0,
+                "user_s": 0.55,
+                "wall_s": 0.56
+              }
+            ],
+            "native_scalar": [
+              {
+                "cpu_s": 0.47,
+                "peak_rss_kib": 2528,
+                "system_s": 0,
+                "user_s": 0.47,
+                "wall_s": 0.47
+              },
+              {
+                "cpu_s": 0.47,
+                "peak_rss_kib": 2528,
+                "system_s": 0,
+                "user_s": 0.47,
+                "wall_s": 0.48
+              },
+              {
+                "cpu_s": 0.46,
+                "peak_rss_kib": 2520,
+                "system_s": 0,
+                "user_s": 0.46,
+                "wall_s": 0.47
+              },
+              {
+                "cpu_s": 0.47,
+                "peak_rss_kib": 2528,
+                "system_s": 0,
+                "user_s": 0.47,
+                "wall_s": 0.48
+              },
+              {
+                "cpu_s": 0.47,
+                "peak_rss_kib": 2528,
+                "system_s": 0,
+                "user_s": 0.47,
+                "wall_s": 0.47
+              },
+              {
+                "cpu_s": 0.47,
+                "peak_rss_kib": 2520,
+                "system_s": 0,
+                "user_s": 0.47,
+                "wall_s": 0.48
+              },
+              {
+                "cpu_s": 0.47,
+                "peak_rss_kib": 2528,
+                "system_s": 0,
+                "user_s": 0.47,
+                "wall_s": 0.47
+              }
+            ]
+          }
+        }
+      ],
+      "sample_rate": 48000,
+      "seconds": 240
+    }
+  }
+}

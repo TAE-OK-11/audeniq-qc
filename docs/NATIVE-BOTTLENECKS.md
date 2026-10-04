@@ -6,7 +6,7 @@ integration remains outside this repository's current scope.
 
 ## Removed work
 
-| Path | Before | Current candidate |
+| Path | Before | Current implementation |
 | --- | --- | --- |
 | M4A size-table preflight | One `read_exact(4)` request per sample | Bounded 4 KiB batches; identical entry limits |
 | M4A indexing | Owned size, duration, offset and map arrays, then a packet index | Borrow bounded moov tables and advance a timing-run cursor directly into the packet index |
@@ -46,21 +46,24 @@ does more work than scalar's early-exit adaptation on this fixture. Production
 order 6 now uses the faster compile-time scalar specialization, including when
 the other DSP kernels select NEON. Rejected raw reports are retained separately.
 
-The remaining ARM order-4/order-8 candidate retains predictor history and signed adaptive
-coefficients in NEON registers. Wrapped integer products reproduce ALAC's
-32-bit arithmetic. A weighted inclusive prefix mask replaces the sequential
-coefficient-update/early-exit loop. The optimization is restricted to <=25-bit
-predictor samples, where the complete adaptation prefix cannot overflow; other
-orders/widths and an initial sample outside its signed width use the existing
-scalar code. No FMA or lossy arithmetic is used.
-Tests compare complete PCM **and final coefficients**, including extreme
-residuals, coefficient wrap, quantizers and short blocks. This is a separate
-candidate from the previously rejected FLAC 64-bit NEON LPC implementation.
-The rejected order-6 padding/history code has been removed. Differential tests
-include orders 4/6/8 against the original dynamic-order scalar loop. An additional
-`benchmark-alac-predictors` Rust command and short native ARM/x86 workflow force
-FFmpeg's min/max order to 4/6/8, confirm actual decoded orders with diagnostic
-counters, and isolate auto/scalar decode performance before accepting dispatch.
+The remaining order-4/order-8 register-history/adaptation-prefix NEON kernels
+were also rejected by the forced-order benchmark (workflow 37209080021,
+`6d3a2fc4`). On N2, order 4 used 0.52 CPU seconds versus scalar's 0.43; order 8
+used 0.55 versus 0.47, across seven four-minute decode/hash repeats. Actual
+decoded orders were confirmed by independent diagnostic counters. These kernels
+passed PCM/coefficient checks, but SIMD prefix work lost to the scalar early
+exit. All explicit ALAC predictor NEON code and its backend plumbing were removed.
+The previously rejected FLAC 64-bit NEON LPC kernel remains removed too.
+
+Production orders 4/6/8 use compile-time-specialized integer loops; all other
+orders retain the bounded generic loop. Tests compare complete PCM **and final
+coefficients** against the original dynamic-order loop, including extreme
+residuals, coefficient wrap, quantizers and short blocks. No FMA, reduced
+precision or relaxed corruption checks are used. Faster measured NEON/AVX2
+encoder, meter, resampler and PCM layout operations remain. The Rust
+`benchmark-alac-predictors` command forces FFmpeg's min/max order to 4/6/8 for
+future dispatch experiments, separately identifying decoded orders and timing
+uninstrumented binaries.
 
 ## Measurement and acceptance
 

@@ -1,7 +1,7 @@
 //! ALAC Rice/adaptive LPC Rust port, reworked for reusable in-place buffers.
 //! Derived from FFmpeg libavcodec/alac.c and alacdsp.c (LGPL-2.1-or-later),
 //! Copyright (c) 2005 David Hammerton. See THIRD_PARTY.md for the pinned source.
-use crate::{kernels::Backend, msb::Bits, Error, Result};
+use crate::{msb::Bits, Error, Result};
 pub(crate) struct Decoder {
     config: [u8; 24],
     pcm: [Vec<i32>; 2],
@@ -64,7 +64,7 @@ fn rice(
     }
     Ok(())
 }
-fn predict(p: &mut [i32], bits: u32, coeff: &mut [i16], quant: u32, _backend: Backend) {
+fn predict(p: &mut [i32], bits: u32, coeff: &mut [i16], quant: u32) {
     let _profile = crate::profile::scope(crate::profile::Stage::AlacPredict);
     let order = coeff.len();
     crate::profile::alac_order(order, p.len());
@@ -80,28 +80,10 @@ fn predict(p: &mut [i32], bits: u32, coeff: &mut [i16], quant: u32, _backend: Ba
     for i in 1..=order.min(p.len() - 1) {
         p[i] = extend(p[i - 1].wrapping_add(p[i]), bits);
     }
-    // Warm-up normalizes all history except the initial sample. The prefix
-    // proof needs that first sample bounded too; preserve scalar semantics for
-    // synthetic/hostile residual histories outside the declared signed width.
-    #[cfg(target_arch = "aarch64")]
-    let neon_history = bits <= 25 && extend(p[0], bits) == p[0];
     match order {
-        4 => {
-            #[cfg(target_arch = "aarch64")]
-            if neon_history && _backend == Backend::Neon && _backend.available() {
-                // SAFETY: runtime detection and bounded implementation below.
-                return unsafe { predict_neon::<4>(p, bits, coeff, quant) };
-            }
-            predict_order::<4>(p, bits, coeff, quant)
-        }
+        4 => predict_order::<4>(p, bits, coeff, quant),
         6 => predict_order::<6>(p, bits, coeff, quant),
-        8 => {
-            #[cfg(target_arch = "aarch64")]
-            if neon_history && _backend == Backend::Neon && _backend.available() {
-                return unsafe { predict_neon::<8>(p, bits, coeff, quant) };
-            }
-            predict_order::<8>(p, bits, coeff, quant)
-        }
+        8 => predict_order::<8>(p, bits, coeff, quant),
         _ => predict_order::<0>(p, bits, coeff, quant),
     }
 }
@@ -113,13 +95,7 @@ impl Decoder {
             extra: std::array::from_fn(|_| Vec::new()),
         }
     }
-    pub fn decode(
-        &mut self,
-        packet: &[u8],
-        frames: u32,
-        out: &mut Vec<i32>,
-        backend: Backend,
-    ) -> Result<()> {
+    pub fn decode(&mut self, packet: &[u8], frames: u32, out: &mut Vec<i32>) -> Result<()> {
         let mut b = Bits::new(packet);
         let channels = self.config[9] as usize;
         let width = self.config[5] as u32;
@@ -217,9 +193,9 @@ impl Decoder {
                         self.config[8] as u32,
                     )?;
                     if modes[ch] == 15 {
-                        predict(p, bits, &mut [0; 31], 0, backend);
+                        predict(p, bits, &mut [0; 31], 0);
                     }
-                    predict(p, bits, &mut coeff[ch][..orders[ch]], quant[ch], backend);
+                    predict(p, bits, &mut coeff[ch][..orders[ch]], quant[ch]);
                 }
             } else {
                 for i in 0..count {
@@ -336,112 +312,6 @@ fn predict_order<const N: usize>(p: &mut [i32], bits: u32, coeff: &mut [i16], qu
     }
 }
 
-// For ALAC's accepted <=25-bit predictor samples, delta magnitudes are <2^25.
-// With quant>=1 and N<=8, the complete weighted adaptation prefix is <2^30.
-// Its unsigned threshold mask therefore exactly reproduces the scalar early
-// exit, including i32::MIN errors, negative ceil-shifts and i16 coefficient wrap.
-#[cfg(target_arch = "aarch64")]
-#[target_feature(enable = "neon")]
-unsafe fn adapt_neon(
-    coefficients: std::arch::aarch64::int32x4_t,
-    delta: std::arch::aarch64::int32x4_t,
-    shift: std::arch::aarch64::int32x4_t,
-    negative: bool,
-    magnitude: u32,
-    weights: std::arch::aarch64::int32x4_t,
-    prior: i32,
-) -> (std::arch::aarch64::int32x4_t, i32) {
-    use std::arch::aarch64::*;
-    let zero = vdupq_n_s32(0);
-    let mut direction = vsubq_s32(
-        vreinterpretq_s32_u32(vcltq_s32(delta, zero)),
-        vreinterpretq_s32_u32(vcgtq_s32(delta, zero)),
-    );
-    if negative {
-        direction = vnegq_s32(direction);
-    }
-    let mut progress = vshlq_s32(vmulq_s32(delta, direction), shift);
-    if negative {
-        progress = vnegq_s32(progress);
-    }
-    progress = vmulq_s32(progress, weights);
-    let a = vaddq_s32(progress, vextq_s32::<3>(zero, progress));
-    let prefix = vaddq_s32(a, vextq_s32::<2>(zero, a));
-    let inclusive = vaddq_s32(prefix, vdupq_n_s32(prior));
-    let before = vextq_s32::<3>(vdupq_n_s32(prior), inclusive);
-    let active = vcgtq_u32(vdupq_n_u32(magnitude), vreinterpretq_u32_s32(before));
-    let updated = vsubq_s32(
-        coefficients,
-        vandq_s32(vreinterpretq_s32_u32(active), direction),
-    );
-    (
-        vmovl_s16(vmovn_s32(updated)),
-        vgetq_lane_s32::<3>(inclusive),
-    )
-}
-
-/// Keep predictor samples and adaptive coefficients in registers. Integer
-/// NEON products/reductions wrap just like ALAC; adaptation uses an exact prefix
-/// mask instead of loading/storing coefficients through a scalar early-exit loop.
-#[cfg(target_arch = "aarch64")]
-#[target_feature(enable = "neon")]
-unsafe fn predict_neon<const N: usize>(p: &mut [i32], bits: u32, coeff: &mut [i16], quant: u32) {
-    use std::arch::aarch64::*;
-    assert!(matches!(N, 4 | 8) && coeff.len() == N && bits <= 25 && (1..=15).contains(&quant));
-    if p.len() <= N + 1 {
-        return;
-    }
-    let mut c0 = vmovl_s16(vld1_s16(coeff.as_ptr()));
-    let mut c1 = if N == 8 {
-        vmovl_s16(vld1_s16(coeff.as_ptr().add(4)))
-    } else {
-        vdupq_n_s32(0)
-    };
-    let mut h0 = vld1q_s32(p.as_ptr().add(1));
-    let mut h1 = if N == 8 {
-        vld1q_s32(p.as_ptr().add(5))
-    } else {
-        vdupq_n_s32(0)
-    };
-    let w0 = vld1q_s32([1, 2, 3, 4].as_ptr());
-    let w1 = vld1q_s32([5, 6, 7, 8].as_ptr());
-    let shifts = vdupq_n_s32(-(quant as i32));
-    let mut base = p[0];
-    for residual in &mut p[N + 1..] {
-        let error = *residual;
-        let d0 = vsubq_s32(vdupq_n_s32(base), h0);
-        let d1 = vsubq_s32(vdupq_n_s32(base), h1);
-        let mut products = vmulq_s32(vnegq_s32(d0), c0);
-        if N == 8 {
-            products = vaddq_s32(products, vmulq_s32(vnegq_s32(d1), c1));
-        }
-        let sum = vaddvq_s32(products);
-        let prediction = ((sum as i64 + (1i64 << (quant - 1))) >> quant) as i32;
-        let sample = extend(prediction.wrapping_add(base).wrapping_add(error), bits);
-        *residual = sample;
-        if error != 0 {
-            let (updated, prior) =
-                adapt_neon(c0, d0, shifts, error < 0, error.unsigned_abs(), w0, 0);
-            c0 = updated;
-            if N == 8 {
-                c1 = adapt_neon(c1, d1, shifts, error < 0, error.unsigned_abs(), w1, prior).0;
-            }
-        }
-        base = vgetq_lane_s32::<0>(h0);
-        let newest = vdupq_n_s32(sample);
-        if N == 8 {
-            h0 = vextq_s32::<1>(h0, h1);
-            h1 = vextq_s32::<1>(h1, newest);
-        } else {
-            h0 = vextq_s32::<1>(h0, newest);
-        }
-    }
-    vst1_s16(coeff.as_mut_ptr(), vmovn_s32(c0));
-    if N == 8 {
-        vst1_s16(coeff.as_mut_ptr().add(4), vmovn_s32(c1));
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -492,13 +362,7 @@ mod tests {
                             }
                             let mut actual = input;
                             let mut actual_coeff = initial;
-                            predict(
-                                &mut actual,
-                                bits,
-                                &mut actual_coeff,
-                                quant,
-                                Backend::detect(),
-                            );
+                            predict(&mut actual, bits, &mut actual_coeff, quant);
                             assert_eq!(
                                 actual, expected,
                                 "order={order} bits={bits} quant={quant} n={n} pattern={pattern}"
@@ -595,22 +459,16 @@ mod tests {
                 let packet = w.bytes;
                 let mut out = Vec::new();
                 let mut d = Decoder::new(config);
-                d.decode(&packet, count as u32, &mut out, Backend::Scalar)
-                    .unwrap();
+                d.decode(&packet, count as u32, &mut out).unwrap();
                 assert_eq!(out, expected);
-                d.decode(&packet, count as u32, &mut out, Backend::Scalar)
-                    .unwrap();
+                d.decode(&packet, count as u32, &mut out).unwrap();
                 assert_eq!(out, expected);
                 for n in 0..packet.len() {
-                    assert!(d
-                        .decode(&packet[..n], count as u32, &mut out, Backend::Scalar)
-                        .is_err());
+                    assert!(d.decode(&packet[..n], count as u32, &mut out).is_err());
                 }
                 let mut tail = packet.clone();
                 tail.push(0);
-                assert!(d
-                    .decode(&tail, count as u32, &mut out, Backend::Scalar)
-                    .is_err());
+                assert!(d.decode(&tail, count as u32, &mut out).is_err());
             }
         }
     }
@@ -634,7 +492,7 @@ mod tests {
             config[9] = 2;
             let mut d = Decoder::new(config);
             let mut out = Vec::new();
-            let _ = d.decode(&packet, 32, &mut out, Backend::Scalar);
+            let _ = d.decode(&packet, 32, &mut out);
         }
     }
 }

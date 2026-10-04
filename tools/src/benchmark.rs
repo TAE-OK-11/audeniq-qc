@@ -256,7 +256,7 @@ fn decoding_cases(options: &Options, fixed_alac_orders: bool) -> Result<Value> {
     } else {
         "WAV/FLAC/ALAC"
     });
-    report["comparison"]=json!("Decode and canonical interleaved s32le SHA-256 only; no meter, fingerprint or encoding. Native scalar selects generic DSP while crypto dispatch and PCM layout kernels remain active. FLAC LPC and ALAC order-6 restoration remain specialized scalar after rejecting slower NEON candidates; bounded ALAC order-4/order-8 prediction can use NEON on ARM. Hash and exact frame count checked on every measured run. FLAC native/reference also verify PCM MD5; FFmpeg validates frames but is not claimed to perform the same whole-stream MD5 check.");
+    report["comparison"]=json!("Decode and canonical interleaved s32le SHA-256 only; no meter, fingerprint or encoding. Native scalar selects generic DSP while crypto dispatch and PCM layout kernels remain active. FLAC LPC and ALAC order-4/order-6/order-8 restoration use specialized scalar loops after rejecting slower explicit NEON decoder kernels. Hash and exact frame count checked on every measured run. FLAC native/reference also verify PCM MD5; FFmpeg validates frames but is not claimed to perform the same whole-stream MD5 check.");
     Ok(report)
 }
 pub fn analysis(options: &Options) -> Result<Value> {

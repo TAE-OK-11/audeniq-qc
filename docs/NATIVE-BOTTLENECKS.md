@@ -4,6 +4,9 @@ Scope: the Rust ALAC/FLAC decoders and M4A sample-table reader that replaced
 Symphonia in the default build, plus their conversion/QC consumers. Backend
 integration remains outside this repository's current scope.
 
+Latest fresh three-way rerun: [2026-10-05 KST results](BENCHMARK-THREEWAY-RERUN.md).
+It uses N2 and EPYC 9V74 and preserves this earlier Zen3 dataset separately.
+
 ## Removed work
 
 | Path | Before | Current implementation |

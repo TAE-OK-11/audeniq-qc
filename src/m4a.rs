@@ -342,10 +342,22 @@ mod tests {
     use super::*;
     #[test]
     fn atom_headers_lengths_and_duplicate_tables_are_checked() {
-        for len in 1..8 {assert!(atoms(&vec![0;len]).is_err());}
-        for size in [1u32,2,7,99] {let mut b=vec![0;8];b[..4].copy_from_slice(&size.to_be_bytes());assert!(atoms(&b).is_err());}
-        let mut b=vec![0;16];b[..4].copy_from_slice(&1u32.to_be_bytes());b[8..].copy_from_slice(&u64::MAX.to_be_bytes());assert!(atoms(&b).is_err());
-        let b=b"\0\0\0\x08stco\0\0\0\x08stco";let list=atoms(b).unwrap();assert_eq!(list.len(),2);
-        #[cfg(not(feature="reference-codecs"))] assert!(one(&list,b"stco").is_err());
+        for len in 1..8 {
+            assert!(atoms(&vec![0; len]).is_err());
+        }
+        for size in [1u32, 2, 7, 99] {
+            let mut b = vec![0; 8];
+            b[..4].copy_from_slice(&size.to_be_bytes());
+            assert!(atoms(&b).is_err());
+        }
+        let mut b = vec![0; 16];
+        b[..4].copy_from_slice(&1u32.to_be_bytes());
+        b[8..].copy_from_slice(&u64::MAX.to_be_bytes());
+        assert!(atoms(&b).is_err());
+        let b = b"\0\0\0\x08stco\0\0\0\x08stco";
+        let list = atoms(b).unwrap();
+        assert_eq!(list.len(), 2);
+        #[cfg(not(feature = "reference-codecs"))]
+        assert!(one(&list, b"stco").is_err());
     }
 }

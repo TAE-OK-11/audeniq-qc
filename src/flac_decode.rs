@@ -13,6 +13,7 @@ pub(crate) struct Decoder {
     pub spec: AudioSpec,
     pub info: [u8; 34],
     buffer: Vec<u8>,
+    end: usize,
     start: usize,
     retained: Option<std::ops::Range<usize>>,
     eof: bool,
@@ -360,6 +361,7 @@ impl Decoder {
             spec,
             info,
             buffer: Vec::new(),
+            end: 0,
             start: 0,
             retained: None,
             eof: false,
@@ -372,17 +374,21 @@ impl Decoder {
         })
     }
     fn fill(&mut self, limit: usize) -> Result<()> {
-        self.buffer.copy_within(self.start.., 0);
-        self.buffer.truncate(self.buffer.len() - self.start);
+        // Keep the allocation (and its initialized bytes) across refills;
+        // only the unread tail moves and only new bytes are read.
+        self.buffer.copy_within(self.start..self.end, 0);
+        self.end -= self.start;
         self.start = 0;
-        let old = self.buffer.len();
+        let old = self.end;
         let target = (old + 65536).min(limit);
         if target == old {
             return Err(Error::Limit("FLAC packet bytes"));
         }
-        self.buffer.resize(target, 0);
-        let n = self.file.read(&mut self.buffer[old..])?;
-        self.buffer.truncate(old + n);
+        if self.buffer.len() < target {
+            self.buffer.resize(target, 0);
+        }
+        let n = self.file.read(&mut self.buffer[old..target])?;
+        self.end = old + n;
         if n == 0 {
             self.eof = true;
         }
@@ -392,7 +398,7 @@ impl Decoder {
         self.retained = None;
         if self.decoded == self.spec.frames.unwrap() {
             out.clear();
-            if self.start != self.buffer.len() {
+            if self.start != self.end {
                 return invalid("FLAC trailing data");
             }
             let mut tail = [0];
@@ -414,11 +420,11 @@ impl Decoder {
         }
         loop {
             limits.check()?;
-            if !self.eof && self.buffer.len() - self.start < declared_max {
+            if !self.eof && self.end - self.start < declared_max {
                 self.fill(limits.max_packet_bytes)?;
                 continue;
             }
-            let data = &self.buffer[self.start..];
+            let data = &self.buffer[self.start..self.end];
             match decode(data, &self.spec, maximum, &mut self.planes, out) {
                 Ok((n, h)) => {
                     if declared_max != 0 && n > declared_max {

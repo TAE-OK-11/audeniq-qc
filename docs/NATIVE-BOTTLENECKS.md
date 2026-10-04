@@ -16,9 +16,15 @@ integration remains outside this repository's current scope.
 | FLAC independent stereo | Align both planes, then interleave | Fused alignment/interleave; bounded baseline NEON structure stores on AArch64 |
 | Verified FLAC frame copy | Allocate/copy an owned encoded frame per packet | Borrow the validated read-buffer range until the next decoder call |
 | Decode output reuse | Clear then resize per packet | Preserve initialized storage and overwrite complete output |
+| FLAC encoding residuals | New fixed/LPC residual Vec per evaluated model and block | Recycle losing, replaced, emitted and rejected stereo plans through a bounded five-buffer pool; LPC kernels fill caller scratch |
 
 This is partial zero-copy. OS file reads, buffer-boundary fallback, decoded PCM
 materialization, hashes, output encoding and required verification remain.
+The encoder still evaluates the same models in the same order with identical
+costs and tie decisions. This pool changes storage ownership, not compression
+quality or the prediction mathematics. Other small candidate/coefficient
+allocations remain. Diagnostic fresh/reuse counters count buffer acquisitions,
+not every allocator call or reallocation.
 
 ## Calculation bottleneck
 

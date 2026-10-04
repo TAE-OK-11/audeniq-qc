@@ -222,7 +222,7 @@ pub fn decoding(options: &Options) -> Result<Value> {
     }
     let mut report = metadata(options, seconds, results)?;
     report["input_scope"] = json!("WAV/FLAC/ALAC");
-    report["comparison"]=json!("Decode and canonical interleaved s32le SHA-256 only; no meter, fingerprint or encoding. Native scalar selects generic DSP while crypto dispatch and PCM layout kernels remain active. Native LPC decoder restoration is scalar in both modes after rejecting the slower NEON candidate. Hash and exact frame count checked on every measured run. FLAC native/reference also verify PCM MD5; FFmpeg validates frames but is not claimed to perform the same whole-stream MD5 check.");
+    report["comparison"]=json!("Decode and canonical interleaved s32le SHA-256 only; no meter, fingerprint or encoding. Native scalar selects generic DSP while crypto dispatch and PCM layout kernels remain active. FLAC LPC restoration remains scalar after rejecting its slower NEON candidate; bounded ALAC order-4/order-8 prediction can use NEON on ARM. Hash and exact frame count checked on every measured run. FLAC native/reference also verify PCM MD5; FFmpeg validates frames but is not claimed to perform the same whole-stream MD5 check.");
     Ok(report)
 }
 pub fn analysis(options: &Options) -> Result<Value> {
@@ -582,7 +582,7 @@ pub fn convert(options: &Options) -> Result<Value> {
     if options.review {
         report["comparison"] = json!("Verified FLAC conversion plus QC. Native uses convert --analyze and optionally --fingerprint; baseline runs pinned convert then analyze of verified output, sums CPU/wall and takes maximum child RSS. Baseline/current QC values and fingerprint windows must match exactly (source codec metadata excepted). FFmpeg measures source hash/FLAC encode plus ebur128 true peak in one source decode, then independent output verification; with fingerprint it also emits continuous mono 11025 s16 to /dev/null. FFmpeg excludes native's extra QC metrics and fingerprint retention/JSON cost. Independent FFmpeg checks of native/baseline FLAC outputs are outside timing.");
         if options.reference_codecs {
-            report["comparison"] = json!("Native and reference codecs both use fused convert --analyze with optional --fingerprint, exact QC equality and independent FFmpeg output hashes. FFmpeg uses one source decode for FLAC encode, canonical PCM SHA-256 and ebur128 true peak, then separately verifies output. FFmpeg omits native's extra QC fields/JSON/fingerprint retention. True-peak and resampling filters differ.");
+            report["comparison"] = json!("Native and comparator both use fused convert --analyze with optional --fingerprint, exact QC equality and independent FFmpeg output hashes. Comparator provenance is in reference_mode or comparison_mode and its binary SHA-256. FFmpeg uses one source decode for FLAC encode, canonical PCM SHA-256 and ebur128 true peak, then separately verifies output. FFmpeg omits native's extra QC fields/JSON/fingerprint retention. True-peak and resampling filters differ.");
         }
     }
     Ok(report)

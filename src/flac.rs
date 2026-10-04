@@ -399,6 +399,9 @@ impl Encoder {
             );
             if m.cost + s.cost < l.cost + r.as_ref().unwrap().cost {
                 ms = Some((m, s));
+            } else {
+                m.recycle(&mut self.planner);
+                s.recycle(&mut self.planner);
             }
         }
         let mut bw = BeWriter::reuse(std::mem::take(&mut self.frame_buffer));
@@ -420,12 +423,16 @@ impl Encoder {
         let crc = crc8(&bw.bytes);
         bw.put(8, crc as u64);
         if let Some((m, s)) = ms {
-            m.write(&mut bw, mid, depth);
-            s.write(&mut bw, side, depth + 1);
-        } else {
-            l.write(&mut bw, left, depth);
+            l.recycle(&mut self.planner);
             if let Some(r) = r {
-                r.write(&mut bw, right, depth);
+                r.recycle(&mut self.planner);
+            }
+            m.write(&mut bw, mid, depth, &mut self.planner);
+            s.write(&mut bw, side, depth + 1, &mut self.planner);
+        } else {
+            l.write(&mut bw, left, depth, &mut self.planner);
+            if let Some(r) = r {
+                r.write(&mut bw, right, depth, &mut self.planner);
             }
         }
         bw.align();
@@ -497,6 +504,23 @@ struct Planner {
     diff: Vec<i64>,
     window: Vec<f64>,
     windowed: Vec<f64>,
+    residuals: Vec<Vec<u32>>,
+}
+impl Planner {
+    fn residual(&mut self) -> Vec<u32> {
+        if let Some(buffer) = self.residuals.pop() {
+            crate::profile::count(crate::profile::Counter::EncoderResidualReused, 1);
+            buffer
+        } else {
+            crate::profile::count(crate::profile::Counter::EncoderResidualFresh, 1);
+            Vec::new()
+        }
+    }
+    fn recycle(&mut self, residual: Vec<u32>) {
+        // At most four held stereo/mid-side plans plus one planning scratch.
+        debug_assert!(self.residuals.len() < 5);
+        self.residuals.push(residual);
+    }
 }
 // Uniformly spaced integer residuals rank prediction models without repeatedly
 // computing whole blocks. This changes compression choices only; reconstruction
@@ -558,21 +582,24 @@ impl Plan {
             cost: 8 + samples.len() as u64 * depth as u64,
             mode: Mode::Verbatim,
         };
-        let diff = &mut planner.diff;
-        diff.clear();
-        diff.extend(samples.iter().map(|x| *x as i64));
+        planner.diff.clear();
+        planner.diff.extend(samples.iter().map(|x| *x as i64));
         for order in 0..=profile.fixed.min(samples.len() - 1) {
             if order > 0 {
                 for i in (order..samples.len()).rev() {
-                    diff[i] -= diff[i - 1];
+                    planner.diff[i] -= planner.diff[i - 1];
                 }
             }
-            let residual: Vec<u32> = diff[order..]
-                .iter()
-                .map(|x| ((*x << 1) ^ (*x >> 63)) as u32)
-                .collect();
+            let mut residual = planner.residual();
+            residual.clear();
+            residual.extend(
+                planner.diff[order..]
+                    .iter()
+                    .map(|x| ((*x << 1) ^ (*x >> 63)) as u32),
+            );
             let cheapest = rice.choose(&residual, 8 + order as u64 * depth as u64 + 11);
             if cheapest.0 < best.cost {
+                best.recycle(planner);
                 best = Self {
                     cost: cheapest.0,
                     mode: Mode::Fixed {
@@ -581,6 +608,8 @@ impl Plan {
                         residual,
                     },
                 };
+            } else {
+                planner.recycle(residual);
             }
         }
         // Welch-tapered autocorrelation and Levinson-Durbin, limited to order
@@ -660,12 +689,18 @@ impl Plan {
                     ..
                 } = candidate;
                 let order = coefficients.len();
-                let Some(residual) = lpc.residual(samples, &coefficients, shift) else {
+                let mut residual = planner.residual();
+                if lpc
+                    .residual_into(samples, &coefficients, shift, &mut residual)
+                    .is_none()
+                {
+                    planner.recycle(residual);
                     continue;
-                };
+                }
                 let overhead = 8 + order as u64 * depth as u64 + 4 + 5 + order as u64 * 12 + 11;
                 let cheapest = rice.choose(&residual, overhead);
                 if cheapest.0 < best.cost {
+                    best.recycle(planner);
                     best = Self {
                         cost: cheapest.0,
                         mode: Mode::Lpc {
@@ -675,12 +710,20 @@ impl Plan {
                             residual,
                         },
                     };
+                } else {
+                    planner.recycle(residual);
                 }
             }
         }
         best
     }
-    fn write(self, bw: &mut BeWriter, samples: &[i32], depth: u32) {
+    fn recycle(self, planner: &mut Planner) {
+        match self.mode {
+            Mode::Fixed { residual, .. } | Mode::Lpc { residual, .. } => planner.recycle(residual),
+            _ => (),
+        }
+    }
+    fn write(self, bw: &mut BeWriter, samples: &[i32], depth: u32, planner: &mut Planner) {
         match self.mode {
             Mode::Constant => {
                 bw.put(8, 0);
@@ -701,6 +744,7 @@ impl Plan {
                 bw.put(4, 0);
                 bw.put(5, k as u64);
                 bw.rice_block(&residual, k);
+                planner.recycle(residual);
             }
             Mode::Lpc {
                 coefficients,
@@ -722,6 +766,7 @@ impl Plan {
                 bw.put(4, 0);
                 bw.put(5, k as u64);
                 bw.rice_block(&residual, k);
+                planner.recycle(residual);
             }
         }
     }

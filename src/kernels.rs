@@ -430,19 +430,28 @@ impl LpcKernel {
         assert!(backend.available());
         Self(backend)
     }
-    pub(crate) fn residual(
+    #[cfg(test)]
+    fn residual(&self, samples: &[i32], coefficients: &[i32], shift: u32) -> Option<Vec<u32>> {
+        let mut out = Vec::new();
+        self.residual_into(samples, coefficients, shift, &mut out)?;
+        Some(out)
+    }
+    pub(crate) fn residual_into(
         &self,
         samples: &[i32],
         coefficients: &[i32],
         shift: u32,
-    ) -> Option<Vec<u32>> {
+        out: &mut Vec<u32>,
+    ) -> Option<()> {
         assert!(shift <= 15);
         assert!(coefficients.iter().all(|&c| (-2048..=2047).contains(&c)));
         assert!(samples.len() >= coefficients.len());
+        out.clear();
+        out.reserve(samples.len() - coefficients.len());
         match coefficients.len() {
-            2 => self.compute::<2>(samples, coefficients, shift),
-            4 => self.compute::<4>(samples, coefficients, shift),
-            8 => self.compute::<8>(samples, coefficients, shift),
+            2 => self.compute::<2>(samples, coefficients, shift, out),
+            4 => self.compute::<4>(samples, coefficients, shift, out),
+            8 => self.compute::<8>(samples, coefficients, shift, out),
             _ => unreachable!("unsupported LPC order"),
         }
     }
@@ -451,19 +460,18 @@ impl LpcKernel {
         samples: &[i32],
         coefficients: &[i32],
         shift: u32,
-    ) -> Option<Vec<u32>> {
+        out: &mut Vec<u32>,
+    ) -> Option<()> {
         #[cfg(target_arch = "x86_64")]
         if self.0 == Backend::Avx2 {
             // SAFETY: selected at construction; all loads are bounded below.
-            return unsafe { lpc_avx2::<N>(samples, coefficients, shift) };
+            return unsafe { lpc_avx2::<N>(samples, coefficients, shift, out) };
         }
         #[cfg(target_arch = "aarch64")]
         if self.0 == Backend::Neon {
-            return unsafe { lpc_neon::<N>(samples, coefficients, shift) };
+            return unsafe { lpc_neon::<N>(samples, coefficients, shift, out) };
         }
-        let mut out = Vec::with_capacity(samples.len() - N);
-        lpc_tail::<N>(samples, coefficients, shift, N, &mut out)?;
-        Some(out)
+        lpc_tail::<N>(samples, coefficients, shift, N, out)
     }
 }
 
@@ -495,9 +503,9 @@ unsafe fn lpc_avx2<const N: usize>(
     samples: &[i32],
     coefficients: &[i32],
     shift: u32,
-) -> Option<Vec<u32>> {
+    out: &mut Vec<u32>,
+) -> Option<()> {
     use std::arch::x86_64::*;
-    let mut out = Vec::with_capacity(samples.len() - N);
     let mut i = N;
     while i + 4 <= samples.len() {
         let mut sum = _mm256_setzero_si256();
@@ -513,8 +521,7 @@ unsafe fn lpc_avx2<const N: usize>(
         }
         i += 4;
     }
-    lpc_tail::<N>(samples, coefficients, shift, i, &mut out)?;
-    Some(out)
+    lpc_tail::<N>(samples, coefficients, shift, i, out)
 }
 
 #[cfg(target_arch = "aarch64")]
@@ -523,9 +530,9 @@ unsafe fn lpc_neon<const N: usize>(
     samples: &[i32],
     coefficients: &[i32],
     shift: u32,
-) -> Option<Vec<u32>> {
+    out: &mut Vec<u32>,
+) -> Option<()> {
     use std::arch::aarch64::*;
-    let mut out = Vec::with_capacity(samples.len() - N);
     let mut i = N;
     while i + 4 <= samples.len() {
         let mut lo = vdupq_n_s64(0);
@@ -543,8 +550,7 @@ unsafe fn lpc_neon<const N: usize>(
         }
         i += 4;
     }
-    lpc_tail::<N>(samples, coefficients, shift, i, &mut out)?;
-    Some(out)
+    lpc_tail::<N>(samples, coefficients, shift, i, out)
 }
 impl Dot64Kernel {
     pub fn new(backend: Backend) -> Self {
@@ -873,6 +879,21 @@ mod tests {
                                 LpcKernel::new(backend).residual(&samples, &coefficients, shift),
                                 expected
                             );
+                            let kernel = LpcKernel::new(backend);
+                            let mut reused = vec![u32::MAX; n + 17];
+                            let status =
+                                kernel.residual_into(&samples, &coefficients, shift, &mut reused);
+                            assert_eq!(status.is_some(), expected.is_some());
+                            if let Some(ref expected) = expected {
+                                assert_eq!(&reused, expected);
+                            }
+                            // A failed predictor can leave partial scratch. A
+                            // subsequent valid call must overwrite it fully.
+                            let zeros = vec![0; n + 17];
+                            assert!(kernel
+                                .residual_into(&zeros, &coefficients, shift, &mut reused)
+                                .is_some());
+                            assert_eq!(reused, vec![0; zeros.len() - order]);
                         }
                     }
                 }

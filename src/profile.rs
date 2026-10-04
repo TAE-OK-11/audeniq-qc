@@ -41,6 +41,8 @@ pub(crate) enum Counter {
     FlacBorrowedBytes,
     SizeTableReadRequests,
     MonoBufferSwaps,
+    EncoderResidualFresh,
+    EncoderResidualReused,
 }
 #[inline(always)]
 pub(crate) fn count(_counter: Counter, _value: u64) {
@@ -48,8 +50,8 @@ pub(crate) fn count(_counter: Counter, _value: u64) {
     COUNTERS[_counter as usize].fetch_add(_value, std::sync::atomic::Ordering::Relaxed);
 }
 #[cfg(feature = "profile-native")]
-static COUNTERS: [std::sync::atomic::AtomicU64; 5] =
-    [const { std::sync::atomic::AtomicU64::new(0) }; 5];
+static COUNTERS: [std::sync::atomic::AtomicU64; 7] =
+    [const { std::sync::atomic::AtomicU64::new(0) }; 7];
 #[cfg(feature = "profile-native")]
 const COUNT: usize = 14;
 #[cfg(feature = "profile-native")]
@@ -94,6 +96,8 @@ pub fn report() -> serde_json::Value {
         "flac_borrowed_bytes",
         "size_table_read_requests",
         "mono_buffer_swaps",
+        "encoder_residual_fresh_buffers",
+        "encoder_residual_reused_buffers",
     ];
     let counters: serde_json::Map<String, serde_json::Value> = names
         .iter()

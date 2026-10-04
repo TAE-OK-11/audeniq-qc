@@ -23,6 +23,7 @@ fn entry() -> Result<()> {
             ("analysis", "analysis-benchmark.json"),
             ("fingerprint", "fingerprint-benchmark.json"),
             ("normalization", "normalization-benchmark.json"),
+            ("conversion_all", "conversion-all-benchmark.json"),
             ("review", "review-benchmark.json"),
             ("review_fingerprint", "review-fingerprint-benchmark.json"),
         ] {

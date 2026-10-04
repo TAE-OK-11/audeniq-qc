@@ -488,8 +488,25 @@ impl Dot64Kernel {
 #[target_feature(enable = "avx2")]
 unsafe fn dot64_avx2(a: &[f64], b: &[f64]) -> f64 {
     use std::arch::x86_64::*;
-    let mut v = _mm256_setzero_pd();
+    let mut accumulators = [_mm256_setzero_pd(); 4];
     let mut i = 0;
+    while i + 16 <= a.len() {
+        for (lane, accumulator) in accumulators.iter_mut().enumerate() {
+            let offset = i + lane * 4;
+            *accumulator = _mm256_add_pd(
+                *accumulator,
+                _mm256_mul_pd(
+                    _mm256_loadu_pd(a.as_ptr().add(offset)),
+                    _mm256_loadu_pd(b.as_ptr().add(offset)),
+                ),
+            );
+        }
+        i += 16;
+    }
+    let mut v = _mm256_add_pd(
+        _mm256_add_pd(accumulators[0], accumulators[1]),
+        _mm256_add_pd(accumulators[2], accumulators[3]),
+    );
     while i + 4 <= a.len() {
         v = _mm256_add_pd(
             v,
@@ -508,8 +525,27 @@ unsafe fn dot64_avx2(a: &[f64], b: &[f64]) -> f64 {
 #[target_feature(enable = "neon")]
 unsafe fn dot64_neon(a: &[f64], b: &[f64]) -> f64 {
     use std::arch::aarch64::*;
-    let mut v = vdupq_n_f64(0.0);
+    // Independent accumulation chains let the CPU overlap multiply/add work
+    // instead of waiting on one accumulator for every two samples. No FMA.
+    let mut accumulators = [vdupq_n_f64(0.0); 4];
     let mut i = 0;
+    while i + 8 <= a.len() {
+        for (lane, accumulator) in accumulators.iter_mut().enumerate() {
+            let offset = i + lane * 2;
+            *accumulator = vaddq_f64(
+                *accumulator,
+                vmulq_f64(
+                    vld1q_f64(a.as_ptr().add(offset)),
+                    vld1q_f64(b.as_ptr().add(offset)),
+                ),
+            );
+        }
+        i += 8;
+    }
+    let mut v = vaddq_f64(
+        vaddq_f64(accumulators[0], accumulators[1]),
+        vaddq_f64(accumulators[2], accumulators[3]),
+    );
     while i + 2 <= a.len() {
         v = vaddq_f64(
             v,
@@ -791,6 +827,22 @@ mod tests {
                     - Dot64Kernel::new(Backend::detect()).apply(&b, &b))
                 .abs()
                     < 1e-10
+            );
+        }
+        // Mixed signs, cancellation, full blocks and vector-boundary tails.
+        for n in (0..129).chain([4095, 4096, 4097, 32768]) {
+            let a: Vec<f64> = (0..n)
+                .map(|i| (i as f64 * 0.137).sin() * 8388607.0)
+                .collect();
+            let b: Vec<f64> = (0..n)
+                .map(|i| (i as f64 * 0.173).cos() * 8388607.0)
+                .collect();
+            let reference: f64 = a.iter().zip(&b).map(|(a, b)| a * b).sum();
+            let magnitude: f64 = a.iter().zip(&b).map(|(a, b)| (a * b).abs()).sum();
+            let actual = Dot64Kernel::new(Backend::detect()).apply(&a, &b);
+            assert!(
+                (actual - reference).abs() <= magnitude.max(1.0) * 1e-10,
+                "n={n}"
             );
         }
     }

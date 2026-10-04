@@ -270,7 +270,7 @@ impl Encoder {
         Ok(Self {
             file,
             spec,
-            pending: Vec::with_capacity(capacity),
+            pending: Vec::new(),
             frames: 0,
             number: 0,
             md5: Md5::new(),
@@ -304,20 +304,29 @@ impl Encoder {
         let block = self.profile.block * self.spec.channels as usize;
         let mut pos = 0;
         while pos < samples.len() {
+            if self.pending.is_empty() && samples.len() - pos >= block {
+                // ALAC packets and PCM reader batches commonly contain complete
+                // encoder blocks. Borrow them directly instead of copying PCM.
+                self.write_block(&samples[pos..pos + block])?;
+                pos += block;
+                continue;
+            }
             let n = (block - self.pending.len()).min(samples.len() - pos);
             self.pending.extend_from_slice(&samples[pos..pos + n]);
             pos += n;
             if self.pending.len() == block {
-                self.write_block()?;
-                self.pending.clear();
+                let mut pending = std::mem::take(&mut self.pending);
+                self.write_block(&pending)?;
+                pending.clear();
+                self.pending = pending;
             }
         }
         Ok(())
     }
-    fn write_block(&mut self) -> Result<()> {
+    fn write_block(&mut self, samples: &[i32]) -> Result<()> {
         self.limits.check()?;
         let channels = self.spec.channels as usize;
-        let n = self.pending.len() / channels;
+        let n = samples.len() / channels;
         let depth = self.spec.bits_per_sample as u32;
         let shift = 32 - depth;
         let [left, right, mid, side] = &mut self.channel_buffers;
@@ -325,7 +334,7 @@ impl Encoder {
         right.clear();
         mid.clear();
         side.clear();
-        for row in self.pending.chunks_exact(channels) {
+        for row in samples.chunks_exact(channels) {
             left.push(row[0] >> shift);
             if channels == 2 {
                 right.push(row[1] >> shift);
@@ -438,7 +447,8 @@ impl Encoder {
     }
     fn finish(mut self) -> Result<File> {
         if !self.pending.is_empty() {
-            self.write_block()?;
+            let pending = std::mem::take(&mut self.pending);
+            self.write_block(&pending)?;
         }
         if self.frames == 0 || self.frames > self.limits.max_frames {
             return Err(Error::Invalid("empty/oversized FLAC output"));

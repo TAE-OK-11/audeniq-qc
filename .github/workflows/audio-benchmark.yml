@@ -3,6 +3,9 @@ on:
   push:
     paths:
       - .github/workflows/audio-benchmark.yml
+      - src/flac.rs
+      - src/bits.rs
+      - src/kernels.rs
   workflow_dispatch:
 permissions:
   contents: read
@@ -36,4 +39,5 @@ jobs:
         run: |
           target/release/audeniq-qc-tools benchmark-convert --wav-alac-only --seconds 240 --repeats 7 --baseline-binary conversion-parent/target/release/audeniq-qc --output normalization-benchmark.json
           target/release/audeniq-qc-tools benchmark --wav-alac-only --seconds 240 --repeats 7 --baseline-binary conversion-parent/target/release/audeniq-qc --output analysis-benchmark.json
+          target/release/audeniq-qc-tools benchmark-convert --seconds 60 --repeats 5 --baseline-binary conversion-parent/target/release/audeniq-qc --output conversion-all-benchmark.json
           target/release/audeniq-qc-tools ci-report

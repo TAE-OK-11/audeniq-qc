@@ -166,6 +166,7 @@ pub(crate) struct Analyzer {
     k: KWeight,
     loud: Loudness,
     tp: TruePeak,
+    planar: [Vec<f32>; 2],
     tap: Option<FingerprintTap>,
     a: Analysis,
     block_count: usize,
@@ -197,6 +198,7 @@ impl Analyzer {
             k: KWeight::new(spec.sample_rate, channels, backend),
             loud: Loudness::new(),
             tp: TruePeak::new(spec.sample_rate, channels, backend),
+            planar: std::array::from_fn(|_| Vec::new()),
             tap,
             a: Analysis {
                 engine: crate::ENGINE_VERSION,
@@ -233,6 +235,17 @@ impl Analyzer {
     pub(crate) fn push(&mut self, samples: &[i32]) {
         let channels = self.a.spec.channels as usize;
         let block_frames = self.a.spec.sample_rate as usize / 20;
+        for (ch, plane) in self.planar.iter_mut().enumerate().take(channels) {
+            plane.clear();
+            plane.extend(
+                samples
+                    .iter()
+                    .skip(ch)
+                    .step_by(channels)
+                    .map(|&s| (s as f64 / 2147483648.0) as f32),
+            );
+            self.tp.push_channel(ch, plane);
+        }
         for row in samples.chunks_exact(channels) {
             let weighted = self.k.push([
                 row[0] as f64 / 2147483648.0,
@@ -279,7 +292,6 @@ impl Analyzer {
                 let y = weighted[ch];
                 self.weighted += y * y;
             }
-            self.tp.push(&f[..channels]);
             if let Some(t) = &mut self.tap {
                 let mono = f[..channels]
                     .iter()

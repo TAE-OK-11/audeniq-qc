@@ -687,71 +687,73 @@ unsafe fn dot64_neon(a: &[f64], b: &[f64]) -> f64 {
     vaddvq_f64(v) + a[i..].iter().zip(&b[i..]).map(|(x, y)| x * y).sum::<f64>()
 }
 
-type PeakFn = fn(&[f32], &[f32], &[[f32; 4]; 12]) -> f32;
+type PeakFn = fn(&[f32], &[[f32; 4]; 12]) -> f32;
 pub struct PeakKernel(PeakFn);
 impl PeakKernel {
     pub fn new(backend: Backend, interpolate: bool) -> Self {
         assert!(backend.available());
         if !interpolate {
-            return Self(|_, _, _| 0.0);
+            return Self(|_, _| 0.0);
         }
         #[cfg(target_arch = "x86_64")]
         if backend == Backend::Avx2 {
-            return Self(|l, r, c| unsafe { peak_avx2(l, r, c) });
+            // SAFETY: AVX2 selected at construction; the body is safe Rust.
+            return Self(|x, c| unsafe { peak_avx2(x, c) });
         }
         #[cfg(target_arch = "aarch64")]
         if backend == Backend::Neon {
-            return Self(|l, r, c| unsafe { peak_neon(l, r, c) });
+            return Self(peak_lanes::<8>);
         }
-        Self(peak_scalar)
+        Self(peak_lanes::<1>)
     }
+    /// Maximum |interpolated value| over every 12-sample window of `x`.
     #[inline]
-    pub fn apply(&self, l: &[f32], r: &[f32], c: &[[f32; 4]; 12]) -> f32 {
-        assert_eq!(l.len(), 12);
-        assert_eq!(r.len(), 12);
-        (self.0)(l, r, c)
+    pub fn apply(&self, x: &[f32], c: &[[f32; 4]; 12]) -> f32 {
+        assert!(x.len() >= 12);
+        (self.0)(x, c)
     }
 }
-fn peak_scalar(l: &[f32], r: &[f32], c: &[[f32; 4]; 12]) -> f32 {
-    let mut a = [0.0f32; 4];
-    let mut b = [0.0f32; 4];
-    for i in 0..12 {
-        for p in 0..4 {
-            a[p] += l[i] * c[i][p];
-            b[p] += r[i] * c[i][p];
+/// `LANES` consecutive outputs at once. Per lane the arithmetic is exactly
+/// the scalar sum over taps 0..12 (mul then add, no FMA contraction), so the
+/// lane count changes speed only. LANES = 1 is the scalar backend.
+#[inline(always)]
+fn peak_lanes<const LANES: usize>(x: &[f32], c: &[[f32; 4]; 12]) -> f32 {
+    let outputs = x.len() - 11;
+    let mut best = [0.0f32; LANES];
+    let mut t = 0;
+    while t + LANES <= outputs {
+        let mut acc = [[0.0f32; LANES]; 4];
+        for (i, taps) in c.iter().enumerate() {
+            let v: &[f32; LANES] = x[t + i..t + i + LANES].try_into().unwrap();
+            for p in 0..4 {
+                for l in 0..LANES {
+                    acc[p][l] += v[l] * taps[p];
+                }
+            }
         }
+        for row in &acc {
+            for l in 0..LANES {
+                best[l] = best[l].max(row[l].abs());
+            }
+        }
+        t += LANES;
     }
-    a.iter().chain(&b).fold(0.0, |m, x| m.max(x.abs()))
+    let mut m = best.iter().fold(0.0f32, |m, &v| m.max(v));
+    for t in t..outputs {
+        let mut acc = [0.0f32; 4];
+        for (i, taps) in c.iter().enumerate() {
+            for p in 0..4 {
+                acc[p] += x[t + i] * taps[p];
+            }
+        }
+        m = acc.iter().fold(m, |m, v| m.max(v.abs()));
+    }
+    m
 }
 #[cfg(target_arch = "x86_64")]
 #[target_feature(enable = "avx2")]
-unsafe fn peak_avx2(l: &[f32], r: &[f32], c: &[[f32; 4]; 12]) -> f32 {
-    use std::arch::x86_64::*;
-    let mut acc = _mm256_setzero_ps();
-    for i in 0..12 {
-        let v =
-            _mm256_insertf128_ps::<1>(_mm256_castps128_ps256(_mm_set1_ps(l[i])), _mm_set1_ps(r[i]));
-        let coefficient = _mm_loadu_ps(c[i].as_ptr());
-        let coefficient =
-            _mm256_insertf128_ps::<1>(_mm256_castps128_ps256(coefficient), coefficient);
-        acc = _mm256_add_ps(acc, _mm256_mul_ps(v, coefficient));
-    }
-    let mut out = [0f32; 8];
-    _mm256_storeu_ps(out.as_mut_ptr(), acc);
-    out.iter().fold(0.0, |m, x| m.max(x.abs()))
-}
-#[cfg(target_arch = "aarch64")]
-#[target_feature(enable = "neon")]
-unsafe fn peak_neon(l: &[f32], r: &[f32], c: &[[f32; 4]; 12]) -> f32 {
-    use std::arch::aarch64::*;
-    let mut a = vdupq_n_f32(0.0);
-    let mut b = vdupq_n_f32(0.0);
-    for i in 0..12 {
-        let v = vld1q_f32(c[i].as_ptr());
-        a = vaddq_f32(a, vmulq_n_f32(v, l[i]));
-        b = vaddq_f32(b, vmulq_n_f32(v, r[i]));
-    }
-    vmaxvq_f32(vmaxq_f32(vabsq_f32(a), vabsq_f32(b)))
+unsafe fn peak_avx2(x: &[f32], c: &[[f32; 4]; 12]) -> f32 {
+    peak_lanes::<8>(x, c)
 }
 impl DotKernel {
     pub fn new(backend: Backend) -> Self {
@@ -981,6 +983,39 @@ mod tests {
                         }
                     }
                 }
+            }
+        }
+    }
+    #[test]
+    #[allow(clippy::needless_range_loop)] // mirrors the reference loop order
+    fn block_true_peak_matches_per_window_reference() {
+        let c = crate::resample::TP_COEFFICIENTS;
+        let mut seed = 99u32;
+        let x: Vec<f32> = (0..300)
+            .map(|i| {
+                seed = seed.wrapping_mul(1664525).wrapping_add(1013904223);
+                if i % 50 == 7 {
+                    1.0
+                } else {
+                    (seed as i32) as f32 / 2147483648.0
+                }
+            })
+            .collect();
+        for len in 12..x.len() {
+            let x = &x[..len];
+            let mut expected = 0.0f32;
+            for w in x.windows(12) {
+                for p in 0..4 {
+                    let mut a = 0.0f32;
+                    for i in 0..12 {
+                        a += w[i] * c[i][p];
+                    }
+                    expected = expected.max(a.abs());
+                }
+            }
+            for backend in [Backend::Scalar, Backend::detect()] {
+                let got = PeakKernel::new(backend, true).apply(x, &c);
+                assert_eq!(got.to_bits(), expected.to_bits(), "len {len}");
             }
         }
     }

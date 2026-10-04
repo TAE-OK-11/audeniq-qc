@@ -74,7 +74,7 @@ pub fn sinc_kernel<const N: usize>(fraction: f64, cutoff: f64) -> [f32; N] {
 // ITU-R BS.1770-5 Annex 2, published four-phase / twelve-tap FIR.
 // https://www.itu.int/dms_pubrec/itu-r/rec/bs/R-REC-BS.1770-5-202311-I!!PDF-E.pdf
 #[allow(clippy::excessive_precision)]
-const TP_COEFFICIENTS: [[f32; 4]; 12] = [
+pub(crate) const TP_COEFFICIENTS: [[f32; 4]; 12] = [
     [
         0.001708984375,
         -0.0291748046875,
@@ -128,10 +128,15 @@ const TP_COEFFICIENTS: [[f32; 4]; 12] = [
         0.001708984375,
     ],
 ];
+/// BS.1770 4x true-peak interpolation over whole PCM chunks. Each channel
+/// keeps its previous 11 samples ahead of the chunk, and the kernel computes
+/// every output phase with the original per-output order (oldest tap first,
+/// separate multiply and add), vectorized across consecutive outputs. The
+/// maximum is order-independent, so results equal the former per-frame path.
 pub struct TruePeak {
-    ring: [[f32; 24]; 2],
-    pos: usize,
+    history: [Vec<f32>; 2],
     kernel: crate::kernels::PeakKernel,
+    interpolate: bool,
     pub peak: f64,
     channels: usize,
 }
@@ -140,30 +145,33 @@ impl TruePeak {
         // Use all four phases through 96kHz as well; no interpolation at >=192k.
         let interpolate = rate < 192000;
         Self {
-            ring: [[0.0; 24]; 2],
-            pos: 0,
+            history: std::array::from_fn(|_| vec![0.0; 11]),
             kernel: crate::kernels::PeakKernel::new(backend, interpolate),
+            interpolate,
             peak: 0.0,
             channels,
         }
     }
-    pub fn push(&mut self, row: &[f32]) {
-        for (ch, &x) in row.iter().enumerate() {
-            self.peak = self.peak.max(x.abs() as f64);
-            self.ring[ch][self.pos] = x;
-            self.ring[ch][self.pos + 12] = x;
+    /// Push one channel's next samples; call once per channel per chunk.
+    pub fn push_channel(&mut self, ch: usize, samples: &[f32]) {
+        let peak = samples.iter().fold(0.0f32, |m, &x| m.max(x.abs()));
+        self.peak = self.peak.max(peak as f64);
+        if !self.interpolate || samples.is_empty() {
+            return;
         }
-        self.pos = (self.pos + 1) % 12;
-        let left = &self.ring[0][self.pos..self.pos + 12];
-        let right = &self.ring[1][self.pos..self.pos + 12];
+        let buffer = &mut self.history[ch];
+        buffer.extend_from_slice(samples);
         self.peak = self
             .peak
-            .max(self.kernel.apply(left, right, &TP_COEFFICIENTS) as f64);
+            .max(self.kernel.apply(buffer, &TP_COEFFICIENTS) as f64);
+        let keep = buffer.len() - 11;
+        buffer.copy_within(keep.., 0);
+        buffer.truncate(11);
     }
     pub fn finish(&mut self) {
-        let row = [0.0f32; 2];
-        for _ in 0..12 {
-            self.push(&row[..self.channels]);
+        let zeros = [0.0f32; 12];
+        for ch in 0..self.channels {
+            self.push_channel(ch, &zeros);
         }
     }
 }

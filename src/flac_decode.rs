@@ -537,7 +537,7 @@ unsafe fn restore_neon<const N: usize>(
     } else {
         vdupq_n_s32(0)
     };
-    for i in N..p.len() {
+    for residual in &mut p[N..] {
         let h0 = history0;
         let mut products = vmull_s32(vget_low_s32(h0), vget_low_s32(c0));
         products = vmlal_s32(products, vget_high_s32(h0), vget_high_s32(c0));
@@ -552,8 +552,8 @@ unsafe fn restore_neon<const N: usize>(
         } else {
             sum << -shift
         };
-        let sample = checked(prediction + p[i] as i64, bits)?;
-        p[i] = sample;
+        let sample = checked(prediction + *residual as i64, bits)?;
+        *residual = sample;
         let newest = vdupq_n_s32(sample);
         if N == 8 {
             history0 = vextq_s32::<1>(history0, history1);

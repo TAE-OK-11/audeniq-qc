@@ -1,5 +1,5 @@
 //! Native media path; the `reference-codecs` build substitutes Symphonia.
-use crate::{AudioSpec, Limits, Result};
+use crate::{kernels::Backend, AudioSpec, Limits, Result};
 use std::{
     fs::File,
     io::{BufReader, Read, Seek, SeekFrom},
@@ -54,10 +54,10 @@ impl Compressed {
             raw_frame: None,
         })
     }
-    pub fn next(&mut self, out: &mut Vec<i32>, limits: &Limits) -> Result<()> {
+    pub fn next(&mut self, out: &mut Vec<i32>, limits: &Limits, backend: Backend) -> Result<()> {
         self.raw_frame = None;
         match &mut self.input {
-            Input::Flac(d) => self.raw_frame = d.next(out, limits, self.retain_frame)?,
+            Input::Flac(d) => self.raw_frame = d.next(out, limits, self.retain_frame, backend)?,
             Input::Alac {
                 file,
                 position,

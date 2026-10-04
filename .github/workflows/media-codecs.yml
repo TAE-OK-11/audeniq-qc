@@ -48,6 +48,7 @@ jobs:
           target/release/audeniq-qc-tools codec-stress --binary reference-target/release/audeniq-qc --output stress-reference.json
       - name: Same-host three-way repeated comparisons
         run: |
+          target/release/audeniq-qc-tools benchmark-decode --seconds 240 --repeats 7 --reference-binary reference-target/release/audeniq-qc --output decoding-benchmark.json
           target/release/audeniq-qc-tools benchmark-convert --wav-alac-only --seconds 240 --repeats 7 --reference-binary reference-target/release/audeniq-qc --output normalization-benchmark.json
           target/release/audeniq-qc-tools benchmark --wav-alac-only --seconds 240 --repeats 7 --reference-binary reference-target/release/audeniq-qc --output analysis-benchmark.json
           target/release/audeniq-qc-tools benchmark-convert --seconds 60 --repeats 5 --reference-binary reference-target/release/audeniq-qc --output conversion-all-benchmark.json

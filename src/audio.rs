@@ -82,7 +82,7 @@ impl AudioReader {
         self.limits.check()?;
         match &mut self.source {
             Source::Pcm(p) => p.next(samples, backend)?,
-            Source::Compressed(p) => p.next(samples, &self.limits)?,
+            Source::Compressed(p) => p.next(samples, &self.limits, backend)?,
             Source::Tta(p) => p.next(samples, &self.limits)?,
             Source::Wavpack(p) => p.next(samples, &self.limits)?,
         }
@@ -558,7 +558,7 @@ impl Compressed {
             md5_buffer: Vec::new(),
         })
     }
-    fn next(&mut self, out: &mut Vec<i32>, limits: &Limits) -> Result<()> {
+    fn next(&mut self, out: &mut Vec<i32>, limits: &Limits, _backend: Backend) -> Result<()> {
         out.clear();
         self.raw_frame = None;
         let packet = match self.format.next_packet() {

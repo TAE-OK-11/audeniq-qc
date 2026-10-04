@@ -1,0 +1,3552 @@
+{
+  "analysis": {
+    "arch": "x86_64",
+    "binary_sha256": "13959cdb712a2dd333199387234528ec72d43b76ad2d877d1329d6df599b7455",
+    "bits": 24,
+    "channels": 2,
+    "comparison": "Both decode once and measure LUFS/true peak plus left-aligned s32le SHA256. Native additionally computes QC metrics. FFmpeg baseline excludes FFprobe and backend meter overhead. True-peak filters differ. With --fingerprint both downmix/resample; native retains <=90s windows and emits JSON, FFmpeg emits a continuous raw tap discarded here without backend retention cost. Resamplers are versioned and not bit-identical.",
+    "date_utc": "2026-10-04T12:12:33Z",
+    "ffmpeg_version": "ffmpeg version 6.1.1-3ubuntu5 Copyright (c) 2000-2023 the FFmpeg developers",
+    "fingerprint": false,
+    "harness": "audeniq-qc-tools Rust",
+    "host_cpu": "AMD EPYC 7763 64-Core Processor",
+    "input_scope": "WAV/ALAC",
+    "qualification": "Synthetic tones, warm page cache, median repeated runs. Applies only to the reported host; not a production corpus or end-to-end AUDENIQ measurement.",
+    "reference_binary_sha256": "ffe936c6ea5338223c333984eb650adc699ab4bd66b1c2d04f7193bd369ba4b4",
+    "reference_mode": "Same engine/encoder/QC, reference-codecs feature enables Symphonia ALAC/FLAC decoding and demuxing. Generic JSON/hash/image dependencies remain in both builds.",
+    "repeats": 7,
+    "results": [
+      {
+        "codec": "pcm_s24le",
+        "commands": {
+          "ffmpeg": [
+            "ffmpeg",
+            "-nostdin",
+            "-hide_banner",
+            "-nostats",
+            "-threads",
+            "1",
+            "-i",
+            "/tmp/audeniq-benchmark-23377-1791115872019521992-0/master.wav",
+            "-map",
+            "0:a:0",
+            "-af",
+            "ebur128=peak=true:framelog=quiet",
+            "-f",
+            "null",
+            "-",
+            "-map",
+            "0:a:0",
+            "-c:a",
+            "pcm_s32le",
+            "-f",
+            "hash",
+            "-hash",
+            "sha256",
+            "-"
+          ],
+          "native": [
+            "/home/runner/work/audeniq-qc/audeniq-qc/target/release/audeniq-qc",
+            "analyze",
+            "/tmp/audeniq-benchmark-23377-1791115872019521992-0/master.wav"
+          ],
+          "native_scalar": [
+            "/home/runner/work/audeniq-qc/audeniq-qc/target/release/audeniq-qc",
+            "analyze",
+            "/tmp/audeniq-benchmark-23377-1791115872019521992-0/master.wav",
+            "--scalar"
+          ],
+          "reference": [
+            "/home/runner/work/audeniq-qc/audeniq-qc/reference-target/release/audeniq-qc",
+            "analyze",
+            "/tmp/audeniq-benchmark-23377-1791115872019521992-0/master.wav"
+          ]
+        },
+        "ffmpeg_div_native": {
+          "cpu_s": 6.312500000000001,
+          "peak_rss_kib": 16.65566037735849,
+          "wall_s": 4.387755102040816
+        },
+        "file_bytes": 69120102,
+        "fixture_sha256": "28ae590684da5e492d203d8c773d4e05e7fe00ccc1f82155420af6ad80ef151a",
+        "median": {
+          "ffmpeg": {
+            "cpu_s": 3.03,
+            "peak_rss_kib": 56496,
+            "system_s": 0.15,
+            "user_s": 2.89,
+            "wall_s": 2.15
+          },
+          "native": {
+            "cpu_s": 0.48,
+            "peak_rss_kib": 3392,
+            "system_s": 0,
+            "user_s": 0.48,
+            "wall_s": 0.49
+          },
+          "native_scalar": {
+            "cpu_s": 0.49,
+            "peak_rss_kib": 3504,
+            "system_s": 0,
+            "user_s": 0.48,
+            "wall_s": 0.49
+          },
+          "reference": {
+            "cpu_s": 0.48,
+            "peak_rss_kib": 3492,
+            "system_s": 0,
+            "user_s": 0.48,
+            "wall_s": 0.48
+          }
+        },
+        "runs": {
+          "ffmpeg": [
+            {
+              "cpu_s": 3.03,
+              "peak_rss_kib": 56224,
+              "system_s": 0.14,
+              "user_s": 2.89,
+              "wall_s": 2.13
+            },
+            {
+              "cpu_s": 3.03,
+              "peak_rss_kib": 56520,
+              "system_s": 0.17,
+              "user_s": 2.86,
+              "wall_s": 2.16
+            },
+            {
+              "cpu_s": 3.0500000000000003,
+              "peak_rss_kib": 56496,
+              "system_s": 0.14,
+              "user_s": 2.91,
+              "wall_s": 2.15
+            },
+            {
+              "cpu_s": 3.03,
+              "peak_rss_kib": 56604,
+              "system_s": 0.16,
+              "user_s": 2.87,
+              "wall_s": 2.13
+            },
+            {
+              "cpu_s": 3.08,
+              "peak_rss_kib": 56488,
+              "system_s": 0.19,
+              "user_s": 2.89,
+              "wall_s": 2.19
+            },
+            {
+              "cpu_s": 3.01,
+              "peak_rss_kib": 56448,
+              "system_s": 0.15,
+              "user_s": 2.86,
+              "wall_s": 2.12
+            },
+            {
+              "cpu_s": 3.0500000000000003,
+              "peak_rss_kib": 56660,
+              "system_s": 0.14,
+              "user_s": 2.91,
+              "wall_s": 2.15
+            }
+          ],
+          "native": [
+            {
+              "cpu_s": 0.48,
+              "peak_rss_kib": 3516,
+              "system_s": 0,
+              "user_s": 0.48,
+              "wall_s": 0.48
+            },
+            {
+              "cpu_s": 0.48,
+              "peak_rss_kib": 3568,
+              "system_s": 0,
+              "user_s": 0.48,
+              "wall_s": 0.49
+            },
+            {
+              "cpu_s": 0.48,
+              "peak_rss_kib": 3452,
+              "system_s": 0.01,
+              "user_s": 0.47,
+              "wall_s": 0.49
+            },
+            {
+              "cpu_s": 0.48,
+              "peak_rss_kib": 3392,
+              "system_s": 0,
+              "user_s": 0.48,
+              "wall_s": 0.48
+            },
+            {
+              "cpu_s": 0.48,
+              "peak_rss_kib": 3316,
+              "system_s": 0,
+              "user_s": 0.48,
+              "wall_s": 0.49
+            },
+            {
+              "cpu_s": 0.48,
+              "peak_rss_kib": 3356,
+              "system_s": 0,
+              "user_s": 0.48,
+              "wall_s": 0.49
+            },
+            {
+              "cpu_s": 0.48,
+              "peak_rss_kib": 3260,
+              "system_s": 0,
+              "user_s": 0.48,
+              "wall_s": 0.48
+            }
+          ],
+          "native_scalar": [
+            {
+              "cpu_s": 0.48,
+              "peak_rss_kib": 3560,
+              "system_s": 0,
+              "user_s": 0.48,
+              "wall_s": 0.49
+            },
+            {
+              "cpu_s": 0.48,
+              "peak_rss_kib": 3532,
+              "system_s": 0,
+              "user_s": 0.48,
+              "wall_s": 0.49
+            },
+            {
+              "cpu_s": 0.48,
+              "peak_rss_kib": 3456,
+              "system_s": 0,
+              "user_s": 0.48,
+              "wall_s": 0.49
+            },
+            {
+              "cpu_s": 0.49,
+              "peak_rss_kib": 3504,
+              "system_s": 0,
+              "user_s": 0.49,
+              "wall_s": 0.49
+            },
+            {
+              "cpu_s": 0.5,
+              "peak_rss_kib": 3496,
+              "system_s": 0,
+              "user_s": 0.5,
+              "wall_s": 0.5
+            },
+            {
+              "cpu_s": 0.49,
+              "peak_rss_kib": 3372,
+              "system_s": 0.01,
+              "user_s": 0.48,
+              "wall_s": 0.49
+            },
+            {
+              "cpu_s": 0.49,
+              "peak_rss_kib": 3560,
+              "system_s": 0,
+              "user_s": 0.49,
+              "wall_s": 0.49
+            }
+          ],
+          "reference": [
+            {
+              "cpu_s": 0.48,
+              "peak_rss_kib": 3468,
+              "system_s": 0,
+              "user_s": 0.48,
+              "wall_s": 0.48
+            },
+            {
+              "cpu_s": 0.48,
+              "peak_rss_kib": 3516,
+              "system_s": 0,
+              "user_s": 0.48,
+              "wall_s": 0.48
+            },
+            {
+              "cpu_s": 0.48,
+              "peak_rss_kib": 3336,
+              "system_s": 0,
+              "user_s": 0.48,
+              "wall_s": 0.48
+            },
+            {
+              "cpu_s": 0.49,
+              "peak_rss_kib": 3492,
+              "system_s": 0.01,
+              "user_s": 0.48,
+              "wall_s": 0.49
+            },
+            {
+              "cpu_s": 0.5,
+              "peak_rss_kib": 3740,
+              "system_s": 0,
+              "user_s": 0.5,
+              "wall_s": 0.51
+            },
+            {
+              "cpu_s": 0.48,
+              "peak_rss_kib": 3536,
+              "system_s": 0,
+              "user_s": 0.48,
+              "wall_s": 0.48
+            },
+            {
+              "cpu_s": 0.48,
+              "peak_rss_kib": 3336,
+              "system_s": 0,
+              "user_s": 0.48,
+              "wall_s": 0.48
+            }
+          ]
+        }
+      },
+      {
+        "codec": "alac",
+        "commands": {
+          "ffmpeg": [
+            "ffmpeg",
+            "-nostdin",
+            "-hide_banner",
+            "-nostats",
+            "-threads",
+            "1",
+            "-i",
+            "/tmp/audeniq-benchmark-23377-1791115872019521992-0/master.m4a",
+            "-map",
+            "0:a:0",
+            "-af",
+            "ebur128=peak=true:framelog=quiet",
+            "-f",
+            "null",
+            "-",
+            "-map",
+            "0:a:0",
+            "-c:a",
+            "pcm_s32le",
+            "-f",
+            "hash",
+            "-hash",
+            "sha256",
+            "-"
+          ],
+          "native": [
+            "/home/runner/work/audeniq-qc/audeniq-qc/target/release/audeniq-qc",
+            "analyze",
+            "/tmp/audeniq-benchmark-23377-1791115872019521992-0/master.m4a"
+          ],
+          "native_scalar": [
+            "/home/runner/work/audeniq-qc/audeniq-qc/target/release/audeniq-qc",
+            "analyze",
+            "/tmp/audeniq-benchmark-23377-1791115872019521992-0/master.m4a",
+            "--scalar"
+          ],
+          "reference": [
+            "/home/runner/work/audeniq-qc/audeniq-qc/reference-target/release/audeniq-qc",
+            "analyze",
+            "/tmp/audeniq-benchmark-23377-1791115872019521992-0/master.m4a"
+          ]
+        },
+        "ffmpeg_div_native": {
+          "cpu_s": 2.260869565217391,
+          "peak_rss_kib": 15.918764302059497,
+          "wall_s": 1.8189655172413792
+        },
+        "file_bytes": 47216360,
+        "fixture_sha256": "89225739d5f69f647afded9fb2355c81bf67938c6e997fb061ba1aab89aff636",
+        "median": {
+          "ffmpeg": {
+            "cpu_s": 2.5999999999999996,
+            "peak_rss_kib": 55652,
+            "system_s": 0.07,
+            "user_s": 2.53,
+            "wall_s": 2.11
+          },
+          "native": {
+            "cpu_s": 1.15,
+            "peak_rss_kib": 3496,
+            "system_s": 0,
+            "user_s": 1.15,
+            "wall_s": 1.16
+          },
+          "native_scalar": {
+            "cpu_s": 1.14,
+            "peak_rss_kib": 3532,
+            "system_s": 0,
+            "user_s": 1.14,
+            "wall_s": 1.15
+          },
+          "reference": {
+            "cpu_s": 1.13,
+            "peak_rss_kib": 3868,
+            "system_s": 0,
+            "user_s": 1.13,
+            "wall_s": 1.13
+          }
+        },
+        "runs": {
+          "ffmpeg": [
+            {
+              "cpu_s": 2.59,
+              "peak_rss_kib": 55764,
+              "system_s": 0.08,
+              "user_s": 2.51,
+              "wall_s": 2.1
+            },
+            {
+              "cpu_s": 2.5999999999999996,
+              "peak_rss_kib": 55716,
+              "system_s": 0.07,
+              "user_s": 2.53,
+              "wall_s": 2.1
+            },
+            {
+              "cpu_s": 2.61,
+              "peak_rss_kib": 55604,
+              "system_s": 0.07,
+              "user_s": 2.54,
+              "wall_s": 2.13
+            },
+            {
+              "cpu_s": 2.62,
+              "peak_rss_kib": 55592,
+              "system_s": 0.06,
+              "user_s": 2.56,
+              "wall_s": 2.11
+            },
+            {
+              "cpu_s": 2.57,
+              "peak_rss_kib": 55652,
+              "system_s": 0.06,
+              "user_s": 2.51,
+              "wall_s": 2.1
+            },
+            {
+              "cpu_s": 2.5999999999999996,
+              "peak_rss_kib": 55544,
+              "system_s": 0.07,
+              "user_s": 2.53,
+              "wall_s": 2.11
+            },
+            {
+              "cpu_s": 2.64,
+              "peak_rss_kib": 55740,
+              "system_s": 0.08,
+              "user_s": 2.56,
+              "wall_s": 2.13
+            }
+          ],
+          "native": [
+            {
+              "cpu_s": 1.15,
+              "peak_rss_kib": 3500,
+              "system_s": 0,
+              "user_s": 1.15,
+              "wall_s": 1.15
+            },
+            {
+              "cpu_s": 1.15,
+              "peak_rss_kib": 3520,
+              "system_s": 0,
+              "user_s": 1.15,
+              "wall_s": 1.15
+            },
+            {
+              "cpu_s": 1.15,
+              "peak_rss_kib": 3472,
+              "system_s": 0,
+              "user_s": 1.15,
+              "wall_s": 1.16
+            },
+            {
+              "cpu_s": 1.15,
+              "peak_rss_kib": 3564,
+              "system_s": 0.01,
+              "user_s": 1.14,
+              "wall_s": 1.16
+            },
+            {
+              "cpu_s": 1.14,
+              "peak_rss_kib": 3492,
+              "system_s": 0,
+              "user_s": 1.14,
+              "wall_s": 1.15
+            },
+            {
+              "cpu_s": 1.15,
+              "peak_rss_kib": 3496,
+              "system_s": 0,
+              "user_s": 1.15,
+              "wall_s": 1.16
+            },
+            {
+              "cpu_s": 1.15,
+              "peak_rss_kib": 3380,
+              "system_s": 0,
+              "user_s": 1.15,
+              "wall_s": 1.16
+            }
+          ],
+          "native_scalar": [
+            {
+              "cpu_s": 1.14,
+              "peak_rss_kib": 3476,
+              "system_s": 0,
+              "user_s": 1.14,
+              "wall_s": 1.15
+            },
+            {
+              "cpu_s": 1.15,
+              "peak_rss_kib": 3432,
+              "system_s": 0,
+              "user_s": 1.15,
+              "wall_s": 1.15
+            },
+            {
+              "cpu_s": 1.14,
+              "peak_rss_kib": 3496,
+              "system_s": 0,
+              "user_s": 1.14,
+              "wall_s": 1.14
+            },
+            {
+              "cpu_s": 1.15,
+              "peak_rss_kib": 3560,
+              "system_s": 0,
+              "user_s": 1.15,
+              "wall_s": 1.15
+            },
+            {
+              "cpu_s": 1.14,
+              "peak_rss_kib": 3540,
+              "system_s": 0,
+              "user_s": 1.14,
+              "wall_s": 1.15
+            },
+            {
+              "cpu_s": 1.14,
+              "peak_rss_kib": 3536,
+              "system_s": 0,
+              "user_s": 1.14,
+              "wall_s": 1.15
+            },
+            {
+              "cpu_s": 1.14,
+              "peak_rss_kib": 3532,
+              "system_s": 0,
+              "user_s": 1.14,
+              "wall_s": 1.15
+            }
+          ],
+          "reference": [
+            {
+              "cpu_s": 1.13,
+              "peak_rss_kib": 3892,
+              "system_s": 0,
+              "user_s": 1.13,
+              "wall_s": 1.13
+            },
+            {
+              "cpu_s": 1.13,
+              "peak_rss_kib": 3868,
+              "system_s": 0,
+              "user_s": 1.13,
+              "wall_s": 1.13
+            },
+            {
+              "cpu_s": 1.13,
+              "peak_rss_kib": 3876,
+              "system_s": 0.01,
+              "user_s": 1.12,
+              "wall_s": 1.13
+            },
+            {
+              "cpu_s": 1.12,
+              "peak_rss_kib": 3868,
+              "system_s": 0,
+              "user_s": 1.12,
+              "wall_s": 1.13
+            },
+            {
+              "cpu_s": 1.13,
+              "peak_rss_kib": 3892,
+              "system_s": 0.01,
+              "user_s": 1.12,
+              "wall_s": 1.13
+            },
+            {
+              "cpu_s": 1.13,
+              "peak_rss_kib": 3828,
+              "system_s": 0,
+              "user_s": 1.13,
+              "wall_s": 1.14
+            },
+            {
+              "cpu_s": 1.13,
+              "peak_rss_kib": 3840,
+              "system_s": 0,
+              "user_s": 1.13,
+              "wall_s": 1.14
+            }
+          ]
+        }
+      }
+    ],
+    "sample_rate": 48000,
+    "seconds": 240
+  },
+  "conversion_all": {
+    "arch": "x86_64",
+    "binary_sha256": "13959cdb712a2dd333199387234528ec72d43b76ad2d877d1329d6df599b7455",
+    "bits": 24,
+    "channels": 2,
+    "comparison": "Both source decode/hash/FLAC encode and output decode/hash are timed. Native also includes fsync and no-clobber publication. FFmpeg excludes separate probe and backend overhead. Adaptive LPC/Rice or verified FLAC frame-copy can produce different sizes; sizes are reported. FFmpeg verification is a separate subprocess: sum CPU/wall, maximum child RSS. Native independent FFmpeg verification is outside timing.",
+    "date_utc": "2026-10-04T12:13:32Z",
+    "ffmpeg_version": "ffmpeg version 6.1.1-3ubuntu5 Copyright (c) 2000-2023 the FFmpeg developers",
+    "fingerprint": false,
+    "harness": "audeniq-qc-tools Rust",
+    "host_cpu": "AMD EPYC 7763 64-Core Processor",
+    "input_scope": "six lossless formats",
+    "qualification": "Synthetic tones, warm page cache, median repeated runs. Applies only to the reported host; not a production corpus or end-to-end AUDENIQ measurement.",
+    "reference_binary_sha256": "ffe936c6ea5338223c333984eb650adc699ab4bd66b1c2d04f7193bd369ba4b4",
+    "reference_mode": "Same engine/encoder/QC, reference-codecs feature enables Symphonia ALAC/FLAC decoding and demuxing. Generic JSON/hash/image dependencies remain in both builds.",
+    "repeats": 5,
+    "results": [
+      {
+        "codec": "pcm_s24le",
+        "commands": {
+          "ffmpeg": [
+            "ffmpeg",
+            "-nostdin",
+            "-v",
+            "error",
+            "-xerror",
+            "-threads",
+            "1",
+            "-i",
+            "/tmp/audeniq-benchmark-convert-23884-1791115953511714631-0/master.wav",
+            "-map",
+            "0:a:0",
+            "-map_metadata",
+            "-1",
+            "-c:a",
+            "flac",
+            "-threads",
+            "1",
+            "-compression_level",
+            "5",
+            "/tmp/audeniq-benchmark-convert-23884-1791115953511714631-0/ffmpeg.flac",
+            "-map",
+            "0:a:0",
+            "-c:a",
+            "pcm_s32le",
+            "-f",
+            "hash",
+            "-hash",
+            "sha256",
+            "-"
+          ],
+          "native": [
+            "/home/runner/work/audeniq-qc/audeniq-qc/target/release/audeniq-qc",
+            "convert",
+            "/tmp/audeniq-benchmark-convert-23884-1791115953511714631-0/master.wav",
+            "/tmp/audeniq-benchmark-convert-23884-1791115953511714631-0/native.flac"
+          ],
+          "reference": [
+            "/home/runner/work/audeniq-qc/audeniq-qc/reference-target/release/audeniq-qc",
+            "convert",
+            "/tmp/audeniq-benchmark-convert-23884-1791115953511714631-0/master.wav",
+            "/tmp/audeniq-benchmark-convert-23884-1791115953511714631-0/baseline.flac"
+          ]
+        },
+        "ffmpeg_div_native": {
+          "cpu_s": 3.4615384615384617,
+          "peak_rss_kib": 16.01,
+          "wall_s": 2.1111111111111107
+        },
+        "ffmpeg_verification_command": [
+          "ffmpeg",
+          "-nostdin",
+          "-v",
+          "error",
+          "-xerror",
+          "-threads",
+          "1",
+          "-i",
+          "/tmp/audeniq-benchmark-convert-23884-1791115953511714631-0/ffmpeg.flac",
+          "-map",
+          "0:a:0",
+          "-c:a",
+          "pcm_s32le",
+          "-f",
+          "hash",
+          "-hash",
+          "sha256",
+          "-"
+        ],
+        "fixture_sha256": "b8cbc5275eb15433e66c8d85fbb1c38d93e521a2f6f60689d839c4b1b83f922a",
+        "median": {
+          "ffmpeg": {
+            "cpu_s": 0.9,
+            "peak_rss_kib": 57636,
+            "system_s": 0.15,
+            "user_s": 0.75,
+            "wall_s": 0.57
+          },
+          "native": {
+            "cpu_s": 0.26,
+            "peak_rss_kib": 3600,
+            "system_s": 0,
+            "user_s": 0.26,
+            "wall_s": 0.27
+          },
+          "reference": {
+            "cpu_s": 0.25,
+            "peak_rss_kib": 3860,
+            "system_s": 0,
+            "user_s": 0.25,
+            "wall_s": 0.26
+          }
+        },
+        "native_reference_flac_bytes_equal": true,
+        "output_bytes": {
+          "ffmpeg": 8071996,
+          "native": 8106960,
+          "reference": 8106960
+        },
+        "pcm_sha256": "cf7dd3489861c912fc6fb7ca34b99183fb02b739e25be7d580e3b19699142936",
+        "reference_analysis_command": null,
+        "runs": {
+          "ffmpeg": [
+            {
+              "cpu_s": 0.92,
+              "peak_rss_kib": 57804,
+              "system_s": 0.15,
+              "user_s": 0.77,
+              "wall_s": 0.58
+            },
+            {
+              "cpu_s": 0.89,
+              "peak_rss_kib": 57628,
+              "system_s": 0.18,
+              "user_s": 0.71,
+              "wall_s": 0.5599999999999999
+            },
+            {
+              "cpu_s": 0.9,
+              "peak_rss_kib": 57640,
+              "system_s": 0.15,
+              "user_s": 0.75,
+              "wall_s": 0.5599999999999999
+            },
+            {
+              "cpu_s": 0.87,
+              "peak_rss_kib": 57636,
+              "system_s": 0.16,
+              "user_s": 0.71,
+              "wall_s": 0.58
+            },
+            {
+              "cpu_s": 0.9,
+              "peak_rss_kib": 57624,
+              "system_s": 0.14,
+              "user_s": 0.76,
+              "wall_s": 0.57
+            }
+          ],
+          "native": [
+            {
+              "cpu_s": 0.26,
+              "peak_rss_kib": 3476,
+              "system_s": 0.01,
+              "user_s": 0.25,
+              "wall_s": 0.27
+            },
+            {
+              "cpu_s": 0.26,
+              "peak_rss_kib": 3636,
+              "system_s": 0,
+              "user_s": 0.26,
+              "wall_s": 0.26
+            },
+            {
+              "cpu_s": 0.26,
+              "peak_rss_kib": 3628,
+              "system_s": 0,
+              "user_s": 0.26,
+              "wall_s": 0.27
+            },
+            {
+              "cpu_s": 0.26,
+              "peak_rss_kib": 3524,
+              "system_s": 0,
+              "user_s": 0.26,
+              "wall_s": 0.27
+            },
+            {
+              "cpu_s": 0.26,
+              "peak_rss_kib": 3600,
+              "system_s": 0,
+              "user_s": 0.26,
+              "wall_s": 0.27
+            }
+          ],
+          "reference": [
+            {
+              "cpu_s": 0.25,
+              "peak_rss_kib": 3836,
+              "system_s": 0,
+              "user_s": 0.25,
+              "wall_s": 0.26
+            },
+            {
+              "cpu_s": 0.25,
+              "peak_rss_kib": 3748,
+              "system_s": 0.01,
+              "user_s": 0.24,
+              "wall_s": 0.25
+            },
+            {
+              "cpu_s": 0.24,
+              "peak_rss_kib": 3908,
+              "system_s": 0,
+              "user_s": 0.24,
+              "wall_s": 0.26
+            },
+            {
+              "cpu_s": 0.25,
+              "peak_rss_kib": 3860,
+              "system_s": 0,
+              "user_s": 0.25,
+              "wall_s": 0.26
+            },
+            {
+              "cpu_s": 0.25,
+              "peak_rss_kib": 3928,
+              "system_s": 0,
+              "user_s": 0.25,
+              "wall_s": 0.26
+            }
+          ]
+        },
+        "source_bytes": 17280102
+      },
+      {
+        "codec": "flac",
+        "commands": {
+          "ffmpeg": [
+            "ffmpeg",
+            "-nostdin",
+            "-v",
+            "error",
+            "-xerror",
+            "-threads",
+            "1",
+            "-i",
+            "/tmp/audeniq-benchmark-convert-23884-1791115953511714631-0/master.flac",
+            "-map",
+            "0:a:0",
+            "-map_metadata",
+            "-1",
+            "-c:a",
+            "flac",
+            "-threads",
+            "1",
+            "-compression_level",
+            "5",
+            "/tmp/audeniq-benchmark-convert-23884-1791115953511714631-0/ffmpeg.flac",
+            "-map",
+            "0:a:0",
+            "-c:a",
+            "pcm_s32le",
+            "-f",
+            "hash",
+            "-hash",
+            "sha256",
+            "-"
+          ],
+          "native": [
+            "/home/runner/work/audeniq-qc/audeniq-qc/target/release/audeniq-qc",
+            "convert",
+            "/tmp/audeniq-benchmark-convert-23884-1791115953511714631-0/master.flac",
+            "/tmp/audeniq-benchmark-convert-23884-1791115953511714631-0/native.flac"
+          ],
+          "reference": [
+            "/home/runner/work/audeniq-qc/audeniq-qc/reference-target/release/audeniq-qc",
+            "convert",
+            "/tmp/audeniq-benchmark-convert-23884-1791115953511714631-0/master.flac",
+            "/tmp/audeniq-benchmark-convert-23884-1791115953511714631-0/baseline.flac"
+          ]
+        },
+        "ffmpeg_div_native": {
+          "cpu_s": 2.875,
+          "peak_rss_kib": 17.029411764705884,
+          "wall_s": 1.7200000000000002
+        },
+        "ffmpeg_verification_command": [
+          "ffmpeg",
+          "-nostdin",
+          "-v",
+          "error",
+          "-xerror",
+          "-threads",
+          "1",
+          "-i",
+          "/tmp/audeniq-benchmark-convert-23884-1791115953511714631-0/ffmpeg.flac",
+          "-map",
+          "0:a:0",
+          "-c:a",
+          "pcm_s32le",
+          "-f",
+          "hash",
+          "-hash",
+          "sha256",
+          "-"
+        ],
+        "fixture_sha256": "69c6596b2771beeb06618170a47eae9d59750d3222e51c95791f1e5e3b192005",
+        "median": {
+          "ffmpeg": {
+            "cpu_s": 0.69,
+            "peak_rss_kib": 57900,
+            "system_s": 0.09,
+            "user_s": 0.6,
+            "wall_s": 0.4300000000000001
+          },
+          "native": {
+            "cpu_s": 0.24,
+            "peak_rss_kib": 3400,
+            "system_s": 0,
+            "user_s": 0.24,
+            "wall_s": 0.25
+          },
+          "reference": {
+            "cpu_s": 0.21,
+            "peak_rss_kib": 5908,
+            "system_s": 0,
+            "user_s": 0.21,
+            "wall_s": 0.22
+          }
+        },
+        "native_reference_flac_bytes_equal": true,
+        "output_bytes": {
+          "ffmpeg": 8071996,
+          "native": 8063750,
+          "reference": 8063750
+        },
+        "pcm_sha256": "cf7dd3489861c912fc6fb7ca34b99183fb02b739e25be7d580e3b19699142936",
+        "reference_analysis_command": null,
+        "runs": {
+          "ffmpeg": [
+            {
+              "cpu_s": 0.69,
+              "peak_rss_kib": 57928,
+              "system_s": 0.07,
+              "user_s": 0.62,
+              "wall_s": 0.44000000000000006
+            },
+            {
+              "cpu_s": 0.69,
+              "peak_rss_kib": 57768,
+              "system_s": 0.09,
+              "user_s": 0.6,
+              "wall_s": 0.42
+            },
+            {
+              "cpu_s": 0.6900000000000001,
+              "peak_rss_kib": 57900,
+              "system_s": 0.09,
+              "user_s": 0.6,
+              "wall_s": 0.4300000000000001
+            },
+            {
+              "cpu_s": 0.6799999999999999,
+              "peak_rss_kib": 57964,
+              "system_s": 0.09,
+              "user_s": 0.59,
+              "wall_s": 0.4300000000000001
+            },
+            {
+              "cpu_s": 0.6900000000000001,
+              "peak_rss_kib": 57824,
+              "system_s": 0.07,
+              "user_s": 0.62,
+              "wall_s": 0.44000000000000006
+            }
+          ],
+          "native": [
+            {
+              "cpu_s": 0.24,
+              "peak_rss_kib": 3432,
+              "system_s": 0,
+              "user_s": 0.24,
+              "wall_s": 0.25
+            },
+            {
+              "cpu_s": 0.24,
+              "peak_rss_kib": 3328,
+              "system_s": 0.01,
+              "user_s": 0.23,
+              "wall_s": 0.25
+            },
+            {
+              "cpu_s": 0.24,
+              "peak_rss_kib": 3356,
+              "system_s": 0,
+              "user_s": 0.24,
+              "wall_s": 0.25
+            },
+            {
+              "cpu_s": 0.24,
+              "peak_rss_kib": 3400,
+              "system_s": 0,
+              "user_s": 0.24,
+              "wall_s": 0.25
+            },
+            {
+              "cpu_s": 0.24,
+              "peak_rss_kib": 3536,
+              "system_s": 0,
+              "user_s": 0.24,
+              "wall_s": 0.25
+            }
+          ],
+          "reference": [
+            {
+              "cpu_s": 0.21,
+              "peak_rss_kib": 5888,
+              "system_s": 0.01,
+              "user_s": 0.2,
+              "wall_s": 0.22
+            },
+            {
+              "cpu_s": 0.21,
+              "peak_rss_kib": 5956,
+              "system_s": 0,
+              "user_s": 0.21,
+              "wall_s": 0.22
+            },
+            {
+              "cpu_s": 0.21,
+              "peak_rss_kib": 5836,
+              "system_s": 0,
+              "user_s": 0.21,
+              "wall_s": 0.22
+            },
+            {
+              "cpu_s": 0.21,
+              "peak_rss_kib": 5908,
+              "system_s": 0.01,
+              "user_s": 0.2,
+              "wall_s": 0.22
+            },
+            {
+              "cpu_s": 0.21,
+              "peak_rss_kib": 5960,
+              "system_s": 0,
+              "user_s": 0.21,
+              "wall_s": 0.22
+            }
+          ]
+        },
+        "source_bytes": 8071996
+      },
+      {
+        "codec": "pcm_s24be",
+        "commands": {
+          "ffmpeg": [
+            "ffmpeg",
+            "-nostdin",
+            "-v",
+            "error",
+            "-xerror",
+            "-threads",
+            "1",
+            "-i",
+            "/tmp/audeniq-benchmark-convert-23884-1791115953511714631-0/master.aiff",
+            "-map",
+            "0:a:0",
+            "-map_metadata",
+            "-1",
+            "-c:a",
+            "flac",
+            "-threads",
+            "1",
+            "-compression_level",
+            "5",
+            "/tmp/audeniq-benchmark-convert-23884-1791115953511714631-0/ffmpeg.flac",
+            "-map",
+            "0:a:0",
+            "-c:a",
+            "pcm_s32le",
+            "-f",
+            "hash",
+            "-hash",
+            "sha256",
+            "-"
+          ],
+          "native": [
+            "/home/runner/work/audeniq-qc/audeniq-qc/target/release/audeniq-qc",
+            "convert",
+            "/tmp/audeniq-benchmark-convert-23884-1791115953511714631-0/master.aiff",
+            "/tmp/audeniq-benchmark-convert-23884-1791115953511714631-0/native.flac"
+          ],
+          "reference": [
+            "/home/runner/work/audeniq-qc/audeniq-qc/reference-target/release/audeniq-qc",
+            "convert",
+            "/tmp/audeniq-benchmark-convert-23884-1791115953511714631-0/master.aiff",
+            "/tmp/audeniq-benchmark-convert-23884-1791115953511714631-0/baseline.flac"
+          ]
+        },
+        "ffmpeg_div_native": {
+          "cpu_s": 3.3846153846153846,
+          "peak_rss_kib": 16.324631101021566,
+          "wall_s": 2.037037037037037
+        },
+        "ffmpeg_verification_command": [
+          "ffmpeg",
+          "-nostdin",
+          "-v",
+          "error",
+          "-xerror",
+          "-threads",
+          "1",
+          "-i",
+          "/tmp/audeniq-benchmark-convert-23884-1791115953511714631-0/ffmpeg.flac",
+          "-map",
+          "0:a:0",
+          "-c:a",
+          "pcm_s32le",
+          "-f",
+          "hash",
+          "-hash",
+          "sha256",
+          "-"
+        ],
+        "fixture_sha256": "5483834f41cbd37c7ef859d86c409d314d5796383590eaa75493297b3d14b2f0",
+        "median": {
+          "ffmpeg": {
+            "cpu_s": 0.88,
+            "peak_rss_kib": 57528,
+            "system_s": 0.14,
+            "user_s": 0.75,
+            "wall_s": 0.55
+          },
+          "native": {
+            "cpu_s": 0.26,
+            "peak_rss_kib": 3524,
+            "system_s": 0.01,
+            "user_s": 0.26,
+            "wall_s": 0.27
+          },
+          "reference": {
+            "cpu_s": 0.25,
+            "peak_rss_kib": 3860,
+            "system_s": 0.01,
+            "user_s": 0.24,
+            "wall_s": 0.26
+          }
+        },
+        "native_reference_flac_bytes_equal": true,
+        "output_bytes": {
+          "ffmpeg": 8071996,
+          "native": 8106960,
+          "reference": 8106960
+        },
+        "pcm_sha256": "cf7dd3489861c912fc6fb7ca34b99183fb02b739e25be7d580e3b19699142936",
+        "reference_analysis_command": null,
+        "runs": {
+          "ffmpeg": [
+            {
+              "cpu_s": 0.9,
+              "peak_rss_kib": 57760,
+              "system_s": 0.15,
+              "user_s": 0.75,
+              "wall_s": 0.56
+            },
+            {
+              "cpu_s": 0.88,
+              "peak_rss_kib": 57528,
+              "system_s": 0.14,
+              "user_s": 0.74,
+              "wall_s": 0.55
+            },
+            {
+              "cpu_s": 0.88,
+              "peak_rss_kib": 57544,
+              "system_s": 0.13,
+              "user_s": 0.75,
+              "wall_s": 0.55
+            },
+            {
+              "cpu_s": 0.9,
+              "peak_rss_kib": 57488,
+              "system_s": 0.13,
+              "user_s": 0.77,
+              "wall_s": 0.5599999999999999
+            },
+            {
+              "cpu_s": 0.87,
+              "peak_rss_kib": 57400,
+              "system_s": 0.14,
+              "user_s": 0.73,
+              "wall_s": 0.54
+            }
+          ],
+          "native": [
+            {
+              "cpu_s": 0.26,
+              "peak_rss_kib": 3524,
+              "system_s": 0,
+              "user_s": 0.26,
+              "wall_s": 0.27
+            },
+            {
+              "cpu_s": 0.27,
+              "peak_rss_kib": 3632,
+              "system_s": 0.01,
+              "user_s": 0.26,
+              "wall_s": 0.27
+            },
+            {
+              "cpu_s": 0.27,
+              "peak_rss_kib": 3476,
+              "system_s": 0.01,
+              "user_s": 0.26,
+              "wall_s": 0.27
+            },
+            {
+              "cpu_s": 0.26,
+              "peak_rss_kib": 3540,
+              "system_s": 0.01,
+              "user_s": 0.25,
+              "wall_s": 0.27
+            },
+            {
+              "cpu_s": 0.26,
+              "peak_rss_kib": 3500,
+              "system_s": 0,
+              "user_s": 0.26,
+              "wall_s": 0.27
+            }
+          ],
+          "reference": [
+            {
+              "cpu_s": 0.26,
+              "peak_rss_kib": 4004,
+              "system_s": 0.01,
+              "user_s": 0.25,
+              "wall_s": 0.26
+            },
+            {
+              "cpu_s": 0.25,
+              "peak_rss_kib": 3860,
+              "system_s": 0.01,
+              "user_s": 0.24,
+              "wall_s": 0.26
+            },
+            {
+              "cpu_s": 0.26,
+              "peak_rss_kib": 3940,
+              "system_s": 0.01,
+              "user_s": 0.25,
+              "wall_s": 0.26
+            },
+            {
+              "cpu_s": 0.25,
+              "peak_rss_kib": 3816,
+              "system_s": 0.01,
+              "user_s": 0.24,
+              "wall_s": 0.26
+            },
+            {
+              "cpu_s": 0.25,
+              "peak_rss_kib": 3860,
+              "system_s": 0.01,
+              "user_s": 0.24,
+              "wall_s": 0.26
+            }
+          ]
+        },
+        "source_bytes": 17280054
+      },
+      {
+        "codec": "alac",
+        "commands": {
+          "ffmpeg": [
+            "ffmpeg",
+            "-nostdin",
+            "-v",
+            "error",
+            "-xerror",
+            "-threads",
+            "1",
+            "-i",
+            "/tmp/audeniq-benchmark-convert-23884-1791115953511714631-0/master.m4a",
+            "-map",
+            "0:a:0",
+            "-map_metadata",
+            "-1",
+            "-c:a",
+            "flac",
+            "-threads",
+            "1",
+            "-compression_level",
+            "5",
+            "/tmp/audeniq-benchmark-convert-23884-1791115953511714631-0/ffmpeg.flac",
+            "-map",
+            "0:a:0",
+            "-c:a",
+            "pcm_s32le",
+            "-f",
+            "hash",
+            "-hash",
+            "sha256",
+            "-"
+          ],
+          "native": [
+            "/home/runner/work/audeniq-qc/audeniq-qc/target/release/audeniq-qc",
+            "convert",
+            "/tmp/audeniq-benchmark-convert-23884-1791115953511714631-0/master.m4a",
+            "/tmp/audeniq-benchmark-convert-23884-1791115953511714631-0/native.flac"
+          ],
+          "reference": [
+            "/home/runner/work/audeniq-qc/audeniq-qc/reference-target/release/audeniq-qc",
+            "convert",
+            "/tmp/audeniq-benchmark-convert-23884-1791115953511714631-0/master.m4a",
+            "/tmp/audeniq-benchmark-convert-23884-1791115953511714631-0/baseline.flac"
+          ]
+        },
+        "ffmpeg_div_native": {
+          "cpu_s": 1.86046511627907,
+          "peak_rss_kib": 15.77006507592191,
+          "wall_s": 1.272727272727273
+        },
+        "ffmpeg_verification_command": [
+          "ffmpeg",
+          "-nostdin",
+          "-v",
+          "error",
+          "-xerror",
+          "-threads",
+          "1",
+          "-i",
+          "/tmp/audeniq-benchmark-convert-23884-1791115953511714631-0/ffmpeg.flac",
+          "-map",
+          "0:a:0",
+          "-c:a",
+          "pcm_s32le",
+          "-f",
+          "hash",
+          "-hash",
+          "sha256",
+          "-"
+        ],
+        "fixture_sha256": "091230d5c1a07686da3f7f709a2eff9e0ac47a3a0097f027359eabd905119c12",
+        "median": {
+          "ffmpeg": {
+            "cpu_s": 0.8,
+            "peak_rss_kib": 58160,
+            "system_s": 0.07,
+            "user_s": 0.73,
+            "wall_s": 0.56
+          },
+          "native": {
+            "cpu_s": 0.43,
+            "peak_rss_kib": 3688,
+            "system_s": 0.01,
+            "user_s": 0.42,
+            "wall_s": 0.44
+          },
+          "reference": {
+            "cpu_s": 0.42,
+            "peak_rss_kib": 3960,
+            "system_s": 0.01,
+            "user_s": 0.41,
+            "wall_s": 0.42
+          }
+        },
+        "native_reference_flac_bytes_equal": true,
+        "output_bytes": {
+          "ffmpeg": 8071996,
+          "native": 8106960,
+          "reference": 8106960
+        },
+        "pcm_sha256": "cf7dd3489861c912fc6fb7ca34b99183fb02b739e25be7d580e3b19699142936",
+        "reference_analysis_command": null,
+        "runs": {
+          "ffmpeg": [
+            {
+              "cpu_s": 0.79,
+              "peak_rss_kib": 58240,
+              "system_s": 0.08,
+              "user_s": 0.71,
+              "wall_s": 0.56
+            },
+            {
+              "cpu_s": 0.8300000000000001,
+              "peak_rss_kib": 58084,
+              "system_s": 0.07,
+              "user_s": 0.76,
+              "wall_s": 0.58
+            },
+            {
+              "cpu_s": 0.8,
+              "peak_rss_kib": 58160,
+              "system_s": 0.08,
+              "user_s": 0.72,
+              "wall_s": 0.5599999999999999
+            },
+            {
+              "cpu_s": 0.8200000000000001,
+              "peak_rss_kib": 58176,
+              "system_s": 0.07,
+              "user_s": 0.75,
+              "wall_s": 0.57
+            },
+            {
+              "cpu_s": 0.78,
+              "peak_rss_kib": 58048,
+              "system_s": 0.05,
+              "user_s": 0.73,
+              "wall_s": 0.56
+            }
+          ],
+          "native": [
+            {
+              "cpu_s": 0.43,
+              "peak_rss_kib": 3648,
+              "system_s": 0.01,
+              "user_s": 0.42,
+              "wall_s": 0.43
+            },
+            {
+              "cpu_s": 0.43,
+              "peak_rss_kib": 3736,
+              "system_s": 0,
+              "user_s": 0.43,
+              "wall_s": 0.44
+            },
+            {
+              "cpu_s": 0.43,
+              "peak_rss_kib": 3724,
+              "system_s": 0.01,
+              "user_s": 0.42,
+              "wall_s": 0.44
+            },
+            {
+              "cpu_s": 0.42,
+              "peak_rss_kib": 3620,
+              "system_s": 0,
+              "user_s": 0.42,
+              "wall_s": 0.43
+            },
+            {
+              "cpu_s": 0.43,
+              "peak_rss_kib": 3688,
+              "system_s": 0.01,
+              "user_s": 0.42,
+              "wall_s": 0.44
+            }
+          ],
+          "reference": [
+            {
+              "cpu_s": 0.42,
+              "peak_rss_kib": 3900,
+              "system_s": 0.01,
+              "user_s": 0.41,
+              "wall_s": 0.42
+            },
+            {
+              "cpu_s": 0.42,
+              "peak_rss_kib": 4036,
+              "system_s": 0.01,
+              "user_s": 0.41,
+              "wall_s": 0.42
+            },
+            {
+              "cpu_s": 0.42,
+              "peak_rss_kib": 3960,
+              "system_s": 0.01,
+              "user_s": 0.41,
+              "wall_s": 0.42
+            },
+            {
+              "cpu_s": 0.42,
+              "peak_rss_kib": 3992,
+              "system_s": 0.01,
+              "user_s": 0.41,
+              "wall_s": 0.43
+            },
+            {
+              "cpu_s": 0.41,
+              "peak_rss_kib": 3936,
+              "system_s": 0,
+              "user_s": 0.41,
+              "wall_s": 0.42
+            }
+          ]
+        },
+        "source_bytes": 11805170
+      },
+      {
+        "codec": "wavpack",
+        "commands": {
+          "ffmpeg": [
+            "ffmpeg",
+            "-nostdin",
+            "-v",
+            "error",
+            "-xerror",
+            "-threads",
+            "1",
+            "-i",
+            "/tmp/audeniq-benchmark-convert-23884-1791115953511714631-0/master.wv",
+            "-map",
+            "0:a:0",
+            "-map_metadata",
+            "-1",
+            "-c:a",
+            "flac",
+            "-threads",
+            "1",
+            "-compression_level",
+            "5",
+            "/tmp/audeniq-benchmark-convert-23884-1791115953511714631-0/ffmpeg.flac",
+            "-map",
+            "0:a:0",
+            "-c:a",
+            "pcm_s32le",
+            "-f",
+            "hash",
+            "-hash",
+            "sha256",
+            "-"
+          ],
+          "native": [
+            "/home/runner/work/audeniq-qc/audeniq-qc/target/release/audeniq-qc",
+            "convert",
+            "/tmp/audeniq-benchmark-convert-23884-1791115953511714631-0/master.wv",
+            "/tmp/audeniq-benchmark-convert-23884-1791115953511714631-0/native.flac"
+          ],
+          "reference": [
+            "/home/runner/work/audeniq-qc/audeniq-qc/reference-target/release/audeniq-qc",
+            "convert",
+            "/tmp/audeniq-benchmark-convert-23884-1791115953511714631-0/master.wv",
+            "/tmp/audeniq-benchmark-convert-23884-1791115953511714631-0/baseline.flac"
+          ]
+        },
+        "ffmpeg_div_native": {
+          "cpu_s": 1.5555555555555554,
+          "peak_rss_kib": 16.414790996784564,
+          "wall_s": 1.0652173913043477
+        },
+        "ffmpeg_verification_command": [
+          "ffmpeg",
+          "-nostdin",
+          "-v",
+          "error",
+          "-xerror",
+          "-threads",
+          "1",
+          "-i",
+          "/tmp/audeniq-benchmark-convert-23884-1791115953511714631-0/ffmpeg.flac",
+          "-map",
+          "0:a:0",
+          "-c:a",
+          "pcm_s32le",
+          "-f",
+          "hash",
+          "-hash",
+          "sha256",
+          "-"
+        ],
+        "fixture_sha256": "2cd91dcbd170c010f73f3b50564fbf32d9fb2a0eaf6d649b4ae55fed112c3048",
+        "median": {
+          "ffmpeg": {
+            "cpu_s": 0.7,
+            "peak_rss_kib": 61260,
+            "system_s": 0.05,
+            "user_s": 0.6499999999999999,
+            "wall_s": 0.49
+          },
+          "native": {
+            "cpu_s": 0.45,
+            "peak_rss_kib": 3732,
+            "system_s": 0.01,
+            "user_s": 0.45,
+            "wall_s": 0.46
+          },
+          "reference": {
+            "cpu_s": 0.44,
+            "peak_rss_kib": 4044,
+            "system_s": 0.01,
+            "user_s": 0.43,
+            "wall_s": 0.45
+          }
+        },
+        "native_reference_flac_bytes_equal": true,
+        "output_bytes": {
+          "ffmpeg": 8071996,
+          "native": 8106960,
+          "reference": 8106960
+        },
+        "pcm_sha256": "cf7dd3489861c912fc6fb7ca34b99183fb02b739e25be7d580e3b19699142936",
+        "reference_analysis_command": null,
+        "runs": {
+          "ffmpeg": [
+            {
+              "cpu_s": 0.72,
+              "peak_rss_kib": 61360,
+              "system_s": 0.03,
+              "user_s": 0.69,
+              "wall_s": 0.5
+            },
+            {
+              "cpu_s": 0.7,
+              "peak_rss_kib": 61256,
+              "system_s": 0.05,
+              "user_s": 0.6499999999999999,
+              "wall_s": 0.49
+            },
+            {
+              "cpu_s": 0.68,
+              "peak_rss_kib": 61088,
+              "system_s": 0.07,
+              "user_s": 0.61,
+              "wall_s": 0.48
+            },
+            {
+              "cpu_s": 0.7,
+              "peak_rss_kib": 61260,
+              "system_s": 0.05,
+              "user_s": 0.6499999999999999,
+              "wall_s": 0.49
+            },
+            {
+              "cpu_s": 0.6900000000000001,
+              "peak_rss_kib": 61284,
+              "system_s": 0.05,
+              "user_s": 0.64,
+              "wall_s": 0.48
+            }
+          ],
+          "native": [
+            {
+              "cpu_s": 0.45,
+              "peak_rss_kib": 3716,
+              "system_s": 0.01,
+              "user_s": 0.44,
+              "wall_s": 0.46
+            },
+            {
+              "cpu_s": 0.45,
+              "peak_rss_kib": 3732,
+              "system_s": 0.01,
+              "user_s": 0.44,
+              "wall_s": 0.46
+            },
+            {
+              "cpu_s": 0.46,
+              "peak_rss_kib": 3780,
+              "system_s": 0.01,
+              "user_s": 0.45,
+              "wall_s": 0.46
+            },
+            {
+              "cpu_s": 0.46,
+              "peak_rss_kib": 3732,
+              "system_s": 0.01,
+              "user_s": 0.45,
+              "wall_s": 0.46
+            },
+            {
+              "cpu_s": 0.45,
+              "peak_rss_kib": 3808,
+              "system_s": 0,
+              "user_s": 0.45,
+              "wall_s": 0.46
+            }
+          ],
+          "reference": [
+            {
+              "cpu_s": 0.44,
+              "peak_rss_kib": 3996,
+              "system_s": 0.01,
+              "user_s": 0.43,
+              "wall_s": 0.45
+            },
+            {
+              "cpu_s": 0.44,
+              "peak_rss_kib": 4080,
+              "system_s": 0.01,
+              "user_s": 0.43,
+              "wall_s": 0.45
+            },
+            {
+              "cpu_s": 0.43,
+              "peak_rss_kib": 3988,
+              "system_s": 0,
+              "user_s": 0.43,
+              "wall_s": 0.44
+            },
+            {
+              "cpu_s": 0.44,
+              "peak_rss_kib": 4044,
+              "system_s": 0.01,
+              "user_s": 0.43,
+              "wall_s": 0.45
+            },
+            {
+              "cpu_s": 0.44,
+              "peak_rss_kib": 4056,
+              "system_s": 0,
+              "user_s": 0.44,
+              "wall_s": 0.45
+            }
+          ]
+        },
+        "source_bytes": 14450447
+      },
+      {
+        "codec": "tta",
+        "commands": {
+          "ffmpeg": [
+            "ffmpeg",
+            "-nostdin",
+            "-v",
+            "error",
+            "-xerror",
+            "-threads",
+            "1",
+            "-i",
+            "/tmp/audeniq-benchmark-convert-23884-1791115953511714631-0/master.tta",
+            "-map",
+            "0:a:0",
+            "-map_metadata",
+            "-1",
+            "-c:a",
+            "flac",
+            "-threads",
+            "1",
+            "-compression_level",
+            "5",
+            "/tmp/audeniq-benchmark-convert-23884-1791115953511714631-0/ffmpeg.flac",
+            "-map",
+            "0:a:0",
+            "-c:a",
+            "pcm_s32le",
+            "-f",
+            "hash",
+            "-hash",
+            "sha256",
+            "-"
+          ],
+          "native": [
+            "/home/runner/work/audeniq-qc/audeniq-qc/target/release/audeniq-qc",
+            "convert",
+            "/tmp/audeniq-benchmark-convert-23884-1791115953511714631-0/master.tta",
+            "/tmp/audeniq-benchmark-convert-23884-1791115953511714631-0/native.flac"
+          ],
+          "reference": [
+            "/home/runner/work/audeniq-qc/audeniq-qc/reference-target/release/audeniq-qc",
+            "convert",
+            "/tmp/audeniq-benchmark-convert-23884-1791115953511714631-0/master.tta",
+            "/tmp/audeniq-benchmark-convert-23884-1791115953511714631-0/baseline.flac"
+          ]
+        },
+        "ffmpeg_div_native": {
+          "cpu_s": 1.6190476190476193,
+          "peak_rss_kib": 14.208294062205466,
+          "wall_s": 1.119047619047619
+        },
+        "ffmpeg_verification_command": [
+          "ffmpeg",
+          "-nostdin",
+          "-v",
+          "error",
+          "-xerror",
+          "-threads",
+          "1",
+          "-i",
+          "/tmp/audeniq-benchmark-convert-23884-1791115953511714631-0/ffmpeg.flac",
+          "-map",
+          "0:a:0",
+          "-c:a",
+          "pcm_s32le",
+          "-f",
+          "hash",
+          "-hash",
+          "sha256",
+          "-"
+        ],
+        "fixture_sha256": "1492fe8084f1e573501f2e1822f838d81fc8db7257a8461c314e3e6f802300ae",
+        "median": {
+          "ffmpeg": {
+            "cpu_s": 0.68,
+            "peak_rss_kib": 60300,
+            "system_s": 0.05,
+            "user_s": 0.64,
+            "wall_s": 0.47
+          },
+          "native": {
+            "cpu_s": 0.42,
+            "peak_rss_kib": 4244,
+            "system_s": 0.01,
+            "user_s": 0.41,
+            "wall_s": 0.42
+          },
+          "reference": {
+            "cpu_s": 0.41,
+            "peak_rss_kib": 4364,
+            "system_s": 0.01,
+            "user_s": 0.4,
+            "wall_s": 0.41
+          }
+        },
+        "native_reference_flac_bytes_equal": true,
+        "output_bytes": {
+          "ffmpeg": 8071996,
+          "native": 8106960,
+          "reference": 8106960
+        },
+        "pcm_sha256": "cf7dd3489861c912fc6fb7ca34b99183fb02b739e25be7d580e3b19699142936",
+        "reference_analysis_command": null,
+        "runs": {
+          "ffmpeg": [
+            {
+              "cpu_s": 0.68,
+              "peak_rss_kib": 60300,
+              "system_s": 0.07,
+              "user_s": 0.61,
+              "wall_s": 0.47
+            },
+            {
+              "cpu_s": 0.7000000000000001,
+              "peak_rss_kib": 60236,
+              "system_s": 0.05,
+              "user_s": 0.65,
+              "wall_s": 0.47
+            },
+            {
+              "cpu_s": 0.68,
+              "peak_rss_kib": 60512,
+              "system_s": 0.04,
+              "user_s": 0.64,
+              "wall_s": 0.47
+            },
+            {
+              "cpu_s": 0.68,
+              "peak_rss_kib": 60240,
+              "system_s": 0.04,
+              "user_s": 0.64,
+              "wall_s": 0.47
+            },
+            {
+              "cpu_s": 0.68,
+              "peak_rss_kib": 60304,
+              "system_s": 0.07,
+              "user_s": 0.61,
+              "wall_s": 0.47
+            }
+          ],
+          "native": [
+            {
+              "cpu_s": 0.41,
+              "peak_rss_kib": 4244,
+              "system_s": 0,
+              "user_s": 0.41,
+              "wall_s": 0.42
+            },
+            {
+              "cpu_s": 0.42,
+              "peak_rss_kib": 4288,
+              "system_s": 0.01,
+              "user_s": 0.41,
+              "wall_s": 0.42
+            },
+            {
+              "cpu_s": 0.41,
+              "peak_rss_kib": 4220,
+              "system_s": 0.01,
+              "user_s": 0.4,
+              "wall_s": 0.42
+            },
+            {
+              "cpu_s": 0.42,
+              "peak_rss_kib": 4260,
+              "system_s": 0.01,
+              "user_s": 0.41,
+              "wall_s": 0.42
+            },
+            {
+              "cpu_s": 0.42,
+              "peak_rss_kib": 4228,
+              "system_s": 0.01,
+              "user_s": 0.41,
+              "wall_s": 0.42
+            }
+          ],
+          "reference": [
+            {
+              "cpu_s": 0.41,
+              "peak_rss_kib": 4392,
+              "system_s": 0.01,
+              "user_s": 0.4,
+              "wall_s": 0.41
+            },
+            {
+              "cpu_s": 0.41,
+              "peak_rss_kib": 4348,
+              "system_s": 0.01,
+              "user_s": 0.4,
+              "wall_s": 0.41
+            },
+            {
+              "cpu_s": 0.41,
+              "peak_rss_kib": 4364,
+              "system_s": 0.01,
+              "user_s": 0.4,
+              "wall_s": 0.41
+            },
+            {
+              "cpu_s": 0.41,
+              "peak_rss_kib": 4288,
+              "system_s": 0.01,
+              "user_s": 0.4,
+              "wall_s": 0.41
+            },
+            {
+              "cpu_s": 0.41,
+              "peak_rss_kib": 4380,
+              "system_s": 0.01,
+              "user_s": 0.4,
+              "wall_s": 0.41
+            }
+          ]
+        },
+        "source_bytes": 11936346
+      }
+    ],
+    "review": false,
+    "sample_rate": 48000,
+    "seconds": 60
+  },
+  "normalization": {
+    "arch": "x86_64",
+    "binary_sha256": "13959cdb712a2dd333199387234528ec72d43b76ad2d877d1329d6df599b7455",
+    "bits": 24,
+    "channels": 2,
+    "comparison": "Both source decode/hash/FLAC encode and output decode/hash are timed. Native also includes fsync and no-clobber publication. FFmpeg excludes separate probe and backend overhead. Adaptive LPC/Rice or verified FLAC frame-copy can produce different sizes; sizes are reported. FFmpeg verification is a separate subprocess: sum CPU/wall, maximum child RSS. Native independent FFmpeg verification is outside timing.",
+    "date_utc": "2026-10-04T12:11:11Z",
+    "ffmpeg_version": "ffmpeg version 6.1.1-3ubuntu5 Copyright (c) 2000-2023 the FFmpeg developers",
+    "fingerprint": false,
+    "harness": "audeniq-qc-tools Rust",
+    "host_cpu": "AMD EPYC 7763 64-Core Processor",
+    "input_scope": "WAV/ALAC",
+    "qualification": "Synthetic tones, warm page cache, median repeated runs. Applies only to the reported host; not a production corpus or end-to-end AUDENIQ measurement.",
+    "reference_binary_sha256": "ffe936c6ea5338223c333984eb650adc699ab4bd66b1c2d04f7193bd369ba4b4",
+    "reference_mode": "Same engine/encoder/QC, reference-codecs feature enables Symphonia ALAC/FLAC decoding and demuxing. Generic JSON/hash/image dependencies remain in both builds.",
+    "repeats": 7,
+    "results": [
+      {
+        "codec": "pcm_s24le",
+        "commands": {
+          "ffmpeg": [
+            "ffmpeg",
+            "-nostdin",
+            "-v",
+            "error",
+            "-xerror",
+            "-threads",
+            "1",
+            "-i",
+            "/tmp/audeniq-benchmark-convert-22503-1791115772425415543-0/master.wav",
+            "-map",
+            "0:a:0",
+            "-map_metadata",
+            "-1",
+            "-c:a",
+            "flac",
+            "-threads",
+            "1",
+            "-compression_level",
+            "5",
+            "/tmp/audeniq-benchmark-convert-22503-1791115772425415543-0/ffmpeg.flac",
+            "-map",
+            "0:a:0",
+            "-c:a",
+            "pcm_s32le",
+            "-f",
+            "hash",
+            "-hash",
+            "sha256",
+            "-"
+          ],
+          "native": [
+            "/home/runner/work/audeniq-qc/audeniq-qc/target/release/audeniq-qc",
+            "convert",
+            "/tmp/audeniq-benchmark-convert-22503-1791115772425415543-0/master.wav",
+            "/tmp/audeniq-benchmark-convert-22503-1791115772425415543-0/native.flac"
+          ],
+          "reference": [
+            "/home/runner/work/audeniq-qc/audeniq-qc/reference-target/release/audeniq-qc",
+            "convert",
+            "/tmp/audeniq-benchmark-convert-22503-1791115772425415543-0/master.wav",
+            "/tmp/audeniq-benchmark-convert-22503-1791115772425415543-0/baseline.flac"
+          ]
+        },
+        "ffmpeg_div_native": {
+          "cpu_s": 3.1981132075471694,
+          "peak_rss_kib": 16.607954545454547,
+          "wall_s": 1.878504672897196
+        },
+        "ffmpeg_verification_command": [
+          "ffmpeg",
+          "-nostdin",
+          "-v",
+          "error",
+          "-xerror",
+          "-threads",
+          "1",
+          "-i",
+          "/tmp/audeniq-benchmark-convert-22503-1791115772425415543-0/ffmpeg.flac",
+          "-map",
+          "0:a:0",
+          "-c:a",
+          "pcm_s32le",
+          "-f",
+          "hash",
+          "-hash",
+          "sha256",
+          "-"
+        ],
+        "fixture_sha256": "28ae590684da5e492d203d8c773d4e05e7fe00ccc1f82155420af6ad80ef151a",
+        "median": {
+          "ffmpeg": {
+            "cpu_s": 3.3899999999999997,
+            "peak_rss_kib": 58460,
+            "system_s": 0.35000000000000003,
+            "user_s": 3.06,
+            "wall_s": 2.01
+          },
+          "native": {
+            "cpu_s": 1.06,
+            "peak_rss_kib": 3520,
+            "system_s": 0.04,
+            "user_s": 1.03,
+            "wall_s": 1.07
+          },
+          "reference": {
+            "cpu_s": 1.02,
+            "peak_rss_kib": 3960,
+            "system_s": 0.04,
+            "user_s": 0.98,
+            "wall_s": 1.03
+          }
+        },
+        "native_reference_flac_bytes_equal": true,
+        "output_bytes": {
+          "ffmpeg": 32261824,
+          "native": 32427602,
+          "reference": 32427602
+        },
+        "pcm_sha256": "26cf6f93e903bc9aafb549ccf11626b7bb0bb83278a4288d3f98e3b0ac7e8261",
+        "reference_analysis_command": null,
+        "runs": {
+          "ffmpeg": [
+            {
+              "cpu_s": 3.4000000000000004,
+              "peak_rss_kib": 58232,
+              "system_s": 0.34,
+              "user_s": 3.06,
+              "wall_s": 2.02
+            },
+            {
+              "cpu_s": 3.3699999999999997,
+              "peak_rss_kib": 58364,
+              "system_s": 0.36,
+              "user_s": 3.01,
+              "wall_s": 2
+            },
+            {
+              "cpu_s": 3.44,
+              "peak_rss_kib": 58460,
+              "system_s": 0.35000000000000003,
+              "user_s": 3.0900000000000003,
+              "wall_s": 2.04
+            },
+            {
+              "cpu_s": 3.37,
+              "peak_rss_kib": 58564,
+              "system_s": 0.3,
+              "user_s": 3.0700000000000003,
+              "wall_s": 1.99
+            },
+            {
+              "cpu_s": 3.38,
+              "peak_rss_kib": 58716,
+              "system_s": 0.32,
+              "user_s": 3.06,
+              "wall_s": 2.01
+            },
+            {
+              "cpu_s": 3.3999999999999995,
+              "peak_rss_kib": 58384,
+              "system_s": 0.44,
+              "user_s": 2.96,
+              "wall_s": 2
+            },
+            {
+              "cpu_s": 3.3899999999999997,
+              "peak_rss_kib": 58472,
+              "system_s": 0.46,
+              "user_s": 2.9299999999999997,
+              "wall_s": 2.01
+            }
+          ],
+          "native": [
+            {
+              "cpu_s": 1.07,
+              "peak_rss_kib": 3476,
+              "system_s": 0.04,
+              "user_s": 1.03,
+              "wall_s": 1.07
+            },
+            {
+              "cpu_s": 1.06,
+              "peak_rss_kib": 3688,
+              "system_s": 0.03,
+              "user_s": 1.03,
+              "wall_s": 1.07
+            },
+            {
+              "cpu_s": 1.06,
+              "peak_rss_kib": 3520,
+              "system_s": 0.06,
+              "user_s": 1,
+              "wall_s": 1.07
+            },
+            {
+              "cpu_s": 1.07,
+              "peak_rss_kib": 3520,
+              "system_s": 0.04,
+              "user_s": 1.03,
+              "wall_s": 1.08
+            },
+            {
+              "cpu_s": 1.06,
+              "peak_rss_kib": 3508,
+              "system_s": 0.03,
+              "user_s": 1.03,
+              "wall_s": 1.08
+            },
+            {
+              "cpu_s": 1.06,
+              "peak_rss_kib": 3528,
+              "system_s": 0.02,
+              "user_s": 1.04,
+              "wall_s": 1.07
+            },
+            {
+              "cpu_s": 1.07,
+              "peak_rss_kib": 3520,
+              "system_s": 0.04,
+              "user_s": 1.03,
+              "wall_s": 1.07
+            }
+          ],
+          "reference": [
+            {
+              "cpu_s": 1.02,
+              "peak_rss_kib": 3936,
+              "system_s": 0.03,
+              "user_s": 0.99,
+              "wall_s": 1.03
+            },
+            {
+              "cpu_s": 1.01,
+              "peak_rss_kib": 3884,
+              "system_s": 0.04,
+              "user_s": 0.97,
+              "wall_s": 1.03
+            },
+            {
+              "cpu_s": 1.02,
+              "peak_rss_kib": 4028,
+              "system_s": 0.04,
+              "user_s": 0.98,
+              "wall_s": 1.03
+            },
+            {
+              "cpu_s": 1.03,
+              "peak_rss_kib": 4008,
+              "system_s": 0.04,
+              "user_s": 0.99,
+              "wall_s": 1.03
+            },
+            {
+              "cpu_s": 1.02,
+              "peak_rss_kib": 3960,
+              "system_s": 0.04,
+              "user_s": 0.98,
+              "wall_s": 1.03
+            },
+            {
+              "cpu_s": 1.02,
+              "peak_rss_kib": 4052,
+              "system_s": 0.04,
+              "user_s": 0.98,
+              "wall_s": 1.03
+            },
+            {
+              "cpu_s": 1.03,
+              "peak_rss_kib": 3868,
+              "system_s": 0.03,
+              "user_s": 1,
+              "wall_s": 1.03
+            }
+          ]
+        },
+        "source_bytes": 69120102
+      },
+      {
+        "codec": "alac",
+        "commands": {
+          "ffmpeg": [
+            "ffmpeg",
+            "-nostdin",
+            "-v",
+            "error",
+            "-xerror",
+            "-threads",
+            "1",
+            "-i",
+            "/tmp/audeniq-benchmark-convert-22503-1791115772425415543-0/master.m4a",
+            "-map",
+            "0:a:0",
+            "-map_metadata",
+            "-1",
+            "-c:a",
+            "flac",
+            "-threads",
+            "1",
+            "-compression_level",
+            "5",
+            "/tmp/audeniq-benchmark-convert-22503-1791115772425415543-0/ffmpeg.flac",
+            "-map",
+            "0:a:0",
+            "-c:a",
+            "pcm_s32le",
+            "-f",
+            "hash",
+            "-hash",
+            "sha256",
+            "-"
+          ],
+          "native": [
+            "/home/runner/work/audeniq-qc/audeniq-qc/target/release/audeniq-qc",
+            "convert",
+            "/tmp/audeniq-benchmark-convert-22503-1791115772425415543-0/master.m4a",
+            "/tmp/audeniq-benchmark-convert-22503-1791115772425415543-0/native.flac"
+          ],
+          "reference": [
+            "/home/runner/work/audeniq-qc/audeniq-qc/reference-target/release/audeniq-qc",
+            "convert",
+            "/tmp/audeniq-benchmark-convert-22503-1791115772425415543-0/master.m4a",
+            "/tmp/audeniq-benchmark-convert-22503-1791115772425415543-0/baseline.flac"
+          ]
+        },
+        "ffmpeg_div_native": {
+          "cpu_s": 1.7011494252873562,
+          "peak_rss_kib": 15.504264392324094,
+          "wall_s": 1.1314285714285717
+        },
+        "ffmpeg_verification_command": [
+          "ffmpeg",
+          "-nostdin",
+          "-v",
+          "error",
+          "-xerror",
+          "-threads",
+          "1",
+          "-i",
+          "/tmp/audeniq-benchmark-convert-22503-1791115772425415543-0/ffmpeg.flac",
+          "-map",
+          "0:a:0",
+          "-c:a",
+          "pcm_s32le",
+          "-f",
+          "hash",
+          "-hash",
+          "sha256",
+          "-"
+        ],
+        "fixture_sha256": "89225739d5f69f647afded9fb2355c81bf67938c6e997fb061ba1aab89aff636",
+        "median": {
+          "ffmpeg": {
+            "cpu_s": 2.96,
+            "peak_rss_kib": 58172,
+            "system_s": 0.16999999999999998,
+            "user_s": 2.79,
+            "wall_s": 1.98
+          },
+          "native": {
+            "cpu_s": 1.74,
+            "peak_rss_kib": 3752,
+            "system_s": 0.04,
+            "user_s": 1.7,
+            "wall_s": 1.75
+          },
+          "reference": {
+            "cpu_s": 1.69,
+            "peak_rss_kib": 3908,
+            "system_s": 0.04,
+            "user_s": 1.65,
+            "wall_s": 1.7
+          }
+        },
+        "native_reference_flac_bytes_equal": true,
+        "output_bytes": {
+          "ffmpeg": 32261824,
+          "native": 32427602,
+          "reference": 32427602
+        },
+        "pcm_sha256": "26cf6f93e903bc9aafb549ccf11626b7bb0bb83278a4288d3f98e3b0ac7e8261",
+        "reference_analysis_command": null,
+        "runs": {
+          "ffmpeg": [
+            {
+              "cpu_s": 2.95,
+              "peak_rss_kib": 57984,
+              "system_s": 0.22,
+              "user_s": 2.73,
+              "wall_s": 1.96
+            },
+            {
+              "cpu_s": 2.94,
+              "peak_rss_kib": 58220,
+              "system_s": 0.17,
+              "user_s": 2.77,
+              "wall_s": 1.97
+            },
+            {
+              "cpu_s": 2.95,
+              "peak_rss_kib": 58012,
+              "system_s": 0.15000000000000002,
+              "user_s": 2.8,
+              "wall_s": 1.97
+            },
+            {
+              "cpu_s": 3.0700000000000003,
+              "peak_rss_kib": 58172,
+              "system_s": 0.14,
+              "user_s": 2.93,
+              "wall_s": 2.03
+            },
+            {
+              "cpu_s": 2.96,
+              "peak_rss_kib": 58320,
+              "system_s": 0.2,
+              "user_s": 2.76,
+              "wall_s": 1.99
+            },
+            {
+              "cpu_s": 3.01,
+              "peak_rss_kib": 58128,
+              "system_s": 0.16,
+              "user_s": 2.85,
+              "wall_s": 2
+            },
+            {
+              "cpu_s": 2.96,
+              "peak_rss_kib": 58200,
+              "system_s": 0.16999999999999998,
+              "user_s": 2.79,
+              "wall_s": 1.98
+            }
+          ],
+          "native": [
+            {
+              "cpu_s": 1.73,
+              "peak_rss_kib": 3752,
+              "system_s": 0.04,
+              "user_s": 1.69,
+              "wall_s": 1.74
+            },
+            {
+              "cpu_s": 1.74,
+              "peak_rss_kib": 3884,
+              "system_s": 0.04,
+              "user_s": 1.7,
+              "wall_s": 1.75
+            },
+            {
+              "cpu_s": 1.74,
+              "peak_rss_kib": 3708,
+              "system_s": 0.04,
+              "user_s": 1.7,
+              "wall_s": 1.75
+            },
+            {
+              "cpu_s": 1.74,
+              "peak_rss_kib": 3756,
+              "system_s": 0.03,
+              "user_s": 1.71,
+              "wall_s": 1.75
+            },
+            {
+              "cpu_s": 1.74,
+              "peak_rss_kib": 3868,
+              "system_s": 0.04,
+              "user_s": 1.7,
+              "wall_s": 1.74
+            },
+            {
+              "cpu_s": 1.72,
+              "peak_rss_kib": 3704,
+              "system_s": 0.03,
+              "user_s": 1.69,
+              "wall_s": 1.74
+            },
+            {
+              "cpu_s": 1.74,
+              "peak_rss_kib": 3752,
+              "system_s": 0.03,
+              "user_s": 1.71,
+              "wall_s": 1.75
+            }
+          ],
+          "reference": [
+            {
+              "cpu_s": 1.68,
+              "peak_rss_kib": 3952,
+              "system_s": 0.04,
+              "user_s": 1.64,
+              "wall_s": 1.69
+            },
+            {
+              "cpu_s": 1.69,
+              "peak_rss_kib": 3904,
+              "system_s": 0.04,
+              "user_s": 1.65,
+              "wall_s": 1.7
+            },
+            {
+              "cpu_s": 1.69,
+              "peak_rss_kib": 3908,
+              "system_s": 0.03,
+              "user_s": 1.66,
+              "wall_s": 1.7
+            },
+            {
+              "cpu_s": 1.68,
+              "peak_rss_kib": 3952,
+              "system_s": 0.04,
+              "user_s": 1.64,
+              "wall_s": 1.69
+            },
+            {
+              "cpu_s": 1.68,
+              "peak_rss_kib": 4012,
+              "system_s": 0.04,
+              "user_s": 1.64,
+              "wall_s": 1.69
+            },
+            {
+              "cpu_s": 1.69,
+              "peak_rss_kib": 3896,
+              "system_s": 0.04,
+              "user_s": 1.65,
+              "wall_s": 1.7
+            },
+            {
+              "cpu_s": 1.69,
+              "peak_rss_kib": 3864,
+              "system_s": 0.04,
+              "user_s": 1.65,
+              "wall_s": 1.7
+            }
+          ]
+        },
+        "source_bytes": 47216360
+      }
+    ],
+    "review": false,
+    "sample_rate": 48000,
+    "seconds": 240
+  },
+  "review": {
+    "arch": "x86_64",
+    "binary_sha256": "13959cdb712a2dd333199387234528ec72d43b76ad2d877d1329d6df599b7455",
+    "bits": 24,
+    "channels": 2,
+    "comparison": "Native and reference codecs both use fused convert --analyze with optional --fingerprint, exact QC equality and independent FFmpeg output hashes. FFmpeg uses one source decode for FLAC encode, canonical PCM SHA-256 and ebur128 true peak, then separately verifies output. FFmpeg omits native's extra QC fields/JSON/fingerprint retention. True-peak and resampling filters differ.",
+    "date_utc": "2026-10-04T12:14:25Z",
+    "ffmpeg_version": "ffmpeg version 6.1.1-3ubuntu5 Copyright (c) 2000-2023 the FFmpeg developers",
+    "fingerprint": false,
+    "harness": "audeniq-qc-tools Rust",
+    "host_cpu": "AMD EPYC 7763 64-Core Processor",
+    "input_scope": "WAV/ALAC",
+    "qualification": "Synthetic tones, warm page cache, median repeated runs. Applies only to the reported host; not a production corpus or end-to-end AUDENIQ measurement.",
+    "reference_binary_sha256": "ffe936c6ea5338223c333984eb650adc699ab4bd66b1c2d04f7193bd369ba4b4",
+    "reference_mode": "Same engine/encoder/QC, reference-codecs feature enables Symphonia ALAC/FLAC decoding and demuxing. Generic JSON/hash/image dependencies remain in both builds.",
+    "repeats": 5,
+    "results": [
+      {
+        "codec": "pcm_s24le",
+        "commands": {
+          "ffmpeg": [
+            "ffmpeg",
+            "-y",
+            "-nostdin",
+            "-v",
+            "error",
+            "-xerror",
+            "-threads",
+            "1",
+            "-i",
+            "/tmp/audeniq-benchmark-convert-25830-1791116012730135169-0/master.wav",
+            "-map",
+            "0:a:0",
+            "-map_metadata",
+            "-1",
+            "-c:a",
+            "flac",
+            "-threads",
+            "1",
+            "-compression_level",
+            "5",
+            "/tmp/audeniq-benchmark-convert-25830-1791116012730135169-0/ffmpeg.flac",
+            "-map",
+            "0:a:0",
+            "-c:a",
+            "pcm_s32le",
+            "-f",
+            "hash",
+            "-hash",
+            "sha256",
+            "-",
+            "-map",
+            "0:a:0",
+            "-af",
+            "ebur128=peak=true:framelog=quiet",
+            "-f",
+            "null",
+            "-"
+          ],
+          "native": [
+            "/home/runner/work/audeniq-qc/audeniq-qc/target/release/audeniq-qc",
+            "convert",
+            "/tmp/audeniq-benchmark-convert-25830-1791116012730135169-0/master.wav",
+            "/tmp/audeniq-benchmark-convert-25830-1791116012730135169-0/native.flac",
+            "--analyze"
+          ],
+          "reference": [
+            "/home/runner/work/audeniq-qc/audeniq-qc/reference-target/release/audeniq-qc",
+            "convert",
+            "/tmp/audeniq-benchmark-convert-25830-1791116012730135169-0/master.wav",
+            "/tmp/audeniq-benchmark-convert-25830-1791116012730135169-0/baseline.flac",
+            "--analyze"
+          ]
+        },
+        "ffmpeg_div_native": {
+          "cpu_s": 3.287671232876712,
+          "peak_rss_kib": 17.180064308681672,
+          "wall_s": 2.2533333333333334
+        },
+        "ffmpeg_verification_command": [
+          "ffmpeg",
+          "-nostdin",
+          "-v",
+          "error",
+          "-xerror",
+          "-threads",
+          "1",
+          "-i",
+          "/tmp/audeniq-benchmark-convert-25830-1791116012730135169-0/ffmpeg.flac",
+          "-map",
+          "0:a:0",
+          "-c:a",
+          "pcm_s32le",
+          "-f",
+          "hash",
+          "-hash",
+          "sha256",
+          "-"
+        ],
+        "fixture_sha256": "1d1e24f92151e20eea0d528527b45645375b0751eb8b0ae8e136ddfde07b6287",
+        "median": {
+          "ffmpeg": {
+            "cpu_s": 2.4,
+            "peak_rss_kib": 64116,
+            "system_s": 0.19,
+            "user_s": 2.21,
+            "wall_s": 1.69
+          },
+          "native": {
+            "cpu_s": 0.73,
+            "peak_rss_kib": 3732,
+            "system_s": 0.02,
+            "user_s": 0.72,
+            "wall_s": 0.75
+          },
+          "reference": {
+            "cpu_s": 0.72,
+            "peak_rss_kib": 4072,
+            "system_s": 0.02,
+            "user_s": 0.7,
+            "wall_s": 0.73
+          }
+        },
+        "native_reference_flac_bytes_equal": true,
+        "output_bytes": {
+          "ffmpeg": 16136893,
+          "native": 16213400,
+          "reference": 16213400
+        },
+        "pcm_sha256": "b2e3ec98276c57c736e5c3e23bddaf1303bd0792c5b31bc0f0c49a0fbf532717",
+        "reference_analysis_command": null,
+        "runs": {
+          "ffmpeg": [
+            {
+              "cpu_s": 2.41,
+              "peak_rss_kib": 63952,
+              "system_s": 0.26,
+              "user_s": 2.15,
+              "wall_s": 1.69
+            },
+            {
+              "cpu_s": 2.3899999999999997,
+              "peak_rss_kib": 64116,
+              "system_s": 0.15,
+              "user_s": 2.24,
+              "wall_s": 1.69
+            },
+            {
+              "cpu_s": 2.4,
+              "peak_rss_kib": 64076,
+              "system_s": 0.19,
+              "user_s": 2.21,
+              "wall_s": 1.7
+            },
+            {
+              "cpu_s": 2.39,
+              "peak_rss_kib": 64600,
+              "system_s": 0.2,
+              "user_s": 2.19,
+              "wall_s": 1.68
+            },
+            {
+              "cpu_s": 2.41,
+              "peak_rss_kib": 64228,
+              "system_s": 0.18000000000000002,
+              "user_s": 2.23,
+              "wall_s": 1.7
+            }
+          ],
+          "native": [
+            {
+              "cpu_s": 0.73,
+              "peak_rss_kib": 3732,
+              "system_s": 0.01,
+              "user_s": 0.72,
+              "wall_s": 0.75
+            },
+            {
+              "cpu_s": 0.73,
+              "peak_rss_kib": 3680,
+              "system_s": 0.02,
+              "user_s": 0.71,
+              "wall_s": 0.74
+            },
+            {
+              "cpu_s": 0.74,
+              "peak_rss_kib": 3780,
+              "system_s": 0.02,
+              "user_s": 0.72,
+              "wall_s": 0.74
+            },
+            {
+              "cpu_s": 0.74,
+              "peak_rss_kib": 3784,
+              "system_s": 0.02,
+              "user_s": 0.72,
+              "wall_s": 0.75
+            },
+            {
+              "cpu_s": 0.73,
+              "peak_rss_kib": 3660,
+              "system_s": 0.01,
+              "user_s": 0.72,
+              "wall_s": 0.75
+            }
+          ],
+          "reference": [
+            {
+              "cpu_s": 0.72,
+              "peak_rss_kib": 4084,
+              "system_s": 0.01,
+              "user_s": 0.71,
+              "wall_s": 0.73
+            },
+            {
+              "cpu_s": 0.71,
+              "peak_rss_kib": 3912,
+              "system_s": 0.01,
+              "user_s": 0.7,
+              "wall_s": 0.73
+            },
+            {
+              "cpu_s": 0.73,
+              "peak_rss_kib": 4176,
+              "system_s": 0.02,
+              "user_s": 0.71,
+              "wall_s": 0.73
+            },
+            {
+              "cpu_s": 0.72,
+              "peak_rss_kib": 4056,
+              "system_s": 0.02,
+              "user_s": 0.7,
+              "wall_s": 0.73
+            },
+            {
+              "cpu_s": 0.72,
+              "peak_rss_kib": 4072,
+              "system_s": 0.02,
+              "user_s": 0.7,
+              "wall_s": 0.73
+            }
+          ]
+        },
+        "source_bytes": 34560102
+      },
+      {
+        "codec": "alac",
+        "commands": {
+          "ffmpeg": [
+            "ffmpeg",
+            "-y",
+            "-nostdin",
+            "-v",
+            "error",
+            "-xerror",
+            "-threads",
+            "1",
+            "-i",
+            "/tmp/audeniq-benchmark-convert-25830-1791116012730135169-0/master.m4a",
+            "-map",
+            "0:a:0",
+            "-map_metadata",
+            "-1",
+            "-c:a",
+            "flac",
+            "-threads",
+            "1",
+            "-compression_level",
+            "5",
+            "/tmp/audeniq-benchmark-convert-25830-1791116012730135169-0/ffmpeg.flac",
+            "-map",
+            "0:a:0",
+            "-c:a",
+            "pcm_s32le",
+            "-f",
+            "hash",
+            "-hash",
+            "sha256",
+            "-",
+            "-map",
+            "0:a:0",
+            "-af",
+            "ebur128=peak=true:framelog=quiet",
+            "-f",
+            "null",
+            "-"
+          ],
+          "native": [
+            "/home/runner/work/audeniq-qc/audeniq-qc/target/release/audeniq-qc",
+            "convert",
+            "/tmp/audeniq-benchmark-convert-25830-1791116012730135169-0/master.m4a",
+            "/tmp/audeniq-benchmark-convert-25830-1791116012730135169-0/native.flac",
+            "--analyze"
+          ],
+          "reference": [
+            "/home/runner/work/audeniq-qc/audeniq-qc/reference-target/release/audeniq-qc",
+            "convert",
+            "/tmp/audeniq-benchmark-convert-25830-1791116012730135169-0/master.m4a",
+            "/tmp/audeniq-benchmark-convert-25830-1791116012730135169-0/baseline.flac",
+            "--analyze"
+          ]
+        },
+        "ffmpeg_div_native": {
+          "cpu_s": 2.037037037037037,
+          "peak_rss_kib": 17.126473740621652,
+          "wall_s": 1.546296296296296
+        },
+        "ffmpeg_verification_command": [
+          "ffmpeg",
+          "-nostdin",
+          "-v",
+          "error",
+          "-xerror",
+          "-threads",
+          "1",
+          "-i",
+          "/tmp/audeniq-benchmark-convert-25830-1791116012730135169-0/ffmpeg.flac",
+          "-map",
+          "0:a:0",
+          "-c:a",
+          "pcm_s32le",
+          "-f",
+          "hash",
+          "-hash",
+          "sha256",
+          "-"
+        ],
+        "fixture_sha256": "e2735def120919f1c55593fd5f63df8f2a50916ac3e3d0a6c96145e05d284ed1",
+        "median": {
+          "ffmpeg": {
+            "cpu_s": 2.2,
+            "peak_rss_kib": 63916,
+            "system_s": 0.1,
+            "user_s": 2.09,
+            "wall_s": 1.67
+          },
+          "native": {
+            "cpu_s": 1.08,
+            "peak_rss_kib": 3732,
+            "system_s": 0.02,
+            "user_s": 1.06,
+            "wall_s": 1.08
+          },
+          "reference": {
+            "cpu_s": 1.05,
+            "peak_rss_kib": 4132,
+            "system_s": 0.02,
+            "user_s": 1.03,
+            "wall_s": 1.06
+          }
+        },
+        "native_reference_flac_bytes_equal": true,
+        "output_bytes": {
+          "ffmpeg": 16136893,
+          "native": 16213400,
+          "reference": 16213400
+        },
+        "pcm_sha256": "b2e3ec98276c57c736e5c3e23bddaf1303bd0792c5b31bc0f0c49a0fbf532717",
+        "reference_analysis_command": null,
+        "runs": {
+          "ffmpeg": [
+            {
+              "cpu_s": 2.22,
+              "peak_rss_kib": 63856,
+              "system_s": 0.09,
+              "user_s": 2.13,
+              "wall_s": 1.7
+            },
+            {
+              "cpu_s": 2.1900000000000004,
+              "peak_rss_kib": 63752,
+              "system_s": 0.1,
+              "user_s": 2.09,
+              "wall_s": 1.67
+            },
+            {
+              "cpu_s": 2.22,
+              "peak_rss_kib": 64168,
+              "system_s": 0.13,
+              "user_s": 2.09,
+              "wall_s": 1.69
+            },
+            {
+              "cpu_s": 2.18,
+              "peak_rss_kib": 63916,
+              "system_s": 0.1,
+              "user_s": 2.08,
+              "wall_s": 1.67
+            },
+            {
+              "cpu_s": 2.2,
+              "peak_rss_kib": 64176,
+              "system_s": 0.1,
+              "user_s": 2.1,
+              "wall_s": 1.66
+            }
+          ],
+          "native": [
+            {
+              "cpu_s": 1.08,
+              "peak_rss_kib": 3680,
+              "system_s": 0.03,
+              "user_s": 1.05,
+              "wall_s": 1.08
+            },
+            {
+              "cpu_s": 1.08,
+              "peak_rss_kib": 3752,
+              "system_s": 0.02,
+              "user_s": 1.06,
+              "wall_s": 1.08
+            },
+            {
+              "cpu_s": 1.08,
+              "peak_rss_kib": 3732,
+              "system_s": 0.02,
+              "user_s": 1.06,
+              "wall_s": 1.08
+            },
+            {
+              "cpu_s": 1.08,
+              "peak_rss_kib": 3784,
+              "system_s": 0.03,
+              "user_s": 1.05,
+              "wall_s": 1.08
+            },
+            {
+              "cpu_s": 1.08,
+              "peak_rss_kib": 3724,
+              "system_s": 0.02,
+              "user_s": 1.06,
+              "wall_s": 1.08
+            }
+          ],
+          "reference": [
+            {
+              "cpu_s": 1.05,
+              "peak_rss_kib": 4268,
+              "system_s": 0.01,
+              "user_s": 1.04,
+              "wall_s": 1.06
+            },
+            {
+              "cpu_s": 1.06,
+              "peak_rss_kib": 3968,
+              "system_s": 0.01,
+              "user_s": 1.05,
+              "wall_s": 1.06
+            },
+            {
+              "cpu_s": 1.05,
+              "peak_rss_kib": 4208,
+              "system_s": 0.02,
+              "user_s": 1.03,
+              "wall_s": 1.06
+            },
+            {
+              "cpu_s": 1.05,
+              "peak_rss_kib": 3996,
+              "system_s": 0.02,
+              "user_s": 1.03,
+              "wall_s": 1.06
+            },
+            {
+              "cpu_s": 1.05,
+              "peak_rss_kib": 4132,
+              "system_s": 0.02,
+              "user_s": 1.03,
+              "wall_s": 1.06
+            }
+          ]
+        },
+        "source_bytes": 23608851
+      }
+    ],
+    "review": true,
+    "sample_rate": 48000,
+    "seconds": 120
+  },
+  "review_fingerprint": {
+    "arch": "x86_64",
+    "binary_sha256": "13959cdb712a2dd333199387234528ec72d43b76ad2d877d1329d6df599b7455",
+    "bits": 24,
+    "channels": 2,
+    "comparison": "Native and reference codecs both use fused convert --analyze with optional --fingerprint, exact QC equality and independent FFmpeg output hashes. FFmpeg uses one source decode for FLAC encode, canonical PCM SHA-256 and ebur128 true peak, then separately verifies output. FFmpeg omits native's extra QC fields/JSON/fingerprint retention. True-peak and resampling filters differ.",
+    "date_utc": "2026-10-04T12:15:21Z",
+    "ffmpeg_version": "ffmpeg version 6.1.1-3ubuntu5 Copyright (c) 2000-2023 the FFmpeg developers",
+    "fingerprint": true,
+    "harness": "audeniq-qc-tools Rust",
+    "host_cpu": "AMD EPYC 7763 64-Core Processor",
+    "input_scope": "WAV/ALAC",
+    "qualification": "Synthetic tones, warm page cache, median repeated runs. Applies only to the reported host; not a production corpus or end-to-end AUDENIQ measurement.",
+    "reference_binary_sha256": "ffe936c6ea5338223c333984eb650adc699ab4bd66b1c2d04f7193bd369ba4b4",
+    "reference_mode": "Same engine/encoder/QC, reference-codecs feature enables Symphonia ALAC/FLAC decoding and demuxing. Generic JSON/hash/image dependencies remain in both builds.",
+    "repeats": 5,
+    "results": [
+      {
+        "codec": "pcm_s24le",
+        "commands": {
+          "ffmpeg": [
+            "ffmpeg",
+            "-y",
+            "-nostdin",
+            "-v",
+            "error",
+            "-xerror",
+            "-threads",
+            "1",
+            "-i",
+            "/tmp/audeniq-benchmark-convert-26544-1791116065085869820-0/master.wav",
+            "-map",
+            "0:a:0",
+            "-map_metadata",
+            "-1",
+            "-c:a",
+            "flac",
+            "-threads",
+            "1",
+            "-compression_level",
+            "5",
+            "/tmp/audeniq-benchmark-convert-26544-1791116065085869820-0/ffmpeg.flac",
+            "-map",
+            "0:a:0",
+            "-c:a",
+            "pcm_s32le",
+            "-f",
+            "hash",
+            "-hash",
+            "sha256",
+            "-",
+            "-map",
+            "0:a:0",
+            "-af",
+            "ebur128=peak=true:framelog=quiet",
+            "-f",
+            "null",
+            "-",
+            "-map",
+            "0:a:0",
+            "-ac",
+            "1",
+            "-ar",
+            "11025",
+            "-c:a",
+            "pcm_s16le",
+            "-f",
+            "s16le",
+            "/dev/null"
+          ],
+          "native": [
+            "/home/runner/work/audeniq-qc/audeniq-qc/target/release/audeniq-qc",
+            "convert",
+            "/tmp/audeniq-benchmark-convert-26544-1791116065085869820-0/master.wav",
+            "/tmp/audeniq-benchmark-convert-26544-1791116065085869820-0/native.flac",
+            "--analyze",
+            "--fingerprint"
+          ],
+          "reference": [
+            "/home/runner/work/audeniq-qc/audeniq-qc/reference-target/release/audeniq-qc",
+            "convert",
+            "/tmp/audeniq-benchmark-convert-26544-1791116065085869820-0/master.wav",
+            "/tmp/audeniq-benchmark-convert-26544-1791116065085869820-0/baseline.flac",
+            "--analyze",
+            "--fingerprint"
+          ]
+        },
+        "ffmpeg_div_native": {
+          "cpu_s": 3.185185185185185,
+          "peak_rss_kib": 11.146795313576844,
+          "wall_s": 2.2195121951219514
+        },
+        "ffmpeg_verification_command": [
+          "ffmpeg",
+          "-nostdin",
+          "-v",
+          "error",
+          "-xerror",
+          "-threads",
+          "1",
+          "-i",
+          "/tmp/audeniq-benchmark-convert-26544-1791116065085869820-0/ffmpeg.flac",
+          "-map",
+          "0:a:0",
+          "-c:a",
+          "pcm_s32le",
+          "-f",
+          "hash",
+          "-hash",
+          "sha256",
+          "-"
+        ],
+        "fixture_sha256": "1d1e24f92151e20eea0d528527b45645375b0751eb8b0ae8e136ddfde07b6287",
+        "median": {
+          "ffmpeg": {
+            "cpu_s": 2.58,
+            "peak_rss_kib": 64696,
+            "system_s": 0.24,
+            "user_s": 2.33,
+            "wall_s": 1.82
+          },
+          "native": {
+            "cpu_s": 0.81,
+            "peak_rss_kib": 5804,
+            "system_s": 0.02,
+            "user_s": 0.79,
+            "wall_s": 0.82
+          },
+          "reference": {
+            "cpu_s": 0.8,
+            "peak_rss_kib": 6172,
+            "system_s": 0.02,
+            "user_s": 0.78,
+            "wall_s": 0.8
+          }
+        },
+        "native_reference_flac_bytes_equal": true,
+        "output_bytes": {
+          "ffmpeg": 16136893,
+          "native": 16213400,
+          "reference": 16213400
+        },
+        "pcm_sha256": "b2e3ec98276c57c736e5c3e23bddaf1303bd0792c5b31bc0f0c49a0fbf532717",
+        "reference_analysis_command": null,
+        "runs": {
+          "ffmpeg": [
+            {
+              "cpu_s": 2.59,
+              "peak_rss_kib": 64676,
+              "system_s": 0.28,
+              "user_s": 2.31,
+              "wall_s": 1.83
+            },
+            {
+              "cpu_s": 2.57,
+              "peak_rss_kib": 64696,
+              "system_s": 0.24,
+              "user_s": 2.33,
+              "wall_s": 1.82
+            },
+            {
+              "cpu_s": 2.58,
+              "peak_rss_kib": 64492,
+              "system_s": 0.26,
+              "user_s": 2.32,
+              "wall_s": 1.82
+            },
+            {
+              "cpu_s": 2.57,
+              "peak_rss_kib": 64904,
+              "system_s": 0.22000000000000003,
+              "user_s": 2.35,
+              "wall_s": 1.81
+            },
+            {
+              "cpu_s": 2.59,
+              "peak_rss_kib": 64872,
+              "system_s": 0.24,
+              "user_s": 2.35,
+              "wall_s": 1.83
+            }
+          ],
+          "native": [
+            {
+              "cpu_s": 0.81,
+              "peak_rss_kib": 5604,
+              "system_s": 0.01,
+              "user_s": 0.8,
+              "wall_s": 0.81
+            },
+            {
+              "cpu_s": 0.8200000000000001,
+              "peak_rss_kib": 5908,
+              "system_s": 0.02,
+              "user_s": 0.8,
+              "wall_s": 0.82
+            },
+            {
+              "cpu_s": 0.8,
+              "peak_rss_kib": 5680,
+              "system_s": 0.02,
+              "user_s": 0.78,
+              "wall_s": 0.82
+            },
+            {
+              "cpu_s": 0.8,
+              "peak_rss_kib": 5872,
+              "system_s": 0.02,
+              "user_s": 0.78,
+              "wall_s": 0.81
+            },
+            {
+              "cpu_s": 0.81,
+              "peak_rss_kib": 5804,
+              "system_s": 0.02,
+              "user_s": 0.79,
+              "wall_s": 0.82
+            }
+          ],
+          "reference": [
+            {
+              "cpu_s": 0.8,
+              "peak_rss_kib": 6012,
+              "system_s": 0.03,
+              "user_s": 0.77,
+              "wall_s": 0.8
+            },
+            {
+              "cpu_s": 0.8,
+              "peak_rss_kib": 6240,
+              "system_s": 0.02,
+              "user_s": 0.78,
+              "wall_s": 0.8
+            },
+            {
+              "cpu_s": 0.79,
+              "peak_rss_kib": 6172,
+              "system_s": 0.02,
+              "user_s": 0.77,
+              "wall_s": 0.8
+            },
+            {
+              "cpu_s": 0.79,
+              "peak_rss_kib": 6228,
+              "system_s": 0.01,
+              "user_s": 0.78,
+              "wall_s": 0.8
+            },
+            {
+              "cpu_s": 0.8,
+              "peak_rss_kib": 6096,
+              "system_s": 0.01,
+              "user_s": 0.79,
+              "wall_s": 0.81
+            }
+          ]
+        },
+        "source_bytes": 34560102
+      },
+      {
+        "codec": "alac",
+        "commands": {
+          "ffmpeg": [
+            "ffmpeg",
+            "-y",
+            "-nostdin",
+            "-v",
+            "error",
+            "-xerror",
+            "-threads",
+            "1",
+            "-i",
+            "/tmp/audeniq-benchmark-convert-26544-1791116065085869820-0/master.m4a",
+            "-map",
+            "0:a:0",
+            "-map_metadata",
+            "-1",
+            "-c:a",
+            "flac",
+            "-threads",
+            "1",
+            "-compression_level",
+            "5",
+            "/tmp/audeniq-benchmark-convert-26544-1791116065085869820-0/ffmpeg.flac",
+            "-map",
+            "0:a:0",
+            "-c:a",
+            "pcm_s32le",
+            "-f",
+            "hash",
+            "-hash",
+            "sha256",
+            "-",
+            "-map",
+            "0:a:0",
+            "-af",
+            "ebur128=peak=true:framelog=quiet",
+            "-f",
+            "null",
+            "-",
+            "-map",
+            "0:a:0",
+            "-ac",
+            "1",
+            "-ar",
+            "11025",
+            "-c:a",
+            "pcm_s16le",
+            "-f",
+            "s16le",
+            "/dev/null"
+          ],
+          "native": [
+            "/home/runner/work/audeniq-qc/audeniq-qc/target/release/audeniq-qc",
+            "convert",
+            "/tmp/audeniq-benchmark-convert-26544-1791116065085869820-0/master.m4a",
+            "/tmp/audeniq-benchmark-convert-26544-1791116065085869820-0/native.flac",
+            "--analyze",
+            "--fingerprint"
+          ],
+          "reference": [
+            "/home/runner/work/audeniq-qc/audeniq-qc/reference-target/release/audeniq-qc",
+            "convert",
+            "/tmp/audeniq-benchmark-convert-26544-1791116065085869820-0/master.m4a",
+            "/tmp/audeniq-benchmark-convert-26544-1791116065085869820-0/baseline.flac",
+            "--analyze",
+            "--fingerprint"
+          ]
+        },
+        "ffmpeg_div_native": {
+          "cpu_s": 1.973913043478261,
+          "peak_rss_kib": 10.89136302294197,
+          "wall_s": 1.4741379310344829
+        },
+        "ffmpeg_verification_command": [
+          "ffmpeg",
+          "-nostdin",
+          "-v",
+          "error",
+          "-xerror",
+          "-threads",
+          "1",
+          "-i",
+          "/tmp/audeniq-benchmark-convert-26544-1791116065085869820-0/ffmpeg.flac",
+          "-map",
+          "0:a:0",
+          "-c:a",
+          "pcm_s32le",
+          "-f",
+          "hash",
+          "-hash",
+          "sha256",
+          "-"
+        ],
+        "fixture_sha256": "e2735def120919f1c55593fd5f63df8f2a50916ac3e3d0a6c96145e05d284ed1",
+        "median": {
+          "ffmpeg": {
+            "cpu_s": 2.27,
+            "peak_rss_kib": 64564,
+            "system_s": 0.11,
+            "user_s": 2.15,
+            "wall_s": 1.71
+          },
+          "native": {
+            "cpu_s": 1.15,
+            "peak_rss_kib": 5928,
+            "system_s": 0.02,
+            "user_s": 1.13,
+            "wall_s": 1.16
+          },
+          "reference": {
+            "cpu_s": 1.13,
+            "peak_rss_kib": 6220,
+            "system_s": 0.02,
+            "user_s": 1.11,
+            "wall_s": 1.13
+          }
+        },
+        "native_reference_flac_bytes_equal": true,
+        "output_bytes": {
+          "ffmpeg": 16136893,
+          "native": 16213400,
+          "reference": 16213400
+        },
+        "pcm_sha256": "b2e3ec98276c57c736e5c3e23bddaf1303bd0792c5b31bc0f0c49a0fbf532717",
+        "reference_analysis_command": null,
+        "runs": {
+          "ffmpeg": [
+            {
+              "cpu_s": 2.27,
+              "peak_rss_kib": 64460,
+              "system_s": 0.11,
+              "user_s": 2.16,
+              "wall_s": 1.71
+            },
+            {
+              "cpu_s": 2.17,
+              "peak_rss_kib": 64672,
+              "system_s": 0.09,
+              "user_s": 2.08,
+              "wall_s": 1.68
+            },
+            {
+              "cpu_s": 2.26,
+              "peak_rss_kib": 64564,
+              "system_s": 0.11,
+              "user_s": 2.15,
+              "wall_s": 1.72
+            },
+            {
+              "cpu_s": 2.31,
+              "peak_rss_kib": 64448,
+              "system_s": 0.15000000000000002,
+              "user_s": 2.16,
+              "wall_s": 1.73
+            },
+            {
+              "cpu_s": 2.28,
+              "peak_rss_kib": 64592,
+              "system_s": 0.13,
+              "user_s": 2.15,
+              "wall_s": 1.71
+            }
+          ],
+          "native": [
+            {
+              "cpu_s": 1.15,
+              "peak_rss_kib": 5928,
+              "system_s": 0.02,
+              "user_s": 1.13,
+              "wall_s": 1.16
+            },
+            {
+              "cpu_s": 1.16,
+              "peak_rss_kib": 6008,
+              "system_s": 0.03,
+              "user_s": 1.13,
+              "wall_s": 1.16
+            },
+            {
+              "cpu_s": 1.15,
+              "peak_rss_kib": 6012,
+              "system_s": 0.02,
+              "user_s": 1.13,
+              "wall_s": 1.16
+            },
+            {
+              "cpu_s": 1.15,
+              "peak_rss_kib": 5892,
+              "system_s": 0.02,
+              "user_s": 1.13,
+              "wall_s": 1.16
+            },
+            {
+              "cpu_s": 1.16,
+              "peak_rss_kib": 5804,
+              "system_s": 0.01,
+              "user_s": 1.15,
+              "wall_s": 1.17
+            }
+          ],
+          "reference": [
+            {
+              "cpu_s": 1.13,
+              "peak_rss_kib": 6120,
+              "system_s": 0.02,
+              "user_s": 1.11,
+              "wall_s": 1.13
+            },
+            {
+              "cpu_s": 1.14,
+              "peak_rss_kib": 6220,
+              "system_s": 0.03,
+              "user_s": 1.11,
+              "wall_s": 1.14
+            },
+            {
+              "cpu_s": 1.12,
+              "peak_rss_kib": 6240,
+              "system_s": 0.01,
+              "user_s": 1.11,
+              "wall_s": 1.13
+            },
+            {
+              "cpu_s": 1.12,
+              "peak_rss_kib": 6228,
+              "system_s": 0.02,
+              "user_s": 1.1,
+              "wall_s": 1.13
+            },
+            {
+              "cpu_s": 1.13,
+              "peak_rss_kib": 6132,
+              "system_s": 0.02,
+              "user_s": 1.11,
+              "wall_s": 1.13
+            }
+          ]
+        },
+        "source_bytes": 23608851
+      }
+    ],
+    "review": true,
+    "sample_rate": 48000,
+    "seconds": 120
+  },
+  "provenance": {
+    "source_commit": "f88d382097ea35bccd4ed043e2d48143f04c363b",
+    "run_id": 37200979457,
+    "job_id": 111432422969,
+    "url": "https://github.com/TAE-OK-11/audeniq-qc/actions/runs/37200979457",
+    "rustc": "rustc 1.98.1 (48a229cea 2026-09-01)",
+    "capabilities": [
+      {
+        "audio": [
+          "WAV/RF64/BW64 PCM16/24",
+          "AIFF/AIFC integer PCM",
+          "FLAC",
+          "M4A ALAC",
+          "TTA1",
+          "WavPack integer lossless single-block"
+        ],
+        "backend": "Avx2",
+        "compression_levels": {
+          "default": 5,
+          "max": 8,
+          "min": 0
+        },
+        "conversion_qc": true,
+        "cpu_features": [
+          "avx2",
+          "sha",
+          "pclmulqdq"
+        ],
+        "engine": "audeniq-qc/0.1.0",
+        "ffmpeg_runtime": false,
+        "images": [
+          "JPEG",
+          "PNG"
+        ],
+        "media_codecs": "audeniq-native",
+        "metric_version": "native-bs1770-v1",
+        "pcm_outputs": [
+          "wav",
+          "s32le"
+        ],
+        "resampler_version": "native-sinc64-v1",
+        "true_peak_certified": false
+      },
+      {
+        "audio": [
+          "WAV/RF64/BW64 PCM16/24",
+          "AIFF/AIFC integer PCM",
+          "FLAC",
+          "M4A ALAC",
+          "TTA1",
+          "WavPack integer lossless single-block"
+        ],
+        "backend": "Avx2",
+        "compression_levels": {
+          "default": 5,
+          "max": 8,
+          "min": 0
+        },
+        "conversion_qc": true,
+        "cpu_features": [
+          "avx2",
+          "sha",
+          "pclmulqdq"
+        ],
+        "engine": "audeniq-qc/0.1.0",
+        "ffmpeg_runtime": false,
+        "images": [
+          "JPEG",
+          "PNG"
+        ],
+        "media_codecs": "symphonia-reference",
+        "metric_version": "native-bs1770-v1",
+        "pcm_outputs": [
+          "wav",
+          "s32le"
+        ],
+        "resampler_version": "native-sinc64-v1",
+        "true_peak_certified": false
+      }
+    ],
+    "stage": "fused Rice and bounded streaming/stereo optimization"
+  }
+}
+

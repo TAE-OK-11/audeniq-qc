@@ -165,6 +165,66 @@ fn metadata(options: &Options, seconds: u32, results: Vec<Value>) -> Result<Valu
     });
     Ok(metadata)
 }
+/// Isolate decoding/hash from meter and encoder SIMD selection.
+pub fn decoding(options: &Options) -> Result<Value> {
+    let temp = Temp::new("benchmark-decode")?;
+    let root = &temp.0;
+    let seconds = options.seconds.unwrap_or(240);
+    let wav = source(root, seconds)?;
+    let mut results = Vec::new();
+    for (codec, ext) in [("pcm_s24le", "wav"), ("flac", "flac"), ("alac", "m4a")] {
+        let input = encoded(&wav, root, codec, ext)?;
+        let expected = oracle_hash(&input)?;
+        let mut commands = BTreeMap::from([
+            (
+                "native",
+                strings(&[path(&options.binary), "pcm-hash", path(&input)]),
+            ),
+            (
+                "native_scalar",
+                strings(&[path(&options.binary), "pcm-hash", path(&input), "--scalar"]),
+            ),
+            ("ffmpeg", oracle_command(&input)),
+        ]);
+        if let Some(binary) = &options.baseline_binary {
+            commands.insert(
+                "baseline",
+                strings(&[path(binary), "pcm-hash", path(&input)]),
+            );
+        }
+        let order: Vec<_> = commands.keys().copied().collect();
+        let mut runs: BTreeMap<_, _> = order.iter().map(|&name| (name, Vec::new())).collect();
+        for rep in 0..=options.repeats {
+            for i in 0..order.len() {
+                let name = order[(i + rep) % order.len()];
+                let (metrics, output) = measured(&commands[name], root, true)?;
+                if name == "ffmpeg" {
+                    check(
+                        hash_output(&output.stdout)? == expected,
+                        "decode oracle hash",
+                    )?;
+                } else {
+                    let report: Value = serde_json::from_slice(&output.stdout)?;
+                    check(report["pcm_sha256"] == expected, "decode PCM hash")?;
+                    check(
+                        report["frames"] == seconds as u64 * 48000,
+                        "decode frame count",
+                    )?;
+                }
+                if rep > 0 {
+                    runs.get_mut(name).unwrap().push(metrics);
+                }
+            }
+        }
+        let median = medians(&runs);
+        eprintln!("decode {codec}: {}", serde_json::to_string(&median)?);
+        results.push(json!({"codec":codec,"fixture_sha256":file_sha(&input)?,"pcm_sha256":expected,"commands":commands,"runs":runs,"median":median,"ffmpeg_div_native":ratios(&median)}));
+    }
+    let mut report = metadata(options, seconds, results)?;
+    report["input_scope"] = json!("WAV/FLAC/ALAC");
+    report["comparison"]=json!("Decode and canonical interleaved s32le SHA-256 only; no meter, fingerprint or encoding. Native scalar disables native decoder DSP, while crypto dispatch and PCM layout kernels remain active. Hash and exact frame count checked on every measured run. FLAC native/reference also verify PCM MD5; FFmpeg validates frames but is not claimed to perform the same whole-stream MD5 check.");
+    Ok(report)
+}
 pub fn analysis(options: &Options) -> Result<Value> {
     let temp = Temp::new("benchmark")?;
     let root = &temp.0;

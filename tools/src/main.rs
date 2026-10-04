@@ -21,6 +21,7 @@ fn entry() -> Result<()> {
         let mut reports = serde_json::Map::new();
         for (name, path) in [
             ("analysis", "analysis-benchmark.json"),
+            ("decoding", "decoding-benchmark.json"),
             ("fingerprint", "fingerprint-benchmark.json"),
             ("normalization", "normalization-benchmark.json"),
             ("conversion_all", "conversion-all-benchmark.json"),
@@ -75,6 +76,7 @@ fn entry() -> Result<()> {
         "standards" => standards::execute(&options)?,
         "codec-stress" => stress::execute(&options)?,
         "benchmark" => benchmark::analysis(&options)?,
+        "benchmark-decode" => benchmark::decoding(&options)?,
         "benchmark-convert" => benchmark::convert(&options)?,
         "benchmark-review" => {
             options.review = true;

@@ -243,12 +243,10 @@ impl Analyzer {
                 },
             ]);
             let mut f = [0f32; 2];
-            let mut mono = 0f32;
             for (ch, &s) in row.iter().enumerate() {
                 let v = s as f64 / 2147483648.0;
                 let x = v.abs();
                 f[ch] = v as f32;
-                mono += f[ch] / channels as f32;
                 self.a.channel_peaks[ch] = self.a.channel_peaks[ch].max(x);
                 self.block_peak = self.block_peak.max(x);
                 self.squares += v * v;
@@ -283,6 +281,9 @@ impl Analyzer {
             }
             self.tp.push(&f[..channels]);
             if let Some(t) = &mut self.tap {
+                let mono = f[..channels]
+                    .iter()
+                    .fold(0.0, |sum, &v| sum + v / channels as f32);
                 t.push(mono);
             }
             self.block_count += 1;

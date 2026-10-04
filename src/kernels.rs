@@ -141,24 +141,34 @@ unsafe fn rice_neon(residual: &[u32], first: u32, count: usize) -> [u64; 3] {
     out
 }
 
+#[cfg(target_arch = "aarch64")]
 type WeightFn = fn(&[f64; 5], &[f64; 5], &mut [[f64; 2]; 4], [f64; 2]) -> [f64; 2];
-pub(crate) struct WeightKernel(WeightFn);
+pub(crate) struct WeightKernel {
+    #[cfg(target_arch = "aarch64")]
+    apply: WeightFn,
+    #[cfg(not(target_arch = "aarch64"))]
+    channels: usize,
+}
 impl WeightKernel {
     pub(crate) fn new(backend: Backend, channels: usize) -> Self {
         assert!(backend.available());
-        if channels == 2 {
-            #[cfg(target_arch = "aarch64")]
-            if backend == Backend::Neon {
-                return Self(|b, a, s, x| unsafe { weight_neon(b, a, s, x) });
+        #[cfg(target_arch = "aarch64")]
+        {
+            if channels == 2 && backend == Backend::Neon {
+                return Self {
+                    apply: |b, a, s, x| unsafe { weight_neon(b, a, s, x) },
+                };
             }
-            #[cfg(target_arch = "x86_64")]
-            if backend == Backend::Avx2 {
-                return Self(|b, a, s, x| unsafe { weight_sse2(b, a, s, x) });
+            Self {
+                apply: if channels == 2 {
+                    weight_scalar::<2>
+                } else {
+                    weight_scalar::<1>
+                },
             }
-            Self(weight_scalar::<2>)
-        } else {
-            Self(weight_scalar::<1>)
         }
+        #[cfg(not(target_arch = "aarch64"))]
+        Self { channels }
     }
     #[inline]
     pub(crate) fn apply(
@@ -168,9 +178,23 @@ impl WeightKernel {
         state: &mut [[f64; 2]; 4],
         x: [f64; 2],
     ) -> [f64; 2] {
-        (self.0)(b, a, state, x)
+        #[cfg(target_arch = "aarch64")]
+        {
+            (self.apply)(b, a, state, x)
+        }
+        #[cfg(not(target_arch = "aarch64"))]
+        {
+            // x86's existing scalar arithmetic benefits from inlining into the
+            // fused meter loop. An extra per-frame SIMD call regressed that CPU.
+            if self.channels == 2 {
+                weight_scalar::<2>(b, a, state, x)
+            } else {
+                weight_scalar::<1>(b, a, state, x)
+            }
+        }
     }
 }
+#[inline]
 fn weight_scalar<const CHANNELS: usize>(
     b: &[f64; 5],
     a: &[f64; 5],
@@ -225,34 +249,6 @@ unsafe fn weight_neon(
     vst1q_f64(state[0].as_mut_ptr(), n);
     let mut out = [0.0; 2];
     vst1q_f64(out.as_mut_ptr(), y);
-    out
-}
-#[cfg(target_arch = "x86_64")]
-#[target_feature(enable = "sse2")]
-unsafe fn weight_sse2(
-    b: &[f64; 5],
-    a: &[f64; 5],
-    state: &mut [[f64; 2]; 4],
-    x: [f64; 2],
-) -> [f64; 2] {
-    use std::arch::x86_64::*;
-    let history = state.map(|v| _mm_loadu_pd(v.as_ptr()));
-    let mut n = _mm_loadu_pd(x.as_ptr());
-    for i in 0..4 {
-        n = _mm_sub_pd(n, _mm_mul_pd(history[i], _mm_set1_pd(a[i + 1])));
-    }
-    let mut y = _mm_mul_pd(n, _mm_set1_pd(b[0]));
-    for i in 0..4 {
-        y = _mm_add_pd(y, _mm_mul_pd(history[i], _mm_set1_pd(b[i + 1])));
-    }
-    let abs = _mm_andnot_pd(_mm_set1_pd(-0.0), n);
-    let n = _mm_andnot_pd(_mm_cmplt_pd(abs, _mm_set1_pd(1e-30)), n);
-    for i in (1..4).rev() {
-        _mm_storeu_pd(state[i].as_mut_ptr(), history[i - 1]);
-    }
-    _mm_storeu_pd(state[0].as_mut_ptr(), n);
-    let mut out = [0.0; 2];
-    _mm_storeu_pd(out.as_mut_ptr(), y);
     out
 }
 #[cfg(target_arch = "aarch64")]

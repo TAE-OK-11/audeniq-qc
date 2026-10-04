@@ -41,10 +41,11 @@ pub struct Analysis {
 struct KWeight {
     b: [f64; 5],
     a: [f64; 5],
-    state: [[f64; 4]; 2],
+    state: [[f64; 2]; 4],
+    kernel: crate::kernels::WeightKernel,
 }
 impl KWeight {
-    fn new(rate: u32) -> Self {
+    fn new(rate: u32, channels: usize, backend: Backend) -> Self {
         let k = (PI * 1681.974450955533 / rate as f64).tan();
         let q = 0.7071752369554196;
         let vh = 10f64.powf(3.999843853973347 / 20.0);
@@ -72,24 +73,13 @@ impl KWeight {
         Self {
             b,
             a,
-            state: [[0.0; 4]; 2],
+            state: [[0.0; 2]; 4],
+            kernel: crate::kernels::WeightKernel::new(backend, channels),
         }
     }
     #[inline]
-    fn push(&mut self, ch: usize, x: f64) -> f64 {
-        let v = &mut self.state[ch];
-        let mut n = x;
-        for (i, old) in v.iter().enumerate() {
-            n -= self.a[i + 1] * old;
-        }
-        let mut out = self.b[0] * n;
-        for (i, old) in v.iter().enumerate() {
-            out += self.b[i + 1] * old;
-        }
-        // A long silent tail must not spend seconds executing denormal arithmetic.
-        v.copy_within(0..3, 1);
-        v[0] = if n.abs() < 1e-30 { 0.0 } else { n };
-        out
+    fn push(&mut self, x: [f64; 2]) -> [f64; 2] {
+        self.kernel.apply(&self.b, &self.a, &mut self.state, x)
     }
 }
 struct Loudness {
@@ -159,66 +149,99 @@ pub fn analyze(
     backend: Backend,
     want_fingerprint: bool,
 ) -> Result<Analysis> {
-    if !backend.available() {
-        return Err(Error::Unsupported("CPU backend"));
-    }
-    let mut reader = AudioReader::open(path, limits.clone())?;
-    let spec = reader.spec.clone();
-    let channels = spec.channels as usize;
-    let mut k = KWeight::new(spec.sample_rate);
-    let mut loud = Loudness::new();
-    let mut tp = TruePeak::new(spec.sample_rate, channels, backend);
-    let mut tap = if want_fingerprint {
-        Some(FingerprintTap::new(
-            spec.sample_rate,
-            spec.frames
-                .ok_or(Error::Unsupported("fingerprint requires declared duration"))?,
-            backend,
-        ))
-    } else {
-        None
-    };
-    let mut a = Analysis {
-        engine: crate::ENGINE_VERSION,
-        metric_version: crate::METRIC_VERSION,
-        backend,
-        spec: spec.clone(),
-        samples_per_channel: 0,
-        duration_secs: 0.0,
-        peak: 0.0,
-        channel_peaks: vec![0.0; channels],
-        integrated_lufs: None,
-        true_peak_dbtp: None,
-        clip_events: 0,
-        clipped_samples: 0,
-        blocks: 0,
-        silent_blocks: 0,
-        longest_silent_run: 0,
-        zero_crossing_rate: 0.0,
-        block_db: Vec::with_capacity(36000),
-        pcm_sha256: String::new(),
-        resampler_version: want_fingerprint.then_some(crate::RESAMPLER_VERSION),
-        fingerprint_windows: None,
-    };
-    let block_frames = spec.sample_rate as usize / 20;
-    let mut block_count = 0;
-    let mut block_peak = 0f64;
-    let mut squares = 0f64;
-    let mut weighted = 0f64;
-    let mut silent_run = 0u64;
-    let mut runs = [0u64; 2];
-    let mut signs = [0i8; 2];
-    let mut crossings = 0u64;
+    let mut reader = AudioReader::open(path, limits)?;
+    let mut analyzer = Analyzer::new(reader.spec.clone(), backend, want_fingerprint)?;
     let mut samples = Vec::new();
     let mut hash = Sha256::new();
-    let mut bytes = Vec::new();
     while reader.next(&mut samples, backend)? {
-        bytes.clear();
-        for x in &samples {
-            bytes.extend_from_slice(&x.to_le_bytes());
+        hash.update(crate::audio::pcm_bytes(&samples));
+        analyzer.push(&samples);
+    }
+    Ok(analyzer.finish(reader.decoded_frames(), crate::hex(&hash.finalize())))
+}
+
+/// Shared streaming meters for standalone analysis and verified FLAC conversion.
+/// Hashing remains with the caller so conversion + QC never hashes PCM twice.
+pub(crate) struct Analyzer {
+    k: KWeight,
+    loud: Loudness,
+    tp: TruePeak,
+    tap: Option<FingerprintTap>,
+    a: Analysis,
+    block_count: usize,
+    block_peak: f64,
+    squares: f64,
+    weighted: f64,
+    silent_run: u64,
+    runs: [u64; 2],
+    signs: [i8; 2],
+    crossings: u64,
+}
+impl Analyzer {
+    pub(crate) fn new(spec: AudioSpec, backend: Backend, want_fingerprint: bool) -> Result<Self> {
+        if !backend.available() {
+            return Err(Error::Unsupported("CPU backend"));
         }
-        hash.update(&bytes);
+        let channels = spec.channels as usize;
+        let tap = if want_fingerprint {
+            Some(FingerprintTap::new(
+                spec.sample_rate,
+                spec.frames
+                    .ok_or(Error::Unsupported("fingerprint requires declared duration"))?,
+                backend,
+            ))
+        } else {
+            None
+        };
+        Ok(Self {
+            k: KWeight::new(spec.sample_rate, channels, backend),
+            loud: Loudness::new(),
+            tp: TruePeak::new(spec.sample_rate, channels, backend),
+            tap,
+            a: Analysis {
+                engine: crate::ENGINE_VERSION,
+                metric_version: crate::METRIC_VERSION,
+                backend,
+                spec,
+                samples_per_channel: 0,
+                duration_secs: 0.0,
+                peak: 0.0,
+                channel_peaks: vec![0.0; channels],
+                integrated_lufs: None,
+                true_peak_dbtp: None,
+                clip_events: 0,
+                clipped_samples: 0,
+                blocks: 0,
+                silent_blocks: 0,
+                longest_silent_run: 0,
+                zero_crossing_rate: 0.0,
+                block_db: Vec::with_capacity(36000),
+                pcm_sha256: String::new(),
+                resampler_version: want_fingerprint.then_some(crate::RESAMPLER_VERSION),
+                fingerprint_windows: None,
+            },
+            block_count: 0,
+            block_peak: 0.0,
+            squares: 0.0,
+            weighted: 0.0,
+            silent_run: 0,
+            runs: [0; 2],
+            signs: [0; 2],
+            crossings: 0,
+        })
+    }
+    pub(crate) fn push(&mut self, samples: &[i32]) {
+        let channels = self.a.spec.channels as usize;
+        let block_frames = self.a.spec.sample_rate as usize / 20;
         for row in samples.chunks_exact(channels) {
+            let weighted = self.k.push([
+                row[0] as f64 / 2147483648.0,
+                if channels == 2 {
+                    row[1] as f64 / 2147483648.0
+                } else {
+                    0.0
+                },
+            ]);
             let mut f = [0f32; 2];
             let mut mono = 0f32;
             for (ch, &s) in row.iter().enumerate() {
@@ -226,9 +249,9 @@ pub fn analyze(
                 let x = v.abs();
                 f[ch] = v as f32;
                 mono += f[ch] / channels as f32;
-                a.channel_peaks[ch] = a.channel_peaks[ch].max(x);
-                block_peak = block_peak.max(x);
-                squares += v * v;
+                self.a.channel_peaks[ch] = self.a.channel_peaks[ch].max(x);
+                self.block_peak = self.block_peak.max(x);
+                self.squares += v * v;
                 let sign = if v > 1e-6 {
                     1
                 } else if v < -1e-6 {
@@ -237,73 +260,77 @@ pub fn analyze(
                     0
                 };
                 if sign != 0 {
-                    if signs[ch] != 0 && signs[ch] != sign {
-                        crossings += 1;
+                    if self.signs[ch] != 0 && self.signs[ch] != sign {
+                        self.crossings += 1;
                     }
-                    signs[ch] = sign;
+                    self.signs[ch] = sign;
                 }
                 if x >= 0.999 {
-                    runs[ch] += 1;
-                    match runs[ch].cmp(&3) {
+                    self.runs[ch] += 1;
+                    match self.runs[ch].cmp(&3) {
                         std::cmp::Ordering::Equal => {
-                            a.clip_events += 1;
-                            a.clipped_samples += 3;
+                            self.a.clip_events += 1;
+                            self.a.clipped_samples += 3;
                         }
-                        std::cmp::Ordering::Greater => a.clipped_samples += 1,
+                        std::cmp::Ordering::Greater => self.a.clipped_samples += 1,
                         std::cmp::Ordering::Less => (),
                     }
                 } else {
-                    runs[ch] = 0;
+                    self.runs[ch] = 0;
                 }
-                let y = k.push(ch, v);
-                weighted += y * y;
+                let y = weighted[ch];
+                self.weighted += y * y;
             }
-            tp.push(&f[..channels]);
-            if let Some(t) = &mut tap {
+            self.tp.push(&f[..channels]);
+            if let Some(t) = &mut self.tap {
                 t.push(mono);
             }
-            block_count += 1;
-            if block_count == block_frames {
+            self.block_count += 1;
+            if self.block_count == block_frames {
                 close_block(
-                    &mut a,
-                    block_count,
-                    block_peak,
-                    squares,
-                    &mut silent_run,
+                    &mut self.a,
+                    self.block_count,
+                    self.block_peak,
+                    self.squares,
+                    &mut self.silent_run,
                     channels,
                 );
-                loud.block(weighted / block_count as f64);
-                block_count = 0;
-                block_peak = 0.0;
-                squares = 0.0;
-                weighted = 0.0;
+                self.loud.block(self.weighted / self.block_count as f64);
+                self.block_count = 0;
+                self.block_peak = 0.0;
+                self.squares = 0.0;
+                self.weighted = 0.0;
             }
         }
     }
-    if block_count != 0 {
-        close_block(
-            &mut a,
-            block_count,
-            block_peak,
-            squares,
-            &mut silent_run,
-            channels,
-        );
+    pub(crate) fn finish(mut self, frames: u64, pcm_sha256: String) -> Analysis {
+        let channels = self.a.spec.channels as usize;
+        if self.block_count != 0 {
+            close_block(
+                &mut self.a,
+                self.block_count,
+                self.block_peak,
+                self.squares,
+                &mut self.silent_run,
+                channels,
+            );
+        }
+        self.tp.finish();
+        self.a.samples_per_channel = frames;
+        self.a.duration_secs = self.a.samples_per_channel as f64 / self.a.spec.sample_rate as f64;
+        self.a.peak = self.a.channel_peaks.iter().copied().fold(0.0, f64::max);
+        self.a.integrated_lufs = self.loud.finish();
+        self.a.true_peak_dbtp = if self.tp.peak > 0.0 {
+            Some(20.0 * self.tp.peak.log10())
+        } else {
+            None
+        };
+        self.a.zero_crossing_rate =
+            self.crossings as f64 / (self.a.samples_per_channel * channels as u64) as f64;
+        self.a.pcm_sha256 = pcm_sha256;
+        self.a.fingerprint_windows = self.tap.map(|t| t.finish(self.a.samples_per_channel));
+        self.a
     }
-    tp.finish();
-    a.samples_per_channel = reader.decoded_frames();
-    a.duration_secs = a.samples_per_channel as f64 / spec.sample_rate as f64;
-    a.peak = a.channel_peaks.iter().copied().fold(0.0, f64::max);
-    a.integrated_lufs = loud.finish();
-    a.true_peak_dbtp = if tp.peak > 0.0 {
-        Some(20.0 * tp.peak.log10())
-    } else {
-        None
-    };
-    a.zero_crossing_rate = crossings as f64 / (a.samples_per_channel * channels as u64) as f64;
-    a.pcm_sha256 = crate::hex(&hash.finalize());
-    a.fingerprint_windows = tap.map(|t| t.finish(a.samples_per_channel));
-    Ok(a)
 }
 fn close_block(
     a: &mut Analysis,
@@ -324,5 +351,58 @@ fn close_block(
     if a.block_db.len() < 36000 {
         a.block_db
             .push((20.0 * (squares / (n * channels) as f64).sqrt().max(1e-9).log10()) as f32);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn stereo_weighting_matches_independent_scalar_history() {
+        for rate in [44100, 48000, 96000, 192000] {
+            for backend in [Backend::Scalar, Backend::detect()] {
+                let mut kernel = KWeight::new(rate, 2, backend);
+                let mut history = [[0.0; 4]; 2];
+                let mut seed = 1729u32;
+                for frame in 0..60000 {
+                    let input = std::array::from_fn::<_, 2, _>(|ch| {
+                        seed = seed.wrapping_mul(1664525).wrapping_add(1013904223);
+                        if frame > 10000 {
+                            0.0
+                        } else if frame % 17 == 0 {
+                            if ch == 0 {
+                                -1.0
+                            } else {
+                                0.99999
+                            }
+                        } else {
+                            seed as i32 as f64 / 2147483648.0
+                        }
+                    });
+                    let expected = std::array::from_fn::<_, 2, _>(|ch| {
+                        let h = &mut history[ch];
+                        let mut n = input[ch];
+                        for (i, &v) in h.iter().enumerate() {
+                            n -= kernel.a[i + 1] * v;
+                        }
+                        let mut y = kernel.b[0] * n;
+                        for (i, &v) in h.iter().enumerate() {
+                            y += kernel.b[i + 1] * v;
+                        }
+                        h.copy_within(0..3, 1);
+                        h[0] = if n.abs() < 1e-30 { 0.0 } else { n };
+                        y
+                    });
+                    let actual = kernel.push(input);
+                    for ch in 0..2 {
+                        assert_eq!(
+                            actual[ch].to_bits(),
+                            expected[ch].to_bits(),
+                            "rate {rate} backend {backend:?} frame {frame} channel {ch}"
+                        );
+                    }
+                }
+            }
+        }
     }
 }

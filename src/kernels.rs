@@ -25,6 +25,221 @@ impl Backend {
     }
 }
 
+/// Direct planar S32 -> interleaved S32. NEON structure stores avoid an extra
+/// ALAC/FLAC staging buffer; all loads and stores cover complete four-frame runs.
+pub(crate) fn interleave_i32(left: &[i32], right: &[i32], out: &mut [i32]) {
+    assert_eq!(left.len(), right.len());
+    assert_eq!(out.len(), left.len() * 2);
+    #[cfg(target_arch = "aarch64")]
+    {
+        // AArch64's baseline includes NEON; no optional SVE requirement.
+        unsafe { interleave_neon(left, right, out) };
+    }
+    #[cfg(not(target_arch = "aarch64"))]
+    for ((&l, &r), row) in left.iter().zip(right).zip(out.as_chunks_mut::<2>().0) {
+        row.copy_from_slice(&[l, r]);
+    }
+}
+
+type RiceFn = fn(&[u32], u32, usize) -> [u64; 3];
+pub(crate) struct RiceKernel(RiceFn);
+impl RiceKernel {
+    pub(crate) fn new(backend: Backend) -> Self {
+        assert!(backend.available());
+        #[cfg(target_arch = "aarch64")]
+        if backend == Backend::Neon {
+            return Self(|r, k, count| unsafe { rice_neon(r, k, count) });
+        }
+        Self(rice_scalar)
+    }
+    pub(crate) fn choose(&self, residual: &[u32], overhead: u64) -> (u64, u32) {
+        assert!(!residual.is_empty());
+        let mean = residual.iter().map(|&r| r as u64).sum::<u64>() / residual.len() as u64;
+        let estimate = if mean == 0 {
+            0
+        } else {
+            63 - mean.leading_zeros()
+        };
+        let first = estimate.saturating_sub(1);
+        let count = ((estimate + 1).min(30) - first + 1) as usize;
+        let quotients = (self.0)(residual, first, count);
+        (0..count)
+            .map(|i| {
+                let k = first + i as u32;
+                (
+                    overhead + quotients[i] + residual.len() as u64 * (1 + k as u64),
+                    k,
+                )
+            })
+            .min_by_key(|&(cost, _)| cost)
+            .unwrap()
+    }
+}
+fn rice_scalar(residual: &[u32], first: u32, count: usize) -> [u64; 3] {
+    let mut out = [0; 3];
+    // Read each residual once while evaluating neighboring Rice parameters.
+    for &r in residual {
+        for (i, sum) in out[..count].iter_mut().enumerate() {
+            *sum += (r >> (first + i as u32)) as u64;
+        }
+    }
+    out
+}
+#[cfg(target_arch = "aarch64")]
+#[target_feature(enable = "neon")]
+unsafe fn rice_neon(residual: &[u32], first: u32, count: usize) -> [u64; 3] {
+    use std::arch::aarch64::*;
+    let shifts = std::array::from_fn::<_, 3, _>(|i| vdupq_n_s32(-(first as i32 + i as i32)));
+    let mut sums = [vdupq_n_u64(0); 3];
+    let mut pos = 0;
+    while pos + 4 <= residual.len() {
+        let r = vld1q_u32(residual.as_ptr().add(pos));
+        for i in 0..count {
+            // Widen before accumulation: arbitrary u32 residuals must not wrap.
+            sums[i] = vaddq_u64(sums[i], vpaddlq_u32(vshlq_u32(r, shifts[i])));
+        }
+        pos += 4;
+    }
+    let mut out = rice_scalar(&residual[pos..], first, count);
+    for i in 0..count {
+        out[i] += vaddvq_u64(sums[i]);
+    }
+    out
+}
+
+type WeightFn = fn(&[f64; 5], &[f64; 5], &mut [[f64; 2]; 4], [f64; 2]) -> [f64; 2];
+pub(crate) struct WeightKernel(WeightFn);
+impl WeightKernel {
+    pub(crate) fn new(backend: Backend, channels: usize) -> Self {
+        assert!(backend.available());
+        if channels == 2 {
+            #[cfg(target_arch = "aarch64")]
+            if backend == Backend::Neon {
+                return Self(|b, a, s, x| unsafe { weight_neon(b, a, s, x) });
+            }
+            #[cfg(target_arch = "x86_64")]
+            if backend == Backend::Avx2 {
+                return Self(|b, a, s, x| unsafe { weight_sse2(b, a, s, x) });
+            }
+            Self(weight_scalar::<2>)
+        } else {
+            Self(weight_scalar::<1>)
+        }
+    }
+    #[inline]
+    pub(crate) fn apply(
+        &self,
+        b: &[f64; 5],
+        a: &[f64; 5],
+        state: &mut [[f64; 2]; 4],
+        x: [f64; 2],
+    ) -> [f64; 2] {
+        (self.0)(b, a, state, x)
+    }
+}
+fn weight_scalar<const CHANNELS: usize>(
+    b: &[f64; 5],
+    a: &[f64; 5],
+    state: &mut [[f64; 2]; 4],
+    x: [f64; 2],
+) -> [f64; 2] {
+    let mut out = [0.0; 2];
+    for ch in 0..CHANNELS {
+        let mut n = x[ch];
+        for i in 0..4 {
+            n -= a[i + 1] * state[i][ch];
+        }
+        out[ch] = b[0] * n;
+        for i in 0..4 {
+            out[ch] += b[i + 1] * state[i][ch];
+        }
+        for i in (1..4).rev() {
+            state[i][ch] = state[i - 1][ch];
+        }
+        state[0][ch] = if n.abs() < 1e-30 { 0.0 } else { n };
+    }
+    out
+}
+// Independent channels share coefficients. Separate multiply/add preserves
+// the scalar filter's per-channel rounding; no FMA/fast-math approximation.
+#[cfg(target_arch = "aarch64")]
+#[target_feature(enable = "neon")]
+unsafe fn weight_neon(
+    b: &[f64; 5],
+    a: &[f64; 5],
+    state: &mut [[f64; 2]; 4],
+    x: [f64; 2],
+) -> [f64; 2] {
+    use std::arch::aarch64::*;
+    let history = state.map(|v| vld1q_f64(v.as_ptr()));
+    let mut n = vld1q_f64(x.as_ptr());
+    for i in 0..4 {
+        n = vsubq_f64(n, vmulq_n_f64(history[i], a[i + 1]));
+    }
+    let mut y = vmulq_n_f64(n, b[0]);
+    for i in 0..4 {
+        y = vaddq_f64(y, vmulq_n_f64(history[i], b[i + 1]));
+    }
+    let n = vbslq_f64(
+        vcltq_f64(vabsq_f64(n), vdupq_n_f64(1e-30)),
+        vdupq_n_f64(0.0),
+        n,
+    );
+    for i in (1..4).rev() {
+        vst1q_f64(state[i].as_mut_ptr(), history[i - 1]);
+    }
+    vst1q_f64(state[0].as_mut_ptr(), n);
+    let mut out = [0.0; 2];
+    vst1q_f64(out.as_mut_ptr(), y);
+    out
+}
+#[cfg(target_arch = "x86_64")]
+#[target_feature(enable = "sse2")]
+unsafe fn weight_sse2(
+    b: &[f64; 5],
+    a: &[f64; 5],
+    state: &mut [[f64; 2]; 4],
+    x: [f64; 2],
+) -> [f64; 2] {
+    use std::arch::x86_64::*;
+    let history = state.map(|v| _mm_loadu_pd(v.as_ptr()));
+    let mut n = _mm_loadu_pd(x.as_ptr());
+    for i in 0..4 {
+        n = _mm_sub_pd(n, _mm_mul_pd(history[i], _mm_set1_pd(a[i + 1])));
+    }
+    let mut y = _mm_mul_pd(n, _mm_set1_pd(b[0]));
+    for i in 0..4 {
+        y = _mm_add_pd(y, _mm_mul_pd(history[i], _mm_set1_pd(b[i + 1])));
+    }
+    let abs = _mm_andnot_pd(_mm_set1_pd(-0.0), n);
+    let n = _mm_andnot_pd(_mm_cmplt_pd(abs, _mm_set1_pd(1e-30)), n);
+    for i in (1..4).rev() {
+        _mm_storeu_pd(state[i].as_mut_ptr(), history[i - 1]);
+    }
+    _mm_storeu_pd(state[0].as_mut_ptr(), n);
+    let mut out = [0.0; 2];
+    _mm_storeu_pd(out.as_mut_ptr(), y);
+    out
+}
+#[cfg(target_arch = "aarch64")]
+#[target_feature(enable = "neon")]
+unsafe fn interleave_neon(left: &[i32], right: &[i32], out: &mut [i32]) {
+    use std::arch::aarch64::*;
+    let mut i = 0;
+    while i + 4 <= left.len() {
+        let pair = int32x4x2_t(
+            vld1q_s32(left.as_ptr().add(i)),
+            vld1q_s32(right.as_ptr().add(i)),
+        );
+        vst2q_s32(out.as_mut_ptr().add(i * 2), pair);
+        i += 4;
+    }
+    for j in i..left.len() {
+        out[j * 2] = left[j];
+        out[j * 2 + 1] = right[j];
+    }
+}
+
 pub fn pcm_le(bytes: &[u8], depth: u16, dst: &mut [i32], backend: Backend) {
     assert!(matches!(depth, 16 | 24));
     assert!(bytes.len() >= dst.len() * (depth / 8) as usize);
@@ -547,6 +762,54 @@ mod tests {
                 .abs()
                     < 1e-10
             );
+        }
+    }
+}
+
+#[cfg(test)]
+mod planning_tests {
+    use super::*;
+    #[test]
+    fn rice_costs_and_stereo_interleave_preserve_integer_extremes() {
+        for len in [1, 2, 3, 4, 5, 7, 16, 31, 128, 4095, 32768] {
+            let left: Vec<_> = (0..len)
+                .map(|i| i32::MIN.wrapping_add((i as i32).wrapping_mul(982451653)))
+                .collect();
+            let right: Vec<_> = left.iter().map(|&v| !v).collect();
+            let mut actual = vec![0; len * 2];
+            interleave_i32(&left, &right, &mut actual);
+            let expected: Vec<_> = left
+                .iter()
+                .zip(&right)
+                .flat_map(|(&l, &r)| [l, r])
+                .collect();
+            assert_eq!(actual, expected);
+            for shift in 0..32 {
+                let residual: Vec<_> = left.iter().map(|&v| (v as u32) >> shift).collect();
+                let mean = residual.iter().map(|&v| v as u64).sum::<u64>() / len as u64;
+                let center = if mean == 0 {
+                    0
+                } else {
+                    63 - mean.leading_zeros()
+                };
+                let expected = (center.saturating_sub(1)..=(center + 1).min(30))
+                    .map(|k| {
+                        (
+                            123 + residual
+                                .iter()
+                                .map(|&v| (v as u64 >> k) + 1 + k as u64)
+                                .sum::<u64>(),
+                            k,
+                        )
+                    })
+                    .min_by_key(|&(cost, _)| cost)
+                    .unwrap();
+                for backend in [Backend::Scalar, Backend::detect()] {
+                    assert_eq!(RiceKernel::new(backend).choose(&residual, 123), expected);
+                }
+            }
+            let expected: Vec<_> = left.iter().flat_map(|v| v.to_le_bytes()).collect();
+            assert_eq!(crate::audio::pcm_bytes(&left).as_ref(), expected);
         }
     }
 }

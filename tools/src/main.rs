@@ -23,7 +23,12 @@ fn entry() -> Result<()> {
             ("analysis", "analysis-benchmark.json"),
             ("fingerprint", "fingerprint-benchmark.json"),
             ("normalization", "normalization-benchmark.json"),
+            ("review", "review-benchmark.json"),
+            ("review_fingerprint", "review-fingerprint-benchmark.json"),
         ] {
+            if !std::path::Path::new(path).exists() {
+                continue;
+            }
             reports.insert(
                 name.to_owned(),
                 serde_json::from_slice(&std::fs::read(path)?)?,
@@ -39,6 +44,10 @@ fn entry() -> Result<()> {
     while let Some(arg) = args.next() {
         match arg.as_str() {
             "--binary" => options.binary = args.next().ok_or("missing --binary")?.into(),
+            "--baseline-binary" => {
+                options.baseline_binary =
+                    Some(args.next().ok_or("missing --baseline-binary")?.into())
+            }
             "--output" => options.output = Some(args.next().ok_or("missing --output")?.into()),
             "--seconds" => options.seconds = Some(args.next().ok_or("missing --seconds")?.parse()?),
             "--repeats" => options.repeats = args.next().ok_or("missing --repeats")?.parse()?,
@@ -47,6 +56,10 @@ fn entry() -> Result<()> {
         }
     }
     options.binary = std::fs::canonicalize(&options.binary)?;
+    options.baseline_binary = options
+        .baseline_binary
+        .map(std::fs::canonicalize)
+        .transpose()?;
     if options.repeats < 3 || options.seconds == Some(0) {
         return Err("expected at least 3 repeats and positive seconds".into());
     }
@@ -56,6 +69,10 @@ fn entry() -> Result<()> {
         "codec-stress" => stress::execute(&options)?,
         "benchmark" => benchmark::analysis(&options)?,
         "benchmark-convert" => benchmark::convert(&options)?,
+        "benchmark-review" => {
+            options.review = true;
+            benchmark::convert(&options)?
+        }
         _ => return Err("unknown development command".into()),
     };
     if let Some(path) = options.output {

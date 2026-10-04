@@ -12,6 +12,11 @@ jobs:
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - name: Pinned engine before Graviton4 work
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: 9dacd1e3b47906366b710dad9afd97fdd160d99c
+          path: comparison-parent
       - name: Toolchain and development oracle
         run: |
           rustc --version
@@ -22,13 +27,16 @@ jobs:
       - run: cargo clippy --workspace --locked --all-targets -- -D warnings
       - run: cargo test --workspace --locked
       - run: cargo build --workspace --locked --release
+      - run: cargo build --manifest-path comparison-parent/Cargo.toml --locked --release --target-dir comparison-parent/target
       - run: target/release/audeniq-qc capabilities
       - run: target/release/audeniq-qc-tools qualify --output qualification.json
       - run: target/release/audeniq-qc-tools standards --output standards.json
       - run: target/release/audeniq-qc-tools codec-stress --output codec-stress.json
       - name: Measure analysis and verified normalization
         run: |
-          target/release/audeniq-qc-tools benchmark --seconds 120 --repeats 3 --output analysis-benchmark.json
-          target/release/audeniq-qc-tools benchmark --seconds 120 --repeats 3 --fingerprint --output fingerprint-benchmark.json
-          target/release/audeniq-qc-tools benchmark-convert --seconds 60 --repeats 3 --output normalization-benchmark.json
+          target/release/audeniq-qc-tools benchmark --seconds 120 --repeats 3 --baseline-binary comparison-parent/target/release/audeniq-qc --output analysis-benchmark.json
+          target/release/audeniq-qc-tools benchmark --seconds 120 --repeats 3 --baseline-binary comparison-parent/target/release/audeniq-qc --fingerprint --output fingerprint-benchmark.json
+          target/release/audeniq-qc-tools benchmark-convert --seconds 60 --repeats 3 --baseline-binary comparison-parent/target/release/audeniq-qc --output normalization-benchmark.json
+          target/release/audeniq-qc-tools benchmark-review --seconds 120 --repeats 5 --baseline-binary comparison-parent/target/release/audeniq-qc --output review-benchmark.json
+          target/release/audeniq-qc-tools benchmark-review --seconds 120 --repeats 5 --baseline-binary comparison-parent/target/release/audeniq-qc --fingerprint --output review-fingerprint-benchmark.json
           target/release/audeniq-qc-tools ci-report

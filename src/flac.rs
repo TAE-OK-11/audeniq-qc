@@ -7,7 +7,7 @@
 use crate::{
     audio::{pcm_sha256, AudioReader},
     bits::{crc16, crc8, BeWriter},
-    kernels::{Backend, Dot64Kernel, LpcKernel},
+    kernels::{Backend, Dot64Kernel, LpcKernel, RiceKernel},
     AudioSpec, Error, Limits, Result,
 };
 use md5::{Digest as _, Md5};
@@ -57,6 +57,15 @@ pub struct Conversion {
     pub output_bytes: u64,
     pub encoder: &'static str,
     pub compression_level: Option<u8>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub analysis: Option<crate::meter::Analysis>,
+}
+
+#[derive(Clone, Copy, Default)]
+pub struct ConvertOptions {
+    pub compression_level: Option<u8>,
+    pub analyze: bool,
+    pub fingerprint: bool,
 }
 // One normalizer per command; stack storage avoids an unnecessary heap box.
 #[allow(clippy::large_enum_variant)]
@@ -85,12 +94,45 @@ pub fn convert_with_level(
     backend: Backend,
     level: Option<u8>,
 ) -> Result<Conversion> {
-    let profile = Profile::new(level.unwrap_or(5))?;
+    convert_with_options(
+        src,
+        dst,
+        limits,
+        backend,
+        ConvertOptions {
+            compression_level: level,
+            ..Default::default()
+        },
+    )
+}
+
+/// Compute QC while encoding the same source PCM, retaining independent output
+/// re-decoding/hash verification before publishing either file or report.
+pub fn convert_with_options(
+    src: &Path,
+    dst: &Path,
+    limits: Limits,
+    backend: Backend,
+    options: ConvertOptions,
+) -> Result<Conversion> {
+    if options.fingerprint && !options.analyze {
+        return Err(Error::Invalid("conversion fingerprint requires analysis"));
+    }
+    let profile = Profile::new(options.compression_level.unwrap_or(5))?;
     if !backend.available() {
         return Err(Error::Unsupported("CPU backend"));
     }
     let mut reader = AudioReader::open(src, limits.clone())?;
     let spec = reader.spec.clone();
+    let mut analyzer = if options.analyze {
+        Some(crate::meter::Analyzer::new(
+            spec.clone(),
+            backend,
+            options.fingerprint,
+        )?)
+    } else {
+        None
+    };
     if dst.exists() {
         return Err(Error::Invalid("output already exists"));
     }
@@ -103,18 +145,18 @@ pub fn convert_with_level(
         std::process::id(),
         COUNTER.fetch_add(1, Ordering::Relaxed)
     )));
-    let mut options = OpenOptions::new();
-    options.write(true).read(true).create_new(true);
+    let mut file_options = OpenOptions::new();
+    file_options.write(true).read(true).create_new(true);
     #[cfg(unix)]
     {
         use std::os::unix::fs::OpenOptionsExt;
-        options.mode(0o600);
+        file_options.mode(0o600);
     }
-    let mut f = options.open(&temp.0)?;
+    let mut f = file_options.open(&temp.0)?;
     // Already-valid FLAC needs metadata removal, not another prediction pass.
     // Preserve only STREAMINFO and CRC-checked audio packets, then independently
     // decode/hash the resulting file just like newly encoded inputs.
-    let copied = if level.is_none() {
+    let copied = if options.compression_level.is_none() {
         reader.prepare_flac_copy()
     } else {
         None
@@ -134,13 +176,11 @@ pub fn convert_with_level(
     };
     let mut samples = Vec::new();
     let mut hash = Sha256::new();
-    let mut bytes = Vec::new();
     while reader.next(&mut samples, backend)? {
-        bytes.clear();
-        for x in &samples {
-            bytes.extend_from_slice(&x.to_le_bytes());
+        hash.update(crate::audio::pcm_bytes(&samples));
+        if let Some(analyzer) = &mut analyzer {
+            analyzer.push(&samples);
         }
-        hash.update(&bytes);
         match &mut writer {
             Normalizer::Encode(encoder) => encoder.push(&samples)?,
             Normalizer::Copy(file) => file.write_all(
@@ -162,7 +202,7 @@ pub fn convert_with_level(
         return Err(Error::Limit("FLAC output bytes"));
     }
     drop(f);
-    let (out, out_hash, out_frames) = pcm_sha256(&temp.0, limits, backend)?;
+    let (out, out_hash, out_frames) = pcm_sha256(&temp.0, limits.clone(), backend)?;
     if out_hash != source_hash
         || out_frames != frames
         || out.sample_rate != spec.sample_rate
@@ -171,6 +211,9 @@ pub fn convert_with_level(
     {
         return Err(Error::Invalid("lossless round-trip verification"));
     }
+    let analysis = analyzer.map(|a| a.finish(frames, source_hash.clone()));
+    // QC finalization/resampler flushing also belongs to the command deadline.
+    limits.check()?;
     // Same-filesystem hard link is atomic and refuses to replace an existing name.
     std::fs::hard_link(&temp.0, dst)?;
     Ok(Conversion {
@@ -188,6 +231,7 @@ pub fn convert_with_level(
         } else {
             Some(profile.level)
         },
+        analysis,
     })
 }
 
@@ -204,7 +248,9 @@ struct Encoder {
     max_frame: usize,
     dot: Dot64Kernel,
     lpc: LpcKernel,
+    rice: RiceKernel,
     profile: Profile,
+    raw: Vec<u8>,
 }
 impl Encoder {
     fn new(
@@ -217,6 +263,7 @@ impl Encoder {
         file.write_all(b"fLaC\x80\x00\x00\x22")?;
         file.write_all(&[0u8; 34])?;
         let capacity = profile.block * spec.channels as usize;
+        let raw_capacity = capacity * (spec.bits_per_sample / 8) as usize;
         Ok(Self {
             file,
             spec,
@@ -230,17 +277,20 @@ impl Encoder {
             max_frame: 0,
             dot: Dot64Kernel::new(backend),
             lpc: LpcKernel::new(backend),
+            rice: RiceKernel::new(backend),
             profile,
+            raw: Vec::with_capacity(raw_capacity),
         })
     }
     fn push(&mut self, samples: &[i32]) -> Result<()> {
         let shift = 32 - self.spec.bits_per_sample;
         let nbytes = (self.spec.bits_per_sample / 8) as usize;
-        let mut raw = Vec::with_capacity(samples.len() * nbytes);
+        self.raw.clear();
         for x in samples {
-            raw.extend_from_slice(&(x >> shift).to_le_bytes()[..nbytes]);
+            self.raw
+                .extend_from_slice(&(x >> shift).to_le_bytes()[..nbytes]);
         }
-        self.md5.update(&raw);
+        self.md5.update(&self.raw);
         let block = self.profile.block * self.spec.channels as usize;
         let mut pos = 0;
         while pos < samples.len() {
@@ -268,9 +318,16 @@ impl Encoder {
                 right.push(row[1] >> shift);
             }
         }
-        let l = Plan::new(&left, depth, &self.dot, &self.lpc, self.profile);
+        let l = Plan::new(&left, depth, &self.dot, &self.lpc, &self.rice, self.profile);
         let r = if channels == 2 {
-            Some(Plan::new(&right, depth, &self.dot, &self.lpc, self.profile))
+            Some(Plan::new(
+                &right,
+                depth,
+                &self.dot,
+                &self.lpc,
+                &self.rice,
+                self.profile,
+            ))
         } else {
             None
         };
@@ -297,8 +354,15 @@ impl Encoder {
                 mid.push((a + b) >> 1);
                 side.push(a - b);
             }
-            let m = Plan::new(&mid, depth, &self.dot, &self.lpc, self.profile);
-            let s = Plan::new(&side, depth + 1, &self.dot, &self.lpc, self.profile);
+            let m = Plan::new(&mid, depth, &self.dot, &self.lpc, &self.rice, self.profile);
+            let s = Plan::new(
+                &side,
+                depth + 1,
+                &self.dot,
+                &self.lpc,
+                &self.rice,
+                self.profile,
+            );
             if m.cost + s.cost < l.cost + r.as_ref().unwrap().cost {
                 ms = Some((m, s));
             }
@@ -437,6 +501,7 @@ impl Plan {
         depth: u32,
         dot: &Dot64Kernel,
         lpc: &LpcKernel,
+        rice: &RiceKernel,
         profile: Profile,
     ) -> Self {
         if samples.iter().all(|x| *x == samples[0]) {
@@ -460,26 +525,7 @@ impl Plan {
                 .iter()
                 .map(|x| ((*x << 1) ^ (*x >> 63)) as u32)
                 .collect();
-            let sum = residual.iter().map(|x| *x as u64).sum::<u64>();
-            let mean = sum / residual.len() as u64;
-            let estimate = if mean == 0 {
-                0
-            } else {
-                63 - mean.leading_zeros()
-            };
-            let mut cheapest = (u64::MAX, 0);
-            for k in estimate.saturating_sub(1)..=(estimate + 1).min(30) {
-                let cost = 8
-                    + order as u64 * depth as u64
-                    + 11
-                    + residual
-                        .iter()
-                        .map(|v| (*v as u64 >> k) + 1 + k as u64)
-                        .sum::<u64>();
-                if cost < cheapest.0 {
-                    cheapest = (cost, k);
-                }
-            }
+            let cheapest = rice.choose(&residual, 8 + order as u64 * depth as u64 + 11);
             if cheapest.0 < best.cost {
                 best = Self {
                     cost: cheapest.0,
@@ -566,24 +612,8 @@ impl Plan {
                 let Some(residual) = lpc.residual(samples, &coefficients, shift) else {
                     continue;
                 };
-                let mean = residual.iter().map(|x| *x as u64).sum::<u64>() / residual.len() as u64;
-                let estimate = if mean == 0 {
-                    0
-                } else {
-                    63 - mean.leading_zeros()
-                };
                 let overhead = 8 + order as u64 * depth as u64 + 4 + 5 + order as u64 * 12 + 11;
-                let mut cheapest = (u64::MAX, 0);
-                for k in estimate.saturating_sub(1)..=(estimate + 1).min(30) {
-                    let cost = overhead
-                        + residual
-                            .iter()
-                            .map(|v| (*v as u64 >> k) + 1 + k as u64)
-                            .sum::<u64>();
-                    if cost < cheapest.0 {
-                        cheapest = (cost, k);
-                    }
-                }
+                let cheapest = rice.choose(&residual, overhead);
                 if cheapest.0 < best.cost {
                     best = Self {
                         cost: cheapest.0,

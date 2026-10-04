@@ -5,7 +5,7 @@ use std::{
     path::Path,
 };
 use symphonia::core::{
-    audio::SampleBuffer,
+    audio::{AudioBufferRef, Signal},
     codecs::{Decoder, DecoderOptions, CODEC_TYPE_ALAC, CODEC_TYPE_FLAC},
     formats::{FormatOptions, FormatReader},
     io::MediaSourceStream,
@@ -395,7 +395,6 @@ struct Compressed {
     decoder: Box<dyn Decoder>,
     spec: AudioSpec,
     track: u32,
-    buffer: Option<SampleBuffer<i32>>,
     flac_info: Option<[u8; 34]>,
     retain_frame: bool,
     raw_frame: Option<Box<[u8]>>,
@@ -534,7 +533,6 @@ impl Compressed {
             decoder,
             spec,
             track,
-            buffer: None,
             flac_info,
             retain_frame: false,
             raw_frame: None,
@@ -568,19 +566,17 @@ impl Compressed {
         {
             return Err(Error::Invalid("midstream format change / oversized block"));
         }
-        if self
-            .buffer
-            .as_ref()
-            .is_none_or(|b| b.capacity() < decoded.capacity() * self.spec.channels as usize)
-        {
-            self.buffer = Some(SampleBuffer::<i32>::new(
-                decoded.capacity() as u64,
-                *decoded.spec(),
-            ));
+        // Both enabled integer decoders return left-aligned S32. Interleave
+        // directly into caller storage instead of copying through SampleBuffer.
+        let AudioBufferRef::S32(buffer) = decoded else {
+            return Err(Error::Invalid("unexpected compressed PCM representation"));
+        };
+        if self.spec.channels == 1 {
+            out.extend_from_slice(buffer.chan(0));
+        } else {
+            out.resize(buffer.frames() * 2, 0);
+            crate::kernels::interleave_i32(buffer.chan(0), buffer.chan(1), out);
         }
-        let b = self.buffer.as_mut().unwrap();
-        b.copy_interleaved_ref(decoded);
-        out.extend_from_slice(b.samples());
         if self.retain_frame {
             let n = packet.data.len();
             if n < 2
@@ -604,14 +600,25 @@ pub fn pcm_sha256(
     let mut r = AudioReader::open(path, limits)?;
     let mut s = Vec::new();
     let mut h = Sha256::new();
-    let mut bytes = Vec::new();
     while r.next(&mut s, backend)? {
-        bytes.clear();
-        for x in &s {
-            bytes.extend_from_slice(&x.to_le_bytes());
-        }
-        h.update(&bytes);
+        h.update(pcm_bytes(&s));
     }
     let n = r.decoded_frames();
     Ok((r.spec, crate::hex(&h.finalize()), n))
+}
+
+/// Canonical s32le hash input without a second PCM buffer on little-endian CPUs.
+pub(crate) fn pcm_bytes(samples: &[i32]) -> std::borrow::Cow<'_, [u8]> {
+    #[cfg(target_endian = "little")]
+    {
+        // SAFETY: u8 has alignment one, every initialized i32 consists of four
+        // initialized bytes, and the borrowed byte view cannot outlive samples.
+        std::borrow::Cow::Borrowed(unsafe {
+            std::slice::from_raw_parts(samples.as_ptr().cast(), std::mem::size_of_val(samples))
+        })
+    }
+    #[cfg(target_endian = "big")]
+    {
+        std::borrow::Cow::Owned(samples.iter().flat_map(|x| x.to_le_bytes()).collect())
+    }
 }

@@ -16,6 +16,8 @@ pub struct Options {
     pub seconds: Option<u32>,
     pub repeats: usize,
     pub fingerprint: bool,
+    pub baseline_binary: Option<PathBuf>,
+    pub review: bool,
 }
 impl Default for Options {
     fn default() -> Self {
@@ -25,6 +27,8 @@ impl Default for Options {
             seconds: None,
             repeats: 3,
             fingerprint: false,
+            baseline_binary: None,
+            review: false,
         }
     }
 }

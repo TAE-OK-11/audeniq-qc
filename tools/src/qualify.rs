@@ -96,6 +96,16 @@ pub fn execute(options: &Options) -> Result<Value> {
                 input.file_name().unwrap().to_string_lossy()
             ));
             let converted = native(binary, "convert", &[&input, &output], &[])?;
+            let fused_output = output.with_extension("qc.flac");
+            let fused = native(binary, "convert", &[&input, &fused_output], &["--analyze"])?;
+            verify!(
+                fused["analysis"] == analysis,
+                "fused QC exactly matches standalone analysis"
+            );
+            verify!(
+                oracle_hash(&fused_output)? == expected,
+                "fused conversion PCM hash"
+            );
             verify!(
                 converted["pcm_sha256"] == expected && oracle_hash(&output)? == expected,
                 "lossless round trip"
@@ -338,6 +348,21 @@ pub fn execute(options: &Options) -> Result<Value> {
         path(&long),
     ])?;
     let fused = native(binary, "analyze", &[&long], &["--fingerprint"])?;
+    let normalized = root.join("long.review.flac");
+    let converted = native(
+        binary,
+        "convert",
+        &[&long, &normalized],
+        &["--analyze", "--fingerprint"],
+    )?;
+    verify!(
+        converted["analysis"] == fused,
+        "long fused conversion/QC/fingerprint equality"
+    );
+    verify!(
+        oracle_hash(&normalized)? == fused["pcm_sha256"].as_str().ok_or("long PCM hash")?,
+        "long fused output PCM hash"
+    );
     let fallback = native(binary, "fingerprint", &[&long], &[])?;
     verify!(
         fused["fingerprint_windows"] == fallback["fingerprint_windows"],

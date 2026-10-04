@@ -154,9 +154,11 @@ fn metadata(options: &Options, seconds: u32, results: Vec<Value>) -> Result<Valu
         .next()
         .ok_or("FFmpeg version")?
         .to_owned();
-    Ok(
-        json!({"harness":"audeniq-qc-tools Rust","date_utc":date()?,"host_cpu":cpu_identity()?,"arch":std::env::consts::ARCH,"binary_sha256":file_sha(&options.binary)?,"ffmpeg_version":ffmpeg,"seconds":seconds,"sample_rate":48000,"channels":2,"bits":24,"repeats":options.repeats,"qualification":"Synthetic tones, warm page cache, median repeated runs. Applies only to the reported host; not a production corpus or end-to-end AUDENIQ measurement.","results":results}),
-    )
+    let mut metadata = json!({"harness":"audeniq-qc-tools Rust","date_utc":date()?,"host_cpu":cpu_identity()?,"arch":std::env::consts::ARCH,"binary_sha256":file_sha(&options.binary)?,"ffmpeg_version":ffmpeg,"seconds":seconds,"sample_rate":48000,"channels":2,"bits":24,"repeats":options.repeats,"qualification":"Synthetic tones, warm page cache, median repeated runs. Applies only to the reported host; not a production corpus or end-to-end AUDENIQ measurement.","results":results});
+    if let Some(binary) = &options.baseline_binary {
+        metadata["baseline_binary_sha256"] = json!(file_sha(binary)?);
+    }
+    Ok(metadata)
 }
 pub fn analysis(options: &Options) -> Result<Value> {
     let temp = Temp::new("benchmark")?;
@@ -233,11 +235,16 @@ pub fn analysis(options: &Options) -> Result<Value> {
                 "-",
             ]));
         }
+        if let Some(binary) = &options.baseline_binary {
+            let mut baseline = commands["native"].clone();
+            baseline[0] = path(binary).to_owned();
+            commands.insert("baseline", baseline);
+        }
         for command in commands.values() {
             run(command)?;
         }
-        let order = ["native", "native_scalar", "ffmpeg"];
-        let mut runs = BTreeMap::from(order.map(|name| (name, Vec::new())));
+        let order: Vec<_> = commands.keys().copied().collect();
+        let mut runs: BTreeMap<_, _> = order.iter().map(|&name| (name, Vec::new())).collect();
         for rep in 0..options.repeats {
             for i in 0..order.len() {
                 let name = order[(i + rep) % order.len()];
@@ -271,11 +278,14 @@ pub fn convert(options: &Options) -> Result<Value> {
         ("tta", "tta"),
     ] {
         let input = encoded(&wav, root, codec, ext)?;
-        let outputs = BTreeMap::from([
+        if options.review && !matches!(ext, "wav" | "m4a") {
+            continue;
+        }
+        let mut outputs = BTreeMap::from([
             ("native", root.join("native.flac")),
             ("ffmpeg", root.join("ffmpeg.flac")),
         ]);
-        let commands = BTreeMap::from([
+        let mut commands = BTreeMap::from([
             (
                 "native",
                 strings(&[
@@ -320,28 +330,104 @@ pub fn convert(options: &Options) -> Result<Value> {
                 ]),
             ),
         ]);
-        let mut runs = BTreeMap::from([("native", Vec::new()), ("ffmpeg", Vec::new())]);
+        if let Some(binary) = &options.baseline_binary {
+            outputs.insert("baseline", root.join("baseline.flac"));
+            commands.insert(
+                "baseline",
+                strings(&[
+                    path(binary),
+                    "convert",
+                    path(&input),
+                    path(&outputs["baseline"]),
+                ]),
+            );
+        }
+        if options.review {
+            commands
+                .get_mut("ffmpeg")
+                .unwrap()
+                .insert(1, "-y".to_owned());
+            commands
+                .get_mut("native")
+                .unwrap()
+                .push("--analyze".to_owned());
+            if options.fingerprint {
+                commands
+                    .get_mut("native")
+                    .unwrap()
+                    .push("--fingerprint".to_owned());
+            }
+            commands.get_mut("ffmpeg").unwrap().extend(strings(&[
+                "-map",
+                "0:a:0",
+                "-af",
+                "ebur128=peak=true:framelog=quiet",
+                "-f",
+                "null",
+                "-",
+            ]));
+            if options.fingerprint {
+                commands.get_mut("ffmpeg").unwrap().extend(strings(&[
+                    "-map",
+                    "0:a:0",
+                    "-ac",
+                    "1",
+                    "-ar",
+                    "11025",
+                    "-c:a",
+                    "pcm_s16le",
+                    "-f",
+                    "s16le",
+                    "/dev/null",
+                ]));
+            }
+        }
+        let order: Vec<_> = commands.keys().copied().collect();
+        let mut runs: BTreeMap<_, _> = order.iter().map(|&name| (name, Vec::new())).collect();
         let mut sizes = BTreeMap::new();
         for rep in 0..=options.repeats {
-            let order = if rep % 2 == 0 {
-                ["native", "ffmpeg"]
-            } else {
-                ["ffmpeg", "native"]
-            };
-            for name in order {
+            let mut qc = BTreeMap::new();
+            for i in 0..order.len() {
+                let name = order[(i + rep) % order.len()];
                 let output = &outputs[name];
                 if output.exists() {
                     fs::remove_file(output)?;
                 }
                 let (mut metrics, out) = measured(&commands[name], root, true)?;
                 sizes.insert(name, fs::metadata(output)?.len());
-                if name == "native" {
+                if name != "ffmpeg" {
                     let report: Value = serde_json::from_slice(&out.stdout)?;
                     check(report["pcm_sha256"] == expected, "native conversion hash")?;
                     check(
                         oracle_hash(output)? == expected,
                         "independent native output hash",
                     )?;
+                    if options.review {
+                        let analysis = if name == "native" {
+                            report["analysis"].clone()
+                        } else {
+                            let mut command = strings(&[
+                                path(options.baseline_binary.as_ref().unwrap()),
+                                "analyze",
+                                path(output),
+                            ]);
+                            if options.fingerprint {
+                                command.push("--fingerprint".to_owned());
+                            }
+                            let (analysis_metrics, out) = measured(&command, root, true)?;
+                            combine_metrics(&mut metrics, &analysis_metrics);
+                            serde_json::from_slice(&out.stdout)?
+                        };
+                        check(analysis["pcm_sha256"] == expected, "review QC hash")?;
+                        let mut comparable = analysis;
+                        for field in ["spec", "engine", "backend"] {
+                            comparable
+                                .as_object_mut()
+                                .ok_or("review JSON")?
+                                .remove(field);
+                        }
+                        qc.insert(name, comparable);
+                    }
                 } else {
                     check(hash_output(&out.stdout)? == expected, "FFmpeg source hash")?;
                     let (verify, out) = measured(&oracle_command(output), root, true)?;
@@ -349,18 +435,17 @@ pub fn convert(options: &Options) -> Result<Value> {
                         hash_output(&out.stdout)? == expected,
                         "FFmpeg verification hash",
                     )?;
-                    for key in ["wall_s", "user_s", "system_s", "cpu_s"] {
-                        metrics[key] =
-                            json!(metrics[key].as_f64().unwrap() + verify[key].as_f64().unwrap());
-                    }
-                    metrics["peak_rss_kib"] = json!(metrics["peak_rss_kib"]
-                        .as_u64()
-                        .unwrap()
-                        .max(verify["peak_rss_kib"].as_u64().unwrap()));
+                    combine_metrics(&mut metrics, &verify);
                 }
                 if rep > 0 {
                     runs.get_mut(name).unwrap().push(metrics);
                 }
+            }
+            if let Some(baseline) = qc.get("baseline") {
+                check(
+                    baseline == &qc["native"],
+                    "review baseline/current QC equality",
+                )?;
             }
         }
         let median = medians(&runs);
@@ -369,6 +454,18 @@ pub fn convert(options: &Options) -> Result<Value> {
         results.push(json!({"codec":codec,"source_bytes":fs::metadata(&input)?.len(),"fixture_sha256":file_sha(&input)?,"pcm_sha256":expected,"commands":commands,"ffmpeg_verification_command":oracle_command(&outputs["ffmpeg"]),"output_bytes":sizes,"runs":runs,"median":median,"ffmpeg_div_native":ratio}));
     }
     let mut report = metadata(options, seconds, results)?;
+    report["review"] = json!(options.review);
+    report["fingerprint"] = json!(options.fingerprint && options.review);
     report["comparison"]=json!("Both source decode/hash/FLAC encode and output decode/hash are timed. Native also includes fsync and no-clobber publication. FFmpeg excludes separate probe and backend overhead. Adaptive LPC/Rice or verified FLAC frame-copy can produce different sizes; sizes are reported. FFmpeg verification is a separate subprocess: sum CPU/wall, maximum child RSS. Native independent FFmpeg verification is outside timing.");
     Ok(report)
+}
+
+fn combine_metrics(total: &mut Value, part: &Value) {
+    for key in ["wall_s", "user_s", "system_s", "cpu_s"] {
+        total[key] = json!(total[key].as_f64().unwrap() + part[key].as_f64().unwrap());
+    }
+    total["peak_rss_kib"] = json!(total["peak_rss_kib"]
+        .as_u64()
+        .unwrap()
+        .max(part["peak_rss_kib"].as_u64().unwrap()));
 }

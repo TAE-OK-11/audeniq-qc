@@ -234,3 +234,70 @@ fn standalone_fingerprint_matches_fused_tap() {
         serde_json::to_value(fallback.fingerprint_windows).unwrap()
     );
 }
+
+#[test]
+fn fused_conversion_qc_and_fingerprint_match_separate_analysis() {
+    let d = Dir::new();
+    let wav = d.0.join("source.wav");
+    ffmpeg(None, &wav, "pcm_s24le");
+    for (ext, codec) in [("wav", "pcm_s24le"), ("m4a", "alac"), ("flac", "flac")] {
+        let input = d.0.join(format!("input.{ext}"));
+        ffmpeg(Some(&wav), &input, codec);
+        for backend in [Backend::Scalar, Backend::detect()] {
+            let analysis = meter::analyze(&input, Limits::default(), backend, true).unwrap();
+            let output = d.0.join(format!("{ext}-{backend:?}.flac"));
+            let conversion = flac::convert_with_options(
+                &input,
+                &output,
+                Limits::default(),
+                backend,
+                flac::ConvertOptions {
+                    analyze: true,
+                    fingerprint: true,
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+            assert_eq!(
+                serde_json::to_value(&analysis).unwrap(),
+                serde_json::to_value(conversion.analysis.unwrap()).unwrap()
+            );
+            assert_eq!(conversion.pcm_sha256, analysis.pcm_sha256);
+            assert_eq!(
+                pcm_sha256(&output, Limits::default(), backend).unwrap().1,
+                analysis.pcm_sha256
+            );
+        }
+        let mut corrupt = std::fs::read(&input).unwrap();
+        corrupt.truncate(corrupt.len() / 2);
+        let bad = d.0.join(format!("bad.{ext}"));
+        std::fs::write(&bad, corrupt).unwrap();
+        let output = d.0.join(format!("bad-{ext}.flac"));
+        assert!(flac::convert_with_options(
+            &bad,
+            &output,
+            Limits::default(),
+            Backend::detect(),
+            flac::ConvertOptions {
+                analyze: true,
+                fingerprint: true,
+                ..Default::default()
+            }
+        )
+        .is_err());
+        assert!(!output.exists());
+    }
+    let output = d.0.join("invalid.flac");
+    assert!(flac::convert_with_options(
+        &wav,
+        &output,
+        Limits::default(),
+        Backend::detect(),
+        flac::ConvertOptions {
+            fingerprint: true,
+            ..Default::default()
+        }
+    )
+    .is_err());
+    assert!(!output.exists());
+}

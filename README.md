@@ -71,7 +71,9 @@ target/release/audeniq-qc tags master.wv
 
 ## 정확도와 측정
 
-최신 [WAV/ALAC 변환·QC Arm/x86 7회 비교](docs/BENCHMARK-WAV-ALAC.md)는 변환과 QC를 따로 측정합니다. QC는 두 서버에서 더 빠르고 CPU·RSS가 작았으며, ALAC→FLAC은 CPU·RSS는 작지만 처리 시간은 FFmpeg보다 길었습니다. 원시 반복과 실제 CPU 식별자를 함께 공개합니다.
+최신 [자체 코덱·컨테이너 병목 개선 결과](docs/NATIVE-BOTTLENECKS.md)는 `b8918279`를 Neoverse N2와 EPYC 7763에서 검증했습니다. 같은 서버의 이전 자체 구현 대비 ALAC 디코딩 CPU는 각각 21.1%/19.2%, ALAC→FLAC은 8.5%/8.1%, 변환+QC는 7.0%/5.6% 감소했습니다. WAV 변환 CPU는 거의 같았습니다. 복사·버퍼 생성 감소, 제거한 느린 SIMD 후보, 남은 느린 경로와 전체 원시 반복을 함께 공개합니다. N2 측정은 Graviton4 실측을 대신하지 않습니다.
+
+[이전 WAV/ALAC 비교](docs/BENCHMARK-WAV-ALAC.md)는 당시 구현의 기록이며 최신 결과는 위 보고서를 기준으로 확인하세요.
 
 ```sh
 # FFmpeg는 아래 개발/검증 명령에서만 사용합니다.

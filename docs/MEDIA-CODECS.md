@@ -32,3 +32,21 @@ The LPC4/8 rolling-NEON candidate `83930cd0` passed all correctness checks, but 
 ALAC has no per-packet PCM checksum, so a structurally valid altered ALAC packet cannot always be identified as corrupted without an independent trusted content hash. Neither codec can infer the intended music from arbitrary valid replacement PCM. Conversion verifies preservation of the decoded source.
 
 Local initial validation passed the 596-check qualification, 288-check codec stress and 20 synthesized loudness/true-peak cases. Tests additionally exercise MSB cache boundaries, escaped ALAC extrema/every-byte truncation, malformed packets, FLAC predictor orders including 32/every-byte truncation and malformed atom lengths. This is not a full official EBU certification, a production music corpus, or a Graviton4 measurement. Performance results must identify their tested source/host; self-development alone is not proof of better speed.
+
+## Accepted native storage/prediction optimization
+
+Production `b8918279c97a5069ea8e479e6343b9ba3092901c` passed the final native ARM/x86 workflows.
+[NATIVE-BOTTLENECKS.md](NATIVE-BOTTLENECKS.md) records the exact removed work,
+paired previous-native results and native/reference/FFmpeg comparisons, with full
+[ARM](benchmark-native-streaming-arm.json) and [x86](benchmark-native-streaming-x86.json)
+raw reports. The accepted implementation borrows bounded M4A tables/contiguous
+ALAC packets/verified FLAC frames, fuses output traversal, recycles encoder residual
+storage, and specializes ALAC predictor orders 4/6/8 with exact integer loops.
+All slower explicit ALAC NEON predictor candidates were removed after real N2
+measurements. Existing measured encoder/QC/PCM SIMD remains.
+
+On the same host versus `ed72fab7`, ALAC decode/hash CPU decreased
+21.1% on N2 and 19.2% on EPYC 7763; verified ALAC conversion decreased 8.5% and
+8.1%; fused conversion+QC decreased 7.0% and 5.6%. WAV CPU is essentially unchanged.
+Main x86 results are Zen3; separate forced-order x86 validation used EPYC 9V74.
+These workload-specific results do not establish AWS Graviton4 performance.

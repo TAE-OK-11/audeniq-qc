@@ -1,0 +1,41 @@
+name: Native ALAC predictor dispatch comparison
+on:
+  push:
+    paths:
+      - src/alac.rs
+      - src/profile.rs
+      - tools/src/benchmark.rs
+      - tools/src/main.rs
+      - .github/workflows/alac-predictors.yml
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  compare:
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [ubuntu-24.04, ubuntu-24.04-arm]
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - name: Development oracle and time
+        run: |
+          rustc --version
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq ffmpeg time
+      - run: cargo build --workspace --release --locked
+      - run: cargo build --release --features profile-native --locked --target-dir profile-target
+      - name: Isolate order 4, 6 and 8 on the same host
+        run: |
+          target/release/audeniq-qc-tools benchmark-alac-predictors --seconds 240 --repeats 7 --output alac-predictors.json
+          target/release/audeniq-qc-tools ci-report
+      - name: Confirm actual decoded orders separately from timing
+        run: |
+          ffmpeg -nostdin -v error -f lavfi -i "aevalsrc=0.4*sin(2*PI*997*t)+0.05*sin(2*PI*13001*t)|0.3*sin(2*PI*437*t)+0.04*sin(2*PI*9011*t):s=48000:d=60" -c:a pcm_s24le order-master.wav
+          for order in 4 6 8; do
+            ffmpeg -nostdin -v error -i order-master.wav -c:a alac -min_prediction_order "$order" -max_prediction_order "$order" "order-$order.m4a"
+            profile-target/release/audeniq-qc pcm-hash "order-$order.m4a"
+            profile-target/release/audeniq-qc pcm-hash "order-$order.m4a" --scalar
+          done

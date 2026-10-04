@@ -33,6 +33,7 @@ fn entry() -> Result<()> {
                 "streaming-normalization-benchmark.json",
             ),
             ("streaming_review", "streaming-review-benchmark.json"),
+            ("alac_predictors", "alac-predictors.json"),
         ] {
             if !std::path::Path::new(path).exists() {
                 continue;
@@ -90,6 +91,7 @@ fn entry() -> Result<()> {
         "codec-stress" => stress::execute(&options)?,
         "benchmark" => benchmark::analysis(&options)?,
         "benchmark-decode" => benchmark::decoding(&options)?,
+        "benchmark-alac-predictors" => benchmark::alac_predictors(&options)?,
         "benchmark-convert" => benchmark::convert(&options)?,
         "benchmark-review" => {
             options.review = true;

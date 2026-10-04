@@ -94,13 +94,7 @@ fn predict(p: &mut [i32], bits: u32, coeff: &mut [i16], quant: u32, _backend: Ba
             }
             predict_order::<4>(p, bits, coeff, quant)
         }
-        6 => {
-            #[cfg(target_arch = "aarch64")]
-            if neon_history && _backend == Backend::Neon && _backend.available() {
-                return unsafe { predict_neon::<6>(p, bits, coeff, quant) };
-            }
-            predict_order::<6>(p, bits, coeff, quant)
-        }
+        6 => predict_order::<6>(p, bits, coeff, quant),
         8 => {
             #[cfg(target_arch = "aarch64")]
             if neon_history && _backend == Backend::Neon && _backend.available() {
@@ -393,23 +387,19 @@ unsafe fn adapt_neon(
 #[target_feature(enable = "neon")]
 unsafe fn predict_neon<const N: usize>(p: &mut [i32], bits: u32, coeff: &mut [i16], quant: u32) {
     use std::arch::aarch64::*;
-    assert!(matches!(N, 4 | 6 | 8) && coeff.len() == N && bits <= 25 && (1..=15).contains(&quant));
+    assert!(matches!(N, 4 | 8) && coeff.len() == N && bits <= 25 && (1..=15).contains(&quant));
     if p.len() <= N + 1 {
         return;
     }
     let mut c0 = vmovl_s16(vld1_s16(coeff.as_ptr()));
-    let mut tail_coefficients = [0i16; 4];
-    let mut tail_history = [0i32; 4];
-    let mut c1 = if N > 4 {
-        tail_coefficients[..N - 4].copy_from_slice(&coeff[4..]);
-        vmovl_s16(vld1_s16(tail_coefficients.as_ptr()))
+    let mut c1 = if N == 8 {
+        vmovl_s16(vld1_s16(coeff.as_ptr().add(4)))
     } else {
         vdupq_n_s32(0)
     };
     let mut h0 = vld1q_s32(p.as_ptr().add(1));
-    let mut h1 = if N > 4 {
-        tail_history[..N - 4].copy_from_slice(&p[5..N + 1]);
-        vld1q_s32(tail_history.as_ptr())
+    let mut h1 = if N == 8 {
+        vld1q_s32(p.as_ptr().add(5))
     } else {
         vdupq_n_s32(0)
     };
@@ -420,14 +410,9 @@ unsafe fn predict_neon<const N: usize>(p: &mut [i32], bits: u32, coeff: &mut [i1
     for residual in &mut p[N + 1..] {
         let error = *residual;
         let d0 = vsubq_s32(vdupq_n_s32(base), h0);
-        let mut d1 = vsubq_s32(vdupq_n_s32(base), h1);
-        if N == 6 {
-            // Padded lanes are not predictor taps and must not adapt.
-            d1 = vsetq_lane_s32::<2>(0, d1);
-            d1 = vsetq_lane_s32::<3>(0, d1);
-        }
+        let d1 = vsubq_s32(vdupq_n_s32(base), h1);
         let mut products = vmulq_s32(vnegq_s32(d0), c0);
-        if N > 4 {
+        if N == 8 {
             products = vaddq_s32(products, vmulq_s32(vnegq_s32(d1), c1));
         }
         let sum = vaddvq_s32(products);
@@ -438,7 +423,7 @@ unsafe fn predict_neon<const N: usize>(p: &mut [i32], bits: u32, coeff: &mut [i1
             let (updated, prior) =
                 adapt_neon(c0, d0, shifts, error < 0, error.unsigned_abs(), w0, 0);
             c0 = updated;
-            if N > 4 {
+            if N == 8 {
                 c1 = adapt_neon(c1, d1, shifts, error < 0, error.unsigned_abs(), w1, prior).0;
             }
         }
@@ -447,18 +432,13 @@ unsafe fn predict_neon<const N: usize>(p: &mut [i32], bits: u32, coeff: &mut [i1
         if N == 8 {
             h0 = vextq_s32::<1>(h0, h1);
             h1 = vextq_s32::<1>(h1, newest);
-        } else if N == 6 {
-            h0 = vextq_s32::<1>(h0, h1);
-            h1 = vextq_s32::<1>(h1, vdupq_n_s32(0));
-            h1 = vsetq_lane_s32::<1>(sample, h1);
         } else {
             h0 = vextq_s32::<1>(h0, newest);
         }
     }
     vst1_s16(coeff.as_mut_ptr(), vmovn_s32(c0));
-    if N > 4 {
-        vst1_s16(tail_coefficients.as_mut_ptr(), vmovn_s32(c1));
-        coeff[4..].copy_from_slice(&tail_coefficients[..N - 4]);
+    if N == 8 {
+        vst1_s16(coeff.as_mut_ptr().add(4), vmovn_s32(c1));
     }
 }
 
@@ -503,13 +483,13 @@ mod tests {
                                 .collect();
                             let mut expected = input.clone();
                             let mut expected_coeff = initial.clone();
-                            predict(
-                                &mut expected,
-                                bits,
-                                &mut expected_coeff,
-                                quant,
-                                Backend::Scalar,
-                            );
+                            if expected.len() > 1 {
+                                for i in 1..=order.min(expected.len() - 1) {
+                                    expected[i] =
+                                        extend(expected[i - 1].wrapping_add(expected[i]), bits);
+                                }
+                                predict_order::<0>(&mut expected, bits, &mut expected_coeff, quant);
+                            }
                             let mut actual = input;
                             let mut actual_coeff = initial;
                             predict(

@@ -37,7 +37,16 @@ work alone cannot materially fix this predictor cost.
 Predictor-order counters found all 5,626 calls in the measured local ALAC file
 used **order 6**, so the initial order-4/order-8 candidate did not accelerate it.
 The actual common order-6 scalar loop is now also a compile-time specialization.
-The ARM candidate retains order-4/order-6/order-8 predictor history and signed adaptive
+The order-6 NEON candidate was rejected after actual N2 measurements in
+workflow 37207867394 (`da4c1b57`): four-minute decode/hash consumed **0.55 CPU
+seconds with NEON versus 0.45 with the new specialized scalar order 6**. The
+old native predecessor needed 0.57 CPU seconds on that same host. Instrumented
+prediction alone was 267 ms with NEON versus 174 ms scalar. The prefix method
+does more work than scalar's early-exit adaptation on this fixture. Production
+order 6 now uses the faster compile-time scalar specialization, including when
+the other DSP kernels select NEON. Rejected raw reports are retained separately.
+
+The remaining ARM order-4/order-8 candidate retains predictor history and signed adaptive
 coefficients in NEON registers. Wrapped integer products reproduce ALAC's
 32-bit arithmetic. A weighted inclusive prefix mask replaces the sequential
 coefficient-update/early-exit loop. The optimization is restricted to <=25-bit
@@ -47,9 +56,11 @@ scalar code. No FMA or lossy arithmetic is used.
 Tests compare complete PCM **and final coefficients**, including extreme
 residuals, coefficient wrap, quantizers and short blocks. This is a separate
 candidate from the previously rejected FLAC 64-bit NEON LPC implementation.
-Order 6 uses two explicitly zero-masked padding lanes, bounded two-coefficient
-tail loads/stores and a six-sample rolling history; no four-lane read crosses
-the coefficient/sample slice. Differential tests include order 6.
+The rejected order-6 padding/history code has been removed. Differential tests
+include orders 4/6/8 against the original dynamic-order scalar loop. An additional
+`benchmark-alac-predictors` Rust command and short native ARM/x86 workflow force
+FFmpeg's min/max order to 4/6/8, confirm actual decoded orders with diagnostic
+counters, and isolate auto/scalar decode performance before accepting dispatch.
 
 ## Measurement and acceptance
 

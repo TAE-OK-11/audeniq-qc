@@ -167,13 +167,43 @@ fn metadata(options: &Options, seconds: u32, results: Vec<Value>) -> Result<Valu
 }
 /// Isolate decoding/hash from meter and encoder SIMD selection.
 pub fn decoding(options: &Options) -> Result<Value> {
+    decoding_cases(options, false)
+}
+pub fn alac_predictors(options: &Options) -> Result<Value> {
+    decoding_cases(options, true)
+}
+fn decoding_cases(options: &Options, fixed_alac_orders: bool) -> Result<Value> {
     let temp = Temp::new("benchmark-decode")?;
     let root = &temp.0;
     let seconds = options.seconds.unwrap_or(240);
     let wav = source(root, seconds)?;
     let mut results = Vec::new();
-    for (codec, ext) in [("pcm_s24le", "wav"), ("flac", "flac"), ("alac", "m4a")] {
-        let input = encoded(&wav, root, codec, ext)?;
+    let mut inputs = Vec::new();
+    if fixed_alac_orders {
+        for order in [4, 6, 8] {
+            let input = root.join(format!("alac-order-{order}.m4a"));
+            ff(&[
+                "-nostdin",
+                "-v",
+                "error",
+                "-i",
+                path(&wav),
+                "-c:a",
+                "alac",
+                "-min_prediction_order",
+                &order.to_string(),
+                "-max_prediction_order",
+                &order.to_string(),
+                path(&input),
+            ])?;
+            inputs.push(("alac", input, Some(order)));
+        }
+    } else {
+        for (codec, ext) in [("pcm_s24le", "wav"), ("flac", "flac"), ("alac", "m4a")] {
+            inputs.push((codec, encoded(&wav, root, codec, ext)?, None));
+        }
+    }
+    for (codec, input, requested_prediction_order) in inputs {
         let expected = oracle_hash(&input)?;
         let mut commands = BTreeMap::from([
             (
@@ -218,11 +248,15 @@ pub fn decoding(options: &Options) -> Result<Value> {
         }
         let median = medians(&runs);
         eprintln!("decode {codec}: {}", serde_json::to_string(&median)?);
-        results.push(json!({"codec":codec,"fixture_sha256":file_sha(&input)?,"pcm_sha256":expected,"commands":commands,"runs":runs,"median":median,"ffmpeg_div_native":ratios(&median)}));
+        results.push(json!({"codec":codec,"requested_prediction_order":requested_prediction_order,"fixture_sha256":file_sha(&input)?,"pcm_sha256":expected,"commands":commands,"runs":runs,"median":median,"ffmpeg_div_native":ratios(&median)}));
     }
     let mut report = metadata(options, seconds, results)?;
-    report["input_scope"] = json!("WAV/FLAC/ALAC");
-    report["comparison"]=json!("Decode and canonical interleaved s32le SHA-256 only; no meter, fingerprint or encoding. Native scalar selects generic DSP while crypto dispatch and PCM layout kernels remain active. FLAC LPC restoration remains scalar after rejecting its slower NEON candidate; bounded ALAC order-4/order-6/order-8 prediction can use NEON on ARM. Hash and exact frame count checked on every measured run. FLAC native/reference also verify PCM MD5; FFmpeg validates frames but is not claimed to perform the same whole-stream MD5 check.");
+    report["input_scope"] = json!(if fixed_alac_orders {
+        "ALAC with FFmpeg min/max prediction order fixed to 4, 6, 8; profile counters identify actual decoded orders"
+    } else {
+        "WAV/FLAC/ALAC"
+    });
+    report["comparison"]=json!("Decode and canonical interleaved s32le SHA-256 only; no meter, fingerprint or encoding. Native scalar selects generic DSP while crypto dispatch and PCM layout kernels remain active. FLAC LPC and ALAC order-6 restoration remain specialized scalar after rejecting slower NEON candidates; bounded ALAC order-4/order-8 prediction can use NEON on ARM. Hash and exact frame count checked on every measured run. FLAC native/reference also verify PCM MD5; FFmpeg validates frames but is not claimed to perform the same whole-stream MD5 check.");
     Ok(report)
 }
 pub fn analysis(options: &Options) -> Result<Value> {

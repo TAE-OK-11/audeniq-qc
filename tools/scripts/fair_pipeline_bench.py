@@ -219,23 +219,34 @@ def concurrency(args, engine, inputs, workers, workdir):
     peak = [0]
 
     def sampler():
+        # Sum VmRSS of every descendant: engines run under `time` (and FFmpeg
+        # pipelines under the harness thread), so direct children are not enough.
         me = os.getpid()
         while not stop.is_set():
-            total = 0
+            parent, rss = {}, {}
             for pid in os.listdir("/proc"):
                 if not pid.isdigit():
                     continue
                 try:
                     with open(f"/proc/{pid}/stat") as f:
-                        fields = f.read().rsplit(")", 1)[1].split()
-                    if int(fields[1]) != me:  # ppid
-                        continue
+                        parent[int(pid)] = int(f.read().rsplit(")", 1)[1].split()[1])
                     with open(f"/proc/{pid}/status") as f:
-                        for line in f:
-                            if line.startswith("VmRSS:"):
-                                total += int(line.split()[1])
+                        status = f.read()
+                    # The GNU time wrapper is measurement overhead, not engine.
+                    if status.startswith("Name:\ttime\n"):
+                        continue
+                    for line in status.splitlines():
+                        if line.startswith("VmRSS:"):
+                            rss[int(pid)] = int(line.split()[1])
                 except (OSError, IndexError, ValueError):
                     pass
+            total = 0
+            for pid, kib in rss.items():
+                p = parent.get(pid)
+                while p and p != me and p != 1:
+                    p = parent.get(p)
+                if p == me:
+                    total += kib
             peak[0] = max(peak[0], total)
             time.sleep(0.005)
 

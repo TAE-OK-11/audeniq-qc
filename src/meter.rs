@@ -9,10 +9,9 @@ use crate::{
     resample::{FingerprintTap, TruePeak, Window},
     AudioSpec, Error, Limits, Result,
 };
-use serde::Serialize;
 use std::{f64::consts::PI, path::Path};
 
-#[derive(Debug, Serialize)]
+#[derive(Debug)]
 pub struct Analysis {
     pub engine: &'static str,
     pub metric_version: &'static str,
@@ -33,9 +32,30 @@ pub struct Analysis {
     pub block_db: Vec<f32>,
     pub pcm_sha256: String,
     pub resampler_version: Option<&'static str>,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub fingerprint_windows: Option<Vec<Window>>,
 }
+crate::json_struct!(Analysis {
+    engine,
+    metric_version,
+    backend,
+    spec,
+    samples_per_channel,
+    duration_secs,
+    peak,
+    channel_peaks,
+    integrated_lufs,
+    true_peak_dbtp,
+    clip_events,
+    clipped_samples,
+    blocks,
+    silent_blocks,
+    longest_silent_run,
+    zero_crossing_rate,
+    block_db,
+    pcm_sha256,
+    resampler_version,
+    fingerprint_windows: skip_none,
+});
 
 struct KWeight {
     b: [f64; 5],

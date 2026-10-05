@@ -12,7 +12,6 @@ use crate::{
     kernels::{Backend, Dot64Kernel, LpcKernel, RiceKernel},
     AudioSpec, Error, Limits, Result,
 };
-use serde::Serialize;
 use std::{
     fs::{File, OpenOptions},
     io::{Seek, SeekFrom, Write},
@@ -49,7 +48,6 @@ impl Profile {
         })
     }
 }
-#[derive(Serialize)]
 pub struct Conversion {
     pub spec: AudioSpec,
     pub frames: u64,
@@ -57,9 +55,17 @@ pub struct Conversion {
     pub output_bytes: u64,
     pub encoder: &'static str,
     pub compression_level: Option<u8>,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub analysis: Option<crate::meter::Analysis>,
 }
+crate::json_struct!(Conversion {
+    spec,
+    frames,
+    pcm_sha256,
+    output_bytes,
+    encoder,
+    compression_level,
+    analysis: skip_none,
+});
 
 #[derive(Clone, Copy, Default)]
 pub struct ConvertOptions {

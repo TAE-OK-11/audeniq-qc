@@ -1,5 +1,5 @@
 use crate::common::*;
-use serde_json::{json, Value};
+use audeniq_qc::{json, json::Value};
 use std::{fs, path::Path};
 
 fn loudness(input: &Path) -> Result<(f64, f64)> {

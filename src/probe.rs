@@ -1,6 +1,6 @@
 //! Purpose-specific FFprobe replacement; audio JSON and JPEG/PNG cover checks.
 use crate::{audio::AudioReader, Error, Limits, Result};
-use serde_json::{json, Value};
+use crate::{json, json::Value};
 use std::{
     collections::BTreeMap,
     fs::File,

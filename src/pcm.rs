@@ -5,7 +5,6 @@ use crate::{
     kernels::Backend,
     AudioSpec, Error, Limits, Result,
 };
-use serde::Serialize;
 use std::{
     fs::{File, OpenOptions},
     io::{BufWriter, Read, Seek, SeekFrom, Write},
@@ -13,13 +12,12 @@ use std::{
     sync::atomic::{AtomicU64, Ordering},
 };
 
-#[derive(Clone, Copy, Debug, Serialize, PartialEq, Eq)]
-#[serde(rename_all = "lowercase")]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Format {
     Wav,
     S32le,
 }
-#[derive(Serialize)]
+crate::json_enum!(Format { Wav => "wav", S32le => "s32le" });
 pub struct Export {
     pub spec: AudioSpec,
     pub source_spec: AudioSpec,
@@ -28,6 +26,14 @@ pub struct Export {
     pub pcm_sha256: String,
     pub output_bytes: u64,
 }
+crate::json_struct!(Export {
+    spec,
+    source_spec,
+    format,
+    frames,
+    pcm_sha256,
+    output_bytes
+});
 struct Temp(PathBuf);
 impl Drop for Temp {
     fn drop(&mut self) {

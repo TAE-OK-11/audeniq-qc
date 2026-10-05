@@ -1,13 +1,13 @@
 //! Feature detection selects only kernels safe on the current machine.
 //! Zen3 uses AVX2 (not AVX512); AArch64 uses NEON. No global target-cpu flag.
-use serde::Serialize;
 
-#[derive(Clone, Copy, Debug, Serialize, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Backend {
     Scalar,
     Avx2,
     Neon,
 }
+crate::json_enum!(Backend { Scalar => "Scalar", Avx2 => "Avx2", Neon => "Neon" });
 impl Backend {
     pub fn detect() -> Self {
         #[cfg(target_arch = "x86_64")]

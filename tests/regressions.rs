@@ -274,8 +274,8 @@ fn standalone_fingerprint_matches_fused_tap() {
     let fallback =
         audeniq_qc::resample::fingerprint(&src, Limits::default(), Backend::detect()).unwrap();
     assert_eq!(
-        serde_json::to_value(fused.fingerprint_windows.unwrap()).unwrap(),
-        serde_json::to_value(fallback.fingerprint_windows).unwrap()
+        audeniq_qc::json::to_value(&fused.fingerprint_windows.unwrap()),
+        audeniq_qc::json::to_value(&fallback.fingerprint_windows)
     );
 }
 
@@ -303,8 +303,8 @@ fn fused_conversion_qc_and_fingerprint_match_separate_analysis() {
             )
             .unwrap();
             assert_eq!(
-                serde_json::to_value(&analysis).unwrap(),
-                serde_json::to_value(conversion.analysis.unwrap()).unwrap()
+                audeniq_qc::json::to_value(&analysis),
+                audeniq_qc::json::to_value(&conversion.analysis.unwrap())
             );
             assert_eq!(conversion.pcm_sha256, analysis.pcm_sha256);
             assert_eq!(

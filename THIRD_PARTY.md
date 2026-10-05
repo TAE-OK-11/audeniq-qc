@@ -17,13 +17,13 @@ Rust translations change storage, bounds handling, error propagation, work limit
 
 * Symphonia (MPL-2.0): **optional `reference-codecs` comparison build only**, FLAC/ALAC decoding and FLAC/M4A demuxing. Default builds do not link it. Reference implementations are existing Rust code, not claimed as our ports.
 * JPEG/PNG cover validation is implemented in this repository (`src/jpeg.rs`, `src/png.rs`, `src/inflate.rs`). It accepts and rejects the same files as image 0.24.9 (MIT, with jpeg-decoder 0.3.2 and png 0.17.16), which remains only as a dev-dependency test oracle.
-* serde/serde_json (MIT OR Apache-2.0): typed reports.
+* JSON reports and the tools' JSON reading use `src/json.rs`, implemented in this repository. Its output is byte-for-byte what serde 1.0.219 / serde_json 1.0.140 (MIT OR Apache-2.0) wrote, including ryu's shortest float digits (computed from Rust's own shortest `{:e}` formatting with ties resolved to even); serde_json remains only as a dev-dependency test oracle.
 * SHA-256 (canonical PCM hash; x86 SHA extensions, ARMv8 SHA2 or portable) and the required FLAC PCM MD5 (a format integrity field, not a security authenticator) are implemented in this repository (`src/sha256.rs`, FIPS 180-4; `src/md5.rs`, RFC 1321). RustCrypto sha2 and md-5 (MIT OR Apache-2.0) remain only as dev-dependency test oracles; the development tools crate uses the in-repository SHA-256, with FFmpeg as its independent hash oracle.
-* IEEE CRC-32 (TTA header/frame checks and the frame-copy round-trip check) is implemented in this repository (`src/crc32.rs`; carry-less-multiply folding after Gopal et al., Intel 2009, with AVX-512/AVX2 VPCLMULQDQ, PCLMULQDQ, AArch64 PMULL and slicing-by-8 paths). crc32fast (MIT OR Apache-2.0) remains a dev-dependency test oracle and a transitive dependency of the PNG stack.
+* IEEE CRC-32 (TTA header/frame checks and the frame-copy round-trip check) is implemented in this repository (`src/crc32.rs`; carry-less-multiply folding after Gopal et al., Intel 2009, with AVX-512/AVX2 VPCLMULQDQ, PCLMULQDQ, AArch64 PMULL and slicing-by-8 paths). crc32fast (MIT OR Apache-2.0) remains only as a dev-dependency test oracle.
 
 Cargo.lock pins transitive dependencies. Dependency sources/license notices remain available through crates.io. Linking into other applications requires complying with each applicable license; no claim is made that optimization removes copyleft obligations.
 
-`src/m4a.rs` and `src/msb.rs` are AUDENIQ-specific Rust implementations of the container tables and cached bounded bit reader, rather than copied Symphonia source. General JSON libraries remain in both builds; "native media codecs" does not mean zero third-party dependencies.
+`src/m4a.rs` and `src/msb.rs` are AUDENIQ-specific Rust implementations of the container tables and cached bounded bit reader, rather than copied Symphonia source. The default build has no third-party crates; the `reference-codecs` build adds Symphonia, and the Rust standard library still applies.
 
 ## libebur128 MIT notice
 

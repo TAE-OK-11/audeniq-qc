@@ -1,5 +1,5 @@
 use crate::common::*;
-use serde_json::{json, Value};
+use audeniq_qc::{json, json::Value};
 
 pub fn execute(options: &Options) -> Result<Value> {
     let temp = Temp::new("stress")?;

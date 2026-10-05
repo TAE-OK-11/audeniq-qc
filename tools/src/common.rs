@@ -1,5 +1,5 @@
+use audeniq_qc::json::Value;
 use audeniq_qc::Sha256;
-use serde_json::Value;
 use std::{
     io::{Read, Write},
     path::{Path, PathBuf},
@@ -111,14 +111,14 @@ pub fn native(binary: &Path, command: &str, paths: &[&Path], flags: &[&str]) -> 
     let mut args = strings(&[path(binary), command]);
     args.extend(paths.iter().map(|p| path(p).to_owned()));
     args.extend(strings(flags));
-    Ok(serde_json::from_slice(&run(&args)?.stdout)?)
+    Ok(audeniq_qc::json::from_slice(&run(&args)?.stdout)?)
 }
 pub fn rejected(binary: &Path, command: &str, paths: &[&Path]) -> Result<()> {
     let mut args = strings(&[path(binary), command]);
     args.extend(paths.iter().map(|p| path(p).to_owned()));
     let out = capture(&args)?;
     check(out.status.code() == Some(2), "rejection must exit 2")?;
-    let error: Value = serde_json::from_slice(&out.stderr)?;
+    let error: Value = audeniq_qc::json::from_slice(&out.stderr)?;
     check(
         matches!(
             error["error"].as_str(),

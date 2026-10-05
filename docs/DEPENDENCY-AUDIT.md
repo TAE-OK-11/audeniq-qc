@@ -18,7 +18,7 @@ claim of measured speedup from dependency removal. Backend integration is deferr
 | FLAC CRC8 / CRC16 | `bits.rs`: native tables, CRC16 slicing-by-eight | No |
 | SHA-256, MD5, IEEE CRC32 | `sha256.rs`, `md5.rs`, `crc32.rs` (in-repository since round four) | No |
 | JPEG / PNG cover decode | `jpeg.rs`, `png.rs`, `inflate.rs` (in-repository since round seven; image 0.24.9 kept as test oracle) | No |
-| JSON reports | serde / serde_json | Yes |
+| JSON reports | `json.rs` (in-repository since round eight; serde_json 1.0.140 kept as test oracle) | No |
 
 FLAC encoding calls no libFLAC, FFmpeg process or native codec FFI. ALAC,
 WavPack and TTA encoders are not implemented: they are input formats that can
@@ -32,7 +32,10 @@ two different external/native encoders.
 
 ## Remaining direct dependencies and candidates
 
-The default direct dependency list has six crates: serde, serde_json, sha2,
+Status after round eight: the default build has **no** third-party crates
+(`cargo tree --locked -e normal` lists only audeniq-qc and the tools crate);
+all of the following are now dev-dependency test oracles only. At the time of
+this audit the default direct dependency list had six crates: serde, serde_json, sha2,
 md-5, crc32fast and image. Cargo.lock also contains optional reference/build
 dependencies; presence in the lockfile does not establish runtime linkage.
 The successful default `cargo tree --locked -e normal` from the fresh x86 CI
@@ -46,7 +49,7 @@ Its proc-macro subtree is compile-time tooling, not a set of runtime parsers.
 | IEEE CRC32 | Done: `src/crc32.rs` (crc32fast 1.5.2 kept as test oracle; still linked through PNG) | AVX-512/AVX2 VPCLMUL, PCLMUL, AArch64 PMULL folding with tree lane reduction; slicing-by-8 fallback | Measured, see BENCHMARK-VERIFIED-PIPELINE.md round five |
 | PNG cover validation | Done: `src/png.rs` + `src/inflate.rs` | Chunks, CRC, zlib/DEFLATE and per-row filter checks with the previous decoder's exact acceptance; 32 KiB window, no image buffer | See BENCHMARK-VERIFIED-PIPELINE.md round seven |
 | JPEG cover validation | Done: `src/jpeg.rs` | Markers, tables and full Huffman decoding of baseline, progressive and lossless scans with the previous decoder's exact acceptance; coefficients kept only for progressive | See BENCHMARK-VERIFIED-PIPELINE.md round seven |
-| Fixed JSON output | serde 1.0.219 + serde_json 1.0.140 | Purpose-specific writer for fixed reports, correct escaping/finite number handling, stable API schema | Last for audio speed; serialization occurs outside sample processing |
+| Fixed JSON output | Done: `src/json.rs` | Direct writer for the fixed reports (byte-identical to serde_json, ryu float digits), `Value`, `json!` and a correctly rounded parser for the tools | See BENCHMARK-VERIFIED-PIPELINE.md round eight |
 
 These are existing Rust libraries. Internalization usually means taking only
 the required Rust implementation into the repository, retaining licenses and

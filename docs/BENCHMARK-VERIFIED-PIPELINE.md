@@ -514,6 +514,48 @@ The one slower case is a near-incompressible PNG at the 64 MiB input limit's
 scale: fdeflate's literal decoding is faster than this decoder's; typical
 covers are faster and no case uses more memory.
 
+## Round 8: in-repository JSON (`src/json.rs`)
+
+Reports are written by `src/json.rs` instead of serde 1.0.219 and
+serde_json 1.0.140; the default build now has **no third-party crates**
+(`cargo tree --locked -e normal` lists only the two workspace crates).
+Report types implement `ToJson` through `json_struct!` / `json_enum!`, which
+write fields in declaration order with the same `skip_serializing_if`
+rules, so no intermediate `Value` tree is built. A `Value` (sorted map, as
+serde_json's default), `json!` and a parser serve the probe output and the
+tools.
+
+The output format is serde_json's, byte for byte: escapes (`\"`, `\\`,
+`\n`-style and lowercase `\u00xx`), integers, `null` for non-finite floats,
+and ryu's float text. Float digits come from Rust's own shortest
+round-trip `{:e}`; where the exact value lies halfway between two shortest
+candidates (Rust rounds up, ryu to even) the tie is detected and resolved
+to even, and ryu's positional/exponent layout (f64 up to 1e16 and down to
+1e-5, f32 up to 1e13 and down to 1e-6) is applied.
+
+* Engine differential: 2,931 command outputs over the corpus, **0
+  differences**; qualify and codec-stress reports identical; mutation
+  fuzzing gives the previous binary's counts.
+* One improvement in the tools: the standards report read back an engine
+  float with serde_json, whose default float parser is not correctly
+  rounded (about 30% of shortest-digit floats come back 1 ULP off;
+  `3.0296717961197754` read as `3.029671796119775`). The new parser is
+  correctly rounded, so that report now shows the engine's exact value.
+* Unit tests compare against serde_json (dev-dependency oracle): 1M random
+  f64 and 1M random f32 plus edge values, strings, integers, `Value` trees
+  and parse round trips.
+
+Paired CPU, previous -> in-repository (median ratio, 95% CI): fingerprint
+(4.6 MB of JSON) -0.8% [-2.6, +1.2], `analyze --fingerprint` +1.0%
+[-6.1, +3.7], `analyze` +0.2% [-1.5, +1.5], `convert --analyze` +0.6%
+[-0.9, +2.7]: no measurable difference. The first version cost +3.9% on
+fingerprint and was fixed with a two-digit integer writer and a cheap
+tie pre-check that skips the exact expansion for almost every float.
+Float formatting alone is still about 3x slower than ryu (bounded by Rust's
+`{:e}`), which no current report has enough floats to show. A clean
+release build of the engine takes 6.2 s instead of 13.3 s (no proc-macro
+derive). [Raw](verified-pipeline/round8-json.txt).
+
 ## Remaining hotspots (after round 6), ranked by expected ROI
 
 1. **MD5 and SHA-256** (round 4): in-repository, fused into one pass, and

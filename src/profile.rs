@@ -86,7 +86,7 @@ impl Drop for Guard {
     }
 }
 #[cfg(feature = "profile-native")]
-pub fn report() -> serde_json::Value {
+pub fn report() -> crate::json::Value {
     use std::sync::atomic::Ordering::Relaxed;
     let names = [
         "m4a_open",
@@ -105,9 +105,16 @@ pub fn report() -> serde_json::Value {
         "output_verify",
         "frame_verify",
     ];
-    let stages: serde_json::Map<String, serde_json::Value> = names.iter().enumerate().map(|(i, &name)| {
-        (name.into(), serde_json::json!({"calls": CALLS[i].load(Relaxed), "wall_ns": NS[i].load(Relaxed)}))
-    }).collect();
+    let stages: crate::json::Map = names
+        .iter()
+        .enumerate()
+        .map(|(i, &name)| {
+            (
+                name.into(),
+                crate::json!({"calls": CALLS[i].load(Relaxed), "wall_ns": NS[i].load(Relaxed)}),
+            )
+        })
+        .collect();
     let names = [
         "packet_borrowed_bytes",
         "packet_copied_bytes",
@@ -117,21 +124,21 @@ pub fn report() -> serde_json::Value {
         "encoder_residual_fresh_buffers",
         "encoder_residual_reused_buffers",
     ];
-    let counters: serde_json::Map<String, serde_json::Value> = names
+    let counters: crate::json::Map = names
         .iter()
         .enumerate()
-        .map(|(i, &name)| (name.into(), serde_json::json!(COUNTERS[i].load(Relaxed))))
+        .map(|(i, &name)| (name.into(), crate::json!(COUNTERS[i].load(Relaxed))))
         .collect();
-    let orders: serde_json::Map<String, serde_json::Value> = (0..32)
+    let orders: crate::json::Map = (0..32)
         .filter_map(|order| {
             let calls = ALAC_ORDERS[order].load(Relaxed);
             (calls != 0).then(|| {
                 (
                     order.to_string(),
-                    serde_json::json!({"calls":calls,"samples":ALAC_SAMPLES[order].load(Relaxed)}),
+                    crate::json!({"calls":calls,"samples":ALAC_SAMPLES[order].load(Relaxed)}),
                 )
             })
         })
         .collect();
-    serde_json::json!({"kind":"inclusive wall time with profiling overhead; stages overlap, do not sum", "stages":stages,"counters":counters,"alac_predictor_orders":orders})
+    crate::json!({"kind":"inclusive wall time with profiling overhead; stages overlap, do not sum", "stages":stages,"counters":counters,"alac_predictor_orders":orders})
 }

@@ -1,10 +1,8 @@
 //! Windowed-sinc polyphase interpolation; no naive decimation/linear aliasing.
 //! New version: intentionally not bit-identical to libswresample's defaults.
 use crate::kernels::{Backend, DotKernel};
-use serde::Serialize;
 use std::f64::consts::PI;
 
-#[derive(Serialize)]
 pub struct FingerprintReport {
     pub engine: &'static str,
     pub resampler_version: &'static str,
@@ -12,6 +10,13 @@ pub struct FingerprintReport {
     pub frames: u64,
     pub fingerprint_windows: Vec<Window>,
 }
+crate::json_struct!(FingerprintReport {
+    engine,
+    resampler_version,
+    spec,
+    frames,
+    fingerprint_windows
+});
 
 /// Decode once with continuous filter state, retaining only fingerprint windows.
 /// The dedicated fallback avoids calculating unused loudness/structure metrics.
@@ -203,11 +208,15 @@ impl TruePeak {
     }
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug)]
 pub struct Window {
     pub start_secs: f64,
     pub samples: Vec<i16>,
 }
+crate::json_struct!(Window {
+    start_secs,
+    samples
+});
 /// 64-tap lowpass, 1024 phases; only the <=90 seconds needed for fingerprints
 /// are convolved/stored, while input state remains continuous across the file.
 pub struct FingerprintTap {

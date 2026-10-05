@@ -696,6 +696,76 @@ unsafe fn lpc_store_avx2<const N: usize>(
 }
 
 impl LpcKernel {
+    /// [`Self::partition_sums_into`] without keeping the residuals: they are
+    /// formed in 64-sample pieces on the stack, with the same arithmetic.
+    pub(crate) fn partition_sums(
+        &self,
+        samples: &[i32],
+        coefficients: &[i32],
+        shift: u32,
+        size: usize,
+        sums: &mut [u64],
+    ) -> bool {
+        assert!(shift <= 15 && size > coefficients.len());
+        assert!(sums.len() * size == samples.len());
+        assert!(coefficients.iter().all(|&c| (-16384..=16383).contains(&c)));
+        let narrow = fits_i32(samples, coefficients);
+        macro_rules! dispatch {
+            ($($n:literal)*) => {
+                match coefficients.len() {
+                    $($n => self.chunked_sums::<$n>(narrow, samples, coefficients, shift, size, sums),)*
+                    _ => unreachable!("unsupported LPC order"),
+                }
+            };
+        }
+        dispatch!(1 2 3 4 5 6 7 8)
+    }
+    fn chunked_sums<const N: usize>(
+        &self,
+        narrow: bool,
+        samples: &[i32],
+        coefficients: &[i32],
+        shift: u32,
+        size: usize,
+        sums: &mut [u64],
+    ) -> bool {
+        let mut piece = [0u32; 64];
+        let mut ok = true;
+        for (p, sum) in sums.iter_mut().enumerate() {
+            let end = (p + 1) * size;
+            let mut i = (p * size).max(N);
+            let mut total = 0u64;
+            while i < end {
+                let stop = end.min(i + piece.len());
+                let window = &samples[i - N..stop];
+                let out = &mut piece[..stop - i];
+                #[cfg(target_arch = "x86_64")]
+                if self.0 == Backend::Avx2 {
+                    // SAFETY: AVX2 selected at construction; the bodies are
+                    // safe Rust.
+                    unsafe {
+                        if narrow {
+                            lpc_store_narrow_avx2::<N>(window, coefficients, shift, out);
+                        } else {
+                            ok &= lpc_store_avx2::<N>(window, coefficients, shift, out);
+                        }
+                    }
+                    total += out.iter().map(|&v| v as u64).sum::<u64>();
+                    i = stop;
+                    continue;
+                }
+                if narrow {
+                    lpc_store_narrow::<N>(window, coefficients, shift, out);
+                } else {
+                    ok &= lpc_store::<N>(window, coefficients, shift, out);
+                }
+                total += out.iter().map(|&v| v as u64).sum::<u64>();
+                i = stop;
+            }
+            *sum = total;
+        }
+        ok
+    }
     /// Per-partition sums of folded LPC residuals, for ranking models.
     /// `sums[p]` covers samples `p * size..(p + 1) * size`, excluding the
     /// first `order` warm-up samples; the folded residuals of samples
@@ -1078,49 +1148,66 @@ mod tests {
     #[test]
     fn lpc_partition_sums_match_stored_residuals() {
         let mut seed = 1729u32;
-        let samples: Vec<i32> = (0..4608)
+        let base: Vec<i32> = (0..4608)
             .map(|i| {
                 seed = seed.wrapping_mul(1664525).wrapping_add(1013904223);
                 let tone = ((i as f64 * 0.02).sin() * 8_000_000.0) as i32;
                 tone + ((seed as i32) >> 12)
             })
             .collect();
-        for order in 1..=8 {
-            for shift in [0, 5, 15] {
-                for size in [18, 72, 4608] {
-                    let coefficients: Vec<i32> = (0..order)
-                        .map(|j| [16383, -16384, 9000, -1, 0, 77, -5000, 3][j])
-                        .collect();
-                    for backend in [Backend::Scalar, Backend::detect()] {
-                        let kernel = LpcKernel::new(backend);
-                        let mut residual = Vec::new();
-                        let stored = kernel
-                            .residual_into(&samples, &coefficients, shift, &mut residual)
-                            .is_some();
-                        // The partition variant agrees on the verdict and,
-                        // when valid, every stored residual and every sum.
-                        let mut sums = vec![u64::MAX; samples.len() / size];
-                        let mut into = vec![7u32; 3];
-                        let into_ok = kernel.partition_sums_into(
-                            &samples,
-                            &coefficients,
-                            shift,
-                            size,
-                            &mut sums,
-                            &mut into,
-                        );
-                        let ok = into_ok;
-                        assert_eq!(ok, stored, "order {order} shift {shift}");
-                        if ok {
-                            assert_eq!(into, residual);
-                        }
-                        if ok {
-                            for (p, &sum) in sums.iter().enumerate() {
-                                let start = (p * size).max(order) - order;
-                                let end = (p + 1) * size - order;
-                                let expected: u64 =
-                                    residual[start..end].iter().map(|&r| r as u64).sum();
-                                assert_eq!(sum, expected);
+        // Large samples take the i64 path; scaled down, the i32 one.
+        for divisor in [1, 4096] {
+            let samples: Vec<i32> = base.iter().map(|&x| x / divisor).collect();
+            for order in 1..=8 {
+                for shift in [0, 5, 15] {
+                    for size in [18, 72, 4608] {
+                        let coefficients: Vec<i32> = (0..order)
+                            .map(|j| [16383, -16384, 9000, -1, 0, 77, -5000, 3][j])
+                            .collect();
+                        for backend in [Backend::Scalar, Backend::detect()] {
+                            let kernel = LpcKernel::new(backend);
+                            let mut residual = Vec::new();
+                            let stored = kernel
+                                .residual_into(&samples, &coefficients, shift, &mut residual)
+                                .is_some();
+                            // The partition variant agrees on the verdict and,
+                            // when valid, every stored residual and every sum.
+                            let mut sums = vec![u64::MAX; samples.len() / size];
+                            let mut into = vec![7u32; 3];
+                            let into_ok = kernel.partition_sums_into(
+                                &samples,
+                                &coefficients,
+                                shift,
+                                size,
+                                &mut sums,
+                                &mut into,
+                            );
+                            let ok = into_ok;
+                            assert_eq!(ok, stored, "order {order} shift {shift}");
+                            if ok {
+                                assert_eq!(into, residual);
+                            }
+                            // The chunked variant gives the same verdict and sums.
+                            let mut chunked = vec![u64::MAX; samples.len() / size];
+                            let chunked_ok = kernel.partition_sums(
+                                &samples,
+                                &coefficients,
+                                shift,
+                                size,
+                                &mut chunked,
+                            );
+                            assert_eq!(chunked_ok, ok, "chunked order {order} shift {shift}");
+                            if ok {
+                                assert_eq!(chunked, sums);
+                            }
+                            if ok {
+                                for (p, &sum) in sums.iter().enumerate() {
+                                    let start = (p * size).max(order) - order;
+                                    let end = (p + 1) * size - order;
+                                    let expected: u64 =
+                                        residual[start..end].iter().map(|&r| r as u64).sum();
+                                    assert_eq!(sum, expected);
+                                }
                             }
                         }
                     }

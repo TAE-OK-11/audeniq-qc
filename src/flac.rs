@@ -4,6 +4,8 @@
 // Redesign: bounded 4096-frame work buffers; constant/fixed/verbatim choice;
 // exact Rice costs near an estimated parameter; adaptive independent/mid-side;
 // streaming MD5/PCM SHA256, verified output and atomic no-clobber publication.
+// Own planning kernels (bounded u32/i32 lanes, whole-block LPC residuals),
+// branch-free Rice writer and positional frame verification.
 #[cfg(feature = "reference-codecs")]
 use crate::audio::pcm_sha256;
 use crate::{
@@ -468,18 +470,18 @@ impl Encoder {
                 *m = (a + b) >> 1;
                 *d = a - b;
             }
-            let estimate = |x: &[i32]| {
-                if x.len() < 3 {
+            let estimate = |sum: u64| {
+                if n < 3 {
                     return 0;
                 }
-                let sum = fixed_sum(x, 2, 2, x.len());
-                rice_estimate(sum, x.len() as u64 - 2).1
+                rice_estimate(sum, n as u64 - 2).1
             };
+            let sums = second_order_sums([left, right, mid, side], depth + 1);
             let (l, r, m, d) = (
-                estimate(left),
-                estimate(right),
-                estimate(mid),
-                estimate(side),
+                estimate(sums[0]),
+                estimate(sums[1]),
+                estimate(sums[2]),
+                estimate(sums[3]),
             );
             let costs = [l + r, l + d, d + r, m + d];
             let best = (0..4).min_by_key(|&i| costs[i]).unwrap();
@@ -800,6 +802,41 @@ fn fixed_partition_sums(
     }
 }
 
+/// `fixed_sum(x, 2, 2, x.len())` for four equally long channels of at most
+/// `depth` bits, in one pass. Each folded second-order residual is below
+/// 2^(depth + 2), so runs of 2^(30 - depth) samples sum in u32 lanes.
+fn second_order_sums(x: [&[i32]; 4], depth: u32) -> [u64; 4] {
+    let n = x[0].len();
+    let mut totals = [0u64; 4];
+    if n < 3 {
+        return totals;
+    }
+    if depth > 22 {
+        for (total, x) in totals.iter_mut().zip(x) {
+            *total = fixed_sum(x, 2, 2, n);
+        }
+        return totals;
+    }
+    let run = 1usize << (30 - depth);
+    let mut start = 2;
+    while start < n {
+        let end = n.min(start + run);
+        for (total, x) in totals.iter_mut().zip(x) {
+            let mut sum = 0u32;
+            for ((&a, &b), &c) in x[start..end]
+                .iter()
+                .zip(&x[start - 1..end - 1])
+                .zip(&x[start - 2..end - 2])
+            {
+                sum += fold(a - 2 * b + c);
+            }
+            *total += sum as u64;
+        }
+        start = end;
+    }
+    totals
+}
+
 #[derive(Clone)]
 enum Mode {
     Constant,
@@ -1100,21 +1137,32 @@ impl Plan {
                 let mut residual = None;
                 // The first (highest) order keeps its residual for the writer;
                 // the others only need the sums.
-                let mut buffer = planner.residual();
-                let valid = ctx.lpc.partition_sums_into(
-                    samples,
-                    coefficients_used,
-                    shift,
-                    size,
-                    &mut planner.sums[..parts],
-                    &mut buffer,
-                );
-                if valid && !stored {
-                    stored = true;
-                    residual = Some(buffer);
+                let valid = if stored {
+                    ctx.lpc.partition_sums(
+                        samples,
+                        coefficients_used,
+                        shift,
+                        size,
+                        &mut planner.sums[..parts],
+                    )
                 } else {
-                    planner.recycle(buffer);
-                }
+                    stored = true;
+                    let mut buffer = planner.residual();
+                    let valid = ctx.lpc.partition_sums_into(
+                        samples,
+                        coefficients_used,
+                        shift,
+                        size,
+                        &mut planner.sums[..parts],
+                        &mut buffer,
+                    );
+                    if valid {
+                        residual = Some(buffer);
+                    } else {
+                        planner.recycle(buffer);
+                    }
+                    valid
+                };
                 if !valid {
                     continue;
                 }
@@ -1396,6 +1444,32 @@ mod tests {
                             assert_eq!(sum, fixed_sum(&x, order, start, (i + 1) * size));
                         }
                     }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn second_order_sums_equal_fixed_sums() {
+        let mut seed = 7u64;
+        for depth in [8u32, 16, 17, 20, 22, 24, 25] {
+            let max = (1i64 << (depth - 1)) - 1;
+            for n in [0usize, 1, 2, 3, 9, 4608, 20000] {
+                for pattern in 0..3 {
+                    let channels: Vec<Vec<i32>> = (0..4)
+                        .map(|c| {
+                            (0..n)
+                                .map(|i| match pattern {
+                                    0 => (rng(&mut seed) as i64 % (max + 1)) as i32,
+                                    1 => (if (i + c) % 2 == 0 { max } else { -max - 1 }) as i32,
+                                    _ => ((i as f64 * 0.01).sin() * max as f64) as i32,
+                                })
+                                .collect()
+                        })
+                        .collect();
+                    let x = [&channels[0][..], &channels[1], &channels[2], &channels[3]];
+                    let expected = x.map(|x| if n < 3 { 0 } else { fixed_sum(x, 2, 2, n) });
+                    assert_eq!(second_order_sums(x, depth), expected, "depth {depth} n {n}");
                 }
             }
         }

@@ -598,8 +598,65 @@ Measured and rejected this round: the register-window LPC without unrolling
 branchy rounding replacement (+13..16%, mispredicts), and a fixed-width JSON
 integer copy (slower). [Raw](verified-pipeline/round9-profile.txt).
 
-## Remaining hotspots (after round 9), ranked by expected ROI
+## Round 10: FLAC encoder, frame verification and ALAC decoder
 
+Conversion was profiled stage by stage (new `profile-native` encoder stages)
+and per source line. The encoder's planning still had the structure of its
+FFmpeg flacenc origin; it now uses its own kernels and data flow, and the
+frame verification uses a different method:
+
+| Stage (convert album44.wav) | Before | After | Design |
+| --- | ---: | ---: | --- |
+| Fixed predictors | 96 ms | 31 ms | Partition sums of all five orders accumulate in u32 lanes where the residual bound proves they fit; level 5 searches Rice partition orders up to 6 (was 8) |
+| LPC exact costing | 96 ms | 45 ms | Residuals of the whole block per candidate, in i32 lanes when sum\|c\| x max\|x\| < 2^30 (exact), else i64; the non-kept candidate in 64-sample stack pieces |
+| Levinson + sampled costs | 43 ms | 25 ms | Sample positions stepped without divisions; constant-order sample kernels |
+| Stereo estimate | 28 ms | 12 ms | One pass for the four second-order sums, u32 runs where bounded |
+| Rice parameter choice | 22 ms | 6 ms | Shifted sums in u32 lanes when the partition sum fits |
+| Rice writing | 58 ms | 34 ms | Output sized once from the exact bit count; each code ORed into a word that is stored as 8 bytes unconditionally (two codes per store), byte-granular advance, BMI2 shifts; long zero runs are skipped in the zeroed buffer |
+| Frame verification | 109 ms | 68 ms | Instead of decoding each Rice code after the previous one, the expected residuals are derived from the source with the decoder's arithmetic, every code's position follows from them, and the bits at each position are compared (pairs of codes per load). A decoder reading those bits takes the same codes at the same places, so acceptance is unchanged |
+| Encoder total | 511 ms | 277 ms | |
+
+Encoded bytes are unchanged except through the partition order cap: on the
+55-file corpus (300.07 MB of FLAC) it changed 4 files by 292 bytes in
+total; levels 3-4 got slightly smaller. Decision changes that saved more
+CPU but cost compression were measured and rejected: choosing the fixed
+order by a whole-block estimate (+36 KB, up to +2.0% on single tracks),
+ranking LPC orders by the Levinson error (+2.0%), and skipping the exact
+cost of the lower order when sampling ranks it worse (+7.5 KB).
+
+The ALAC decoder was analysed the same way (predictor 394 ms, Rice 158 ms
+for album44.m4a). Order 5, 22% of the samples, ran the generic predictor
+loop; it now has a constant-order loop (predictor 394 -> 355 ms). The
+predictor's coefficient adaptation stops at an unpredictable point
+(coefficients updated per sample spread evenly over 1..6), and three
+branch-free formulations with identical output were measured slower (439 to
+566 ms): the misprediction costs less than evaluating every coefficient.
+ALAC Rice decoding is at the latency of its adaptive parameter chain.
+
+Paired CPU, previous -> this round (median ratio, 95% CI):
+
+| Command | Input | Change |
+| --- | --- | --- |
+| `convert` | album44.wav / album48.wav / album192.wav | -27.3% [-33.1, -24.0] / -23.0% [-27.1, -18.7] / -15.8% [-26.3, -5.7] |
+| `convert` | album44.m4a | -18.2% [-23.4, -6.3] |
+| `convert --analyze` | album44.wav / album44.m4a | -24.4% [-37.0, -21.2] / -15.4% [-21.8, -12.1] |
+| `convert --compression-level 5` | album44.flac | -22.0% [-26.4, -21.0] |
+| `pcm-hash` | album44.m4a / album44.flac | -1.3% / -2.6% (noise) |
+
+All decode, analyze, fingerprint and hash outputs are identical; converted
+files decode to the same PCM; qualify, codec-stress and standards reports and
+the mutation-fuzz counts are identical; peak RSS is unchanged within
+run-to-run variation. New tests cover the i32 LPC residual path against the
+i64 definition, the chunked partition sums, the bounded stereo sums, and the
+branch-free Rice writer against per-code writes (all offsets, k = 0..30,
+long quotients); the existing bit-flip differential test covers the new
+verification. [Raw](verified-pipeline/round10-codec.txt).
+
+## Remaining hotspots (after round 10), ranked by expected ROI
+
+0. **Conversion after round 10**: the fused MD5/SHA-256 pass is now the
+   largest single item of WAV -> FLAC (about a quarter), bound by MD5's
+   serial chain; ALAC input is dominated by the adaptive predictor (below).
 1. **MD5 and SHA-256** (round 4): in-repository, fused into one pass, and
    near the per-step latency floor (MD5 about 4.5 cycles per step; SHA-NI
    bound by its `sha256rnds2` chain). No further lever without changing the
@@ -610,7 +667,7 @@ integer copy (slower). [Raw](verified-pipeline/round9-profile.txt).
 3. **Exact LPC costing** (~8% after round 3): fused pair costing measured
    slower; winning-residual reuse accepted in round 3.
 4. **ALAC adaptive predictor** (~35% of ALAC input): branch-mispredict bound;
-   six designs measured and rejected.
+   six designs measured and rejected, three more branch-free ones in round 10.
 5. **QC meter** (round 6): near the K-weighting recursion's latency floor
    (about 20 cycles per frame); shortening it would change the operation
    order and therefore the reported bits. True peak is mostly skipped.

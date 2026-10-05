@@ -117,6 +117,7 @@ fn predict(p: &mut [i32], bits: u32, coeff: &mut [i16], quant: u32) {
     }
     match order {
         4 => predict_order::<4>(p, bits, coeff, quant),
+        5 => predict_order::<5>(p, bits, coeff, quant),
         6 => predict_order::<6>(p, bits, coeff, quant),
         8 => predict_order::<8>(p, bits, coeff, quant),
         _ => predict_order::<0>(p, bits, coeff, quant),

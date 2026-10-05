@@ -1,0 +1,1407 @@
+{
+ "ffmpeg_version": "ffmpeg version n8.1.2 Copyright (c) 2000-2026 the FFmpeg developers",
+ "qc": false,
+ "repeats": 7,
+ "binaries": {
+  "native": "e32e07bdf2d83f5c798963c9a5525e257767d7f914a2b357d76ca15526056af4",
+  "baseline": "d899748a8d5e2cd5d333d350a2f9f5e086b061a07b88a37f4758585c92d66ed0"
+ },
+ "cpu": "\t: Intel(R) Xeon(R) Processor @ 2.10GHz",
+ "nproc": 4,
+ "results": [
+  {
+   "input": "album44.wav",
+   "codec": "pcm_s16le",
+   "sample_rate": 44100,
+   "channels": 2,
+   "bits": 16,
+   "duration": 205.35254,
+   "pcm_bytes": 36224188,
+   "pcm_sha256": "c627ffe8ff4db21c156e4092d9f5bcd0719ea2dc2466e579f50f99026e990f81",
+   "flac_bytes": {
+    "native": 17084652,
+    "baseline": 17084652,
+    "ffmpeg": 17144474
+   },
+   "flac_ratio": {
+    "native": 0.4716365760910914,
+    "baseline": 0.4716365760910914,
+    "ffmpeg": 0.4732880140750153
+   },
+   "median": {
+    "native": {
+     "cpu": 0.5476719999999999,
+     "wall": 0.5781759779999902,
+     "rss_kib": 3876,
+     "cpu_per_audio_s": 0.0026669842992933027
+    },
+    "baseline": {
+     "cpu": 0.587189,
+     "wall": 0.6200627210000675,
+     "rss_kib": 3800,
+     "cpu_per_audio_s": 0.002859419221208561
+    },
+    "ffmpeg": {
+     "cpu": 1.6976369999999998,
+     "wall": 0.8479317149999588,
+     "rss_kib": 18840,
+     "cpu_per_audio_s": 0.008266939381416951
+    }
+   },
+   "runs": {
+    "native": [
+     {
+      "cpu": 0.538787,
+      "wall": 0.5696976990000167,
+      "rss_kib": 3888,
+      "pcm_sha256": "c627ffe8ff4db21c156e4092d9f5bcd0719ea2dc2466e579f50f99026e990f81"
+     },
+     {
+      "cpu": 0.521271,
+      "wall": 0.5475483130001066,
+      "rss_kib": 3876,
+      "pcm_sha256": "c627ffe8ff4db21c156e4092d9f5bcd0719ea2dc2466e579f50f99026e990f81"
+     },
+     {
+      "cpu": 0.5573589999999999,
+      "wall": 0.5891530700000658,
+      "rss_kib": 3836,
+      "pcm_sha256": "c627ffe8ff4db21c156e4092d9f5bcd0719ea2dc2466e579f50f99026e990f81"
+     },
+     {
+      "cpu": 0.5476719999999999,
+      "wall": 0.581797571999914,
+      "rss_kib": 3888,
+      "pcm_sha256": "c627ffe8ff4db21c156e4092d9f5bcd0719ea2dc2466e579f50f99026e990f81"
+     },
+     {
+      "cpu": 0.548588,
+      "wall": 0.575606617999938,
+      "rss_kib": 3788,
+      "pcm_sha256": "c627ffe8ff4db21c156e4092d9f5bcd0719ea2dc2466e579f50f99026e990f81"
+     },
+     {
+      "cpu": 0.709725,
+      "wall": 0.7530395939998016,
+      "rss_kib": 3932,
+      "pcm_sha256": "c627ffe8ff4db21c156e4092d9f5bcd0719ea2dc2466e579f50f99026e990f81"
+     },
+     {
+      "cpu": 0.5453,
+      "wall": 0.5781759779999902,
+      "rss_kib": 3812,
+      "pcm_sha256": "c627ffe8ff4db21c156e4092d9f5bcd0719ea2dc2466e579f50f99026e990f81"
+     }
+    ],
+    "baseline": [
+     {
+      "cpu": 0.623641,
+      "wall": 0.6690711349999674,
+      "rss_kib": 3688,
+      "pcm_sha256": "c627ffe8ff4db21c156e4092d9f5bcd0719ea2dc2466e579f50f99026e990f81"
+     },
+     {
+      "cpu": 0.5686640000000001,
+      "wall": 0.6110142359998463,
+      "rss_kib": 3832,
+      "pcm_sha256": "c627ffe8ff4db21c156e4092d9f5bcd0719ea2dc2466e579f50f99026e990f81"
+     },
+     {
+      "cpu": 0.5954539999999999,
+      "wall": 0.6285579439997946,
+      "rss_kib": 3800,
+      "pcm_sha256": "c627ffe8ff4db21c156e4092d9f5bcd0719ea2dc2466e579f50f99026e990f81"
+     },
+     {
+      "cpu": 0.587189,
+      "wall": 0.6200627210000675,
+      "rss_kib": 3812,
+      "pcm_sha256": "c627ffe8ff4db21c156e4092d9f5bcd0719ea2dc2466e579f50f99026e990f81"
+     },
+     {
+      "cpu": 0.6275879999999999,
+      "wall": 0.6725710960001834,
+      "rss_kib": 3624,
+      "pcm_sha256": "c627ffe8ff4db21c156e4092d9f5bcd0719ea2dc2466e579f50f99026e990f81"
+     },
+     {
+      "cpu": 0.566303,
+      "wall": 0.6016151950000221,
+      "rss_kib": 3784,
+      "pcm_sha256": "c627ffe8ff4db21c156e4092d9f5bcd0719ea2dc2466e579f50f99026e990f81"
+     },
+     {
+      "cpu": 0.546703,
+      "wall": 0.5771486950000053,
+      "rss_kib": 3880,
+      "pcm_sha256": "c627ffe8ff4db21c156e4092d9f5bcd0719ea2dc2466e579f50f99026e990f81"
+     }
+    ],
+    "ffmpeg": [
+     {
+      "cpu": 1.7281270000000002,
+      "wall": 0.8665549279999141,
+      "rss_kib": 19344,
+      "pcm_sha256": "c627ffe8ff4db21c156e4092d9f5bcd0719ea2dc2466e579f50f99026e990f81"
+     },
+     {
+      "cpu": 1.8446399999999998,
+      "wall": 0.9818170899998222,
+      "rss_kib": 19168,
+      "pcm_sha256": "c627ffe8ff4db21c156e4092d9f5bcd0719ea2dc2466e579f50f99026e990f81"
+     },
+     {
+      "cpu": 1.744259,
+      "wall": 0.8670805480001036,
+      "rss_kib": 19060,
+      "pcm_sha256": "c627ffe8ff4db21c156e4092d9f5bcd0719ea2dc2466e579f50f99026e990f81"
+     },
+     {
+      "cpu": 1.518865,
+      "wall": 0.7545081749999554,
+      "rss_kib": 18840,
+      "pcm_sha256": "c627ffe8ff4db21c156e4092d9f5bcd0719ea2dc2466e579f50f99026e990f81"
+     },
+     {
+      "cpu": 1.514565,
+      "wall": 0.7274101640000481,
+      "rss_kib": 18612,
+      "pcm_sha256": "c627ffe8ff4db21c156e4092d9f5bcd0719ea2dc2466e579f50f99026e990f81"
+     },
+     {
+      "cpu": 1.6976369999999998,
+      "wall": 0.8479317149999588,
+      "rss_kib": 18716,
+      "pcm_sha256": "c627ffe8ff4db21c156e4092d9f5bcd0719ea2dc2466e579f50f99026e990f81"
+     },
+     {
+      "cpu": 1.516861,
+      "wall": 0.7387844859999859,
+      "rss_kib": 18700,
+      "pcm_sha256": "c627ffe8ff4db21c156e4092d9f5bcd0719ea2dc2466e579f50f99026e990f81"
+     }
+    ]
+   }
+  },
+  {
+   "input": "album44.m4a",
+   "codec": "alac",
+   "sample_rate": 44100,
+   "channels": 2,
+   "bits": 16,
+   "duration": 205.35254,
+   "pcm_bytes": 36224188,
+   "pcm_sha256": "c627ffe8ff4db21c156e4092d9f5bcd0719ea2dc2466e579f50f99026e990f81",
+   "flac_bytes": {
+    "native": 17084652,
+    "baseline": 17084652,
+    "ffmpeg": 17144474
+   },
+   "flac_ratio": {
+    "native": 0.4716365760910914,
+    "baseline": 0.4716365760910914,
+    "ffmpeg": 0.4732880140750153
+   },
+   "median": {
+    "native": {
+     "cpu": 1.023225,
+     "wall": 1.0728527310000118,
+     "rss_kib": 3860,
+     "cpu_per_audio_s": 0.004982772552995935
+    },
+    "baseline": {
+     "cpu": 1.084446,
+     "wall": 1.1239469130000543,
+     "rss_kib": 3704,
+     "cpu_per_audio_s": 0.005280898887347583
+    },
+    "ffmpeg": {
+     "cpu": 2.1959049999999998,
+     "wall": 1.085267821999878,
+     "rss_kib": 18388,
+     "cpu_per_audio_s": 0.010693342288339847
+    }
+   },
+   "runs": {
+    "native": [
+     {
+      "cpu": 0.998705,
+      "wall": 1.0316771069999504,
+      "rss_kib": 3856,
+      "pcm_sha256": "c627ffe8ff4db21c156e4092d9f5bcd0719ea2dc2466e579f50f99026e990f81"
+     },
+     {
+      "cpu": 1.016338,
+      "wall": 1.05426278799996,
+      "rss_kib": 3916,
+      "pcm_sha256": "c627ffe8ff4db21c156e4092d9f5bcd0719ea2dc2466e579f50f99026e990f81"
+     },
+     {
+      "cpu": 1.058754,
+      "wall": 1.103105689999893,
+      "rss_kib": 3860,
+      "pcm_sha256": "c627ffe8ff4db21c156e4092d9f5bcd0719ea2dc2466e579f50f99026e990f81"
+     },
+     {
+      "cpu": 1.023225,
+      "wall": 1.0728527310000118,
+      "rss_kib": 3816,
+      "pcm_sha256": "c627ffe8ff4db21c156e4092d9f5bcd0719ea2dc2466e579f50f99026e990f81"
+     },
+     {
+      "cpu": 0.995947,
+      "wall": 1.0385840230001122,
+      "rss_kib": 3916,
+      "pcm_sha256": "c627ffe8ff4db21c156e4092d9f5bcd0719ea2dc2466e579f50f99026e990f81"
+     },
+     {
+      "cpu": 1.0721019999999999,
+      "wall": 1.110344753000163,
+      "rss_kib": 3868,
+      "pcm_sha256": "c627ffe8ff4db21c156e4092d9f5bcd0719ea2dc2466e579f50f99026e990f81"
+     },
+     {
+      "cpu": 1.024155,
+      "wall": 1.0867337350000525,
+      "rss_kib": 3848,
+      "pcm_sha256": "c627ffe8ff4db21c156e4092d9f5bcd0719ea2dc2466e579f50f99026e990f81"
+     }
+    ],
+    "baseline": [
+     {
+      "cpu": 1.17238,
+      "wall": 1.2089024839999638,
+      "rss_kib": 3632,
+      "pcm_sha256": "c627ffe8ff4db21c156e4092d9f5bcd0719ea2dc2466e579f50f99026e990f81"
+     },
+     {
+      "cpu": 1.142749,
+      "wall": 1.2035539060000247,
+      "rss_kib": 3668,
+      "pcm_sha256": "c627ffe8ff4db21c156e4092d9f5bcd0719ea2dc2466e579f50f99026e990f81"
+     },
+     {
+      "cpu": 1.084446,
+      "wall": 1.1239469130000543,
+      "rss_kib": 3704,
+      "pcm_sha256": "c627ffe8ff4db21c156e4092d9f5bcd0719ea2dc2466e579f50f99026e990f81"
+     },
+     {
+      "cpu": 1.043938,
+      "wall": 1.0807111789999908,
+      "rss_kib": 3740,
+      "pcm_sha256": "c627ffe8ff4db21c156e4092d9f5bcd0719ea2dc2466e579f50f99026e990f81"
+     },
+     {
+      "cpu": 1.23416,
+      "wall": 1.2800256560001344,
+      "rss_kib": 3604,
+      "pcm_sha256": "c627ffe8ff4db21c156e4092d9f5bcd0719ea2dc2466e579f50f99026e990f81"
+     },
+     {
+      "cpu": 1.0502589999999998,
+      "wall": 1.102176573999941,
+      "rss_kib": 3748,
+      "pcm_sha256": "c627ffe8ff4db21c156e4092d9f5bcd0719ea2dc2466e579f50f99026e990f81"
+     },
+     {
+      "cpu": 1.047124,
+      "wall": 1.0780001030000221,
+      "rss_kib": 3764,
+      "pcm_sha256": "c627ffe8ff4db21c156e4092d9f5bcd0719ea2dc2466e579f50f99026e990f81"
+     }
+    ],
+    "ffmpeg": [
+     {
+      "cpu": 2.271542,
+      "wall": 1.0881244859999697,
+      "rss_kib": 18380,
+      "pcm_sha256": "c627ffe8ff4db21c156e4092d9f5bcd0719ea2dc2466e579f50f99026e990f81"
+     },
+     {
+      "cpu": 2.1959049999999998,
+      "wall": 1.0711984289998782,
+      "rss_kib": 18388,
+      "pcm_sha256": "c627ffe8ff4db21c156e4092d9f5bcd0719ea2dc2466e579f50f99026e990f81"
+     },
+     {
+      "cpu": 2.241558,
+      "wall": 1.0959188730000733,
+      "rss_kib": 18660,
+      "pcm_sha256": "c627ffe8ff4db21c156e4092d9f5bcd0719ea2dc2466e579f50f99026e990f81"
+     },
+     {
+      "cpu": 2.15134,
+      "wall": 1.0667332060002082,
+      "rss_kib": 18408,
+      "pcm_sha256": "c627ffe8ff4db21c156e4092d9f5bcd0719ea2dc2466e579f50f99026e990f81"
+     },
+     {
+      "cpu": 2.129655,
+      "wall": 1.0557571580000058,
+      "rss_kib": 18320,
+      "pcm_sha256": "c627ffe8ff4db21c156e4092d9f5bcd0719ea2dc2466e579f50f99026e990f81"
+     },
+     {
+      "cpu": 2.303543,
+      "wall": 1.131070803000057,
+      "rss_kib": 18700,
+      "pcm_sha256": "c627ffe8ff4db21c156e4092d9f5bcd0719ea2dc2466e579f50f99026e990f81"
+     },
+     {
+      "cpu": 2.1783909999999995,
+      "wall": 1.085267821999878,
+      "rss_kib": 18248,
+      "pcm_sha256": "c627ffe8ff4db21c156e4092d9f5bcd0719ea2dc2466e579f50f99026e990f81"
+     }
+    ]
+   }
+  },
+  {
+   "input": "album44.flac",
+   "codec": "flac",
+   "sample_rate": 44100,
+   "channels": 2,
+   "bits": 16,
+   "duration": 205.35254,
+   "pcm_bytes": 36224188,
+   "pcm_sha256": "c627ffe8ff4db21c156e4092d9f5bcd0719ea2dc2466e579f50f99026e990f81",
+   "flac_bytes": {
+    "native": 17084652,
+    "baseline": 17084652,
+    "ffmpeg": 17144474
+   },
+   "flac_ratio": {
+    "native": 0.4716365760910914,
+    "baseline": 0.4716365760910914,
+    "ffmpeg": 0.4732880140750153
+   },
+   "median": {
+    "native": {
+     "cpu": 0.710427,
+     "wall": 0.7476829760000783,
+     "rss_kib": 4016,
+     "cpu_per_audio_s": 0.003459548150707072
+    },
+    "baseline": {
+     "cpu": 0.825359,
+     "wall": 0.8604569330000231,
+     "rss_kib": 3988,
+     "cpu_per_audio_s": 0.0040192295649228394
+    },
+    "ffmpeg": {
+     "cpu": 1.7609229999999998,
+     "wall": 0.7638380769999458,
+     "rss_kib": 18804,
+     "cpu_per_audio_s": 0.008575121593334076
+    }
+   },
+   "runs": {
+    "native": [
+     {
+      "cpu": 0.747673,
+      "wall": 0.7812133170000379,
+      "rss_kib": 3844,
+      "pcm_sha256": "c627ffe8ff4db21c156e4092d9f5bcd0719ea2dc2466e579f50f99026e990f81"
+     },
+     {
+      "cpu": 0.6903039999999999,
+      "wall": 0.7158866900001613,
+      "rss_kib": 3972,
+      "pcm_sha256": "c627ffe8ff4db21c156e4092d9f5bcd0719ea2dc2466e579f50f99026e990f81"
+     },
+     {
+      "cpu": 0.6933239999999999,
+      "wall": 0.7301169610000215,
+      "rss_kib": 4064,
+      "pcm_sha256": "c627ffe8ff4db21c156e4092d9f5bcd0719ea2dc2466e579f50f99026e990f81"
+     },
+     {
+      "cpu": 0.8095439999999999,
+      "wall": 0.8520543770000586,
+      "rss_kib": 4056,
+      "pcm_sha256": "c627ffe8ff4db21c156e4092d9f5bcd0719ea2dc2466e579f50f99026e990f81"
+     },
+     {
+      "cpu": 0.774374,
+      "wall": 0.811916814000142,
+      "rss_kib": 4016,
+      "pcm_sha256": "c627ffe8ff4db21c156e4092d9f5bcd0719ea2dc2466e579f50f99026e990f81"
+     },
+     {
+      "cpu": 0.7075469999999999,
+      "wall": 0.7420573490001061,
+      "rss_kib": 4056,
+      "pcm_sha256": "c627ffe8ff4db21c156e4092d9f5bcd0719ea2dc2466e579f50f99026e990f81"
+     },
+     {
+      "cpu": 0.710427,
+      "wall": 0.7476829760000783,
+      "rss_kib": 3932,
+      "pcm_sha256": "c627ffe8ff4db21c156e4092d9f5bcd0719ea2dc2466e579f50f99026e990f81"
+     }
+    ],
+    "baseline": [
+     {
+      "cpu": 0.825359,
+      "wall": 0.853285120999999,
+      "rss_kib": 3988,
+      "pcm_sha256": "c627ffe8ff4db21c156e4092d9f5bcd0719ea2dc2466e579f50f99026e990f81"
+     },
+     {
+      "cpu": 0.828419,
+      "wall": 0.8657777859998532,
+      "rss_kib": 4000,
+      "pcm_sha256": "c627ffe8ff4db21c156e4092d9f5bcd0719ea2dc2466e579f50f99026e990f81"
+     },
+     {
+      "cpu": 0.83707,
+      "wall": 0.871705208000094,
+      "rss_kib": 3988,
+      "pcm_sha256": "c627ffe8ff4db21c156e4092d9f5bcd0719ea2dc2466e579f50f99026e990f81"
+     },
+     {
+      "cpu": 0.8246549999999999,
+      "wall": 0.8604569330000231,
+      "rss_kib": 3956,
+      "pcm_sha256": "c627ffe8ff4db21c156e4092d9f5bcd0719ea2dc2466e579f50f99026e990f81"
+     },
+     {
+      "cpu": 0.800295,
+      "wall": 0.8394923690000269,
+      "rss_kib": 3748,
+      "pcm_sha256": "c627ffe8ff4db21c156e4092d9f5bcd0719ea2dc2466e579f50f99026e990f81"
+     },
+     {
+      "cpu": 0.8092239999999999,
+      "wall": 0.8538414940001076,
+      "rss_kib": 3764,
+      "pcm_sha256": "c627ffe8ff4db21c156e4092d9f5bcd0719ea2dc2466e579f50f99026e990f81"
+     },
+     {
+      "cpu": 0.870298,
+      "wall": 0.9257623200001035,
+      "rss_kib": 4000,
+      "pcm_sha256": "c627ffe8ff4db21c156e4092d9f5bcd0719ea2dc2466e579f50f99026e990f81"
+     }
+    ],
+    "ffmpeg": [
+     {
+      "cpu": 1.6717939999999998,
+      "wall": 0.6977537119998942,
+      "rss_kib": 18356,
+      "pcm_sha256": "c627ffe8ff4db21c156e4092d9f5bcd0719ea2dc2466e579f50f99026e990f81"
+     },
+     {
+      "cpu": 1.7609229999999998,
+      "wall": 0.7638380769999458,
+      "rss_kib": 18224,
+      "pcm_sha256": "c627ffe8ff4db21c156e4092d9f5bcd0719ea2dc2466e579f50f99026e990f81"
+     },
+     {
+      "cpu": 1.902165,
+      "wall": 0.8172217000001183,
+      "rss_kib": 18804,
+      "pcm_sha256": "c627ffe8ff4db21c156e4092d9f5bcd0719ea2dc2466e579f50f99026e990f81"
+     },
+     {
+      "cpu": 1.775424,
+      "wall": 0.7728528079999251,
+      "rss_kib": 18296,
+      "pcm_sha256": "c627ffe8ff4db21c156e4092d9f5bcd0719ea2dc2466e579f50f99026e990f81"
+     },
+     {
+      "cpu": 1.5861990000000001,
+      "wall": 0.6510561630000211,
+      "rss_kib": 18860,
+      "pcm_sha256": "c627ffe8ff4db21c156e4092d9f5bcd0719ea2dc2466e579f50f99026e990f81"
+     },
+     {
+      "cpu": 1.658398,
+      "wall": 0.7009859510001206,
+      "rss_kib": 18864,
+      "pcm_sha256": "c627ffe8ff4db21c156e4092d9f5bcd0719ea2dc2466e579f50f99026e990f81"
+     },
+     {
+      "cpu": 1.76973,
+      "wall": 0.7716972589998932,
+      "rss_kib": 18912,
+      "pcm_sha256": "c627ffe8ff4db21c156e4092d9f5bcd0719ea2dc2466e579f50f99026e990f81"
+     }
+    ]
+   }
+  },
+  {
+   "input": "album48.wav",
+   "codec": "pcm_s16le",
+   "sample_rate": 48000,
+   "channels": 2,
+   "bits": 16,
+   "duration": 109.394542,
+   "pcm_bytes": 21003752,
+   "pcm_sha256": "2bb30d6398eb7aaba89c23bad561cb2cc776aa5b2f456f0a74968371ab00b285",
+   "flac_bytes": {
+    "native": 7827212,
+    "baseline": 7827212,
+    "ffmpeg": 7841748
+   },
+   "flac_ratio": {
+    "native": 0.3726577994255503,
+    "baseline": 0.3726577994255503,
+    "ffmpeg": 0.37334986625246763
+   },
+   "median": {
+    "native": {
+     "cpu": 0.31501199999999996,
+     "wall": 0.33761560199991436,
+     "rss_kib": 3844,
+     "cpu_per_audio_s": 0.0028795952178308857
+    },
+    "baseline": {
+     "cpu": 0.35916499999999996,
+     "wall": 0.3754509110001436,
+     "rss_kib": 3752,
+     "cpu_per_audio_s": 0.003283207675936885
+    },
+    "ffmpeg": {
+     "cpu": 0.956358,
+     "wall": 0.486304022000013,
+     "rss_kib": 19008,
+     "cpu_per_audio_s": 0.008742282590295958
+    }
+   },
+   "runs": {
+    "native": [
+     {
+      "cpu": 0.31501199999999996,
+      "wall": 0.33761560199991436,
+      "rss_kib": 3740,
+      "pcm_sha256": "2bb30d6398eb7aaba89c23bad561cb2cc776aa5b2f456f0a74968371ab00b285"
+     },
+     {
+      "cpu": 0.361441,
+      "wall": 0.37861968500010335,
+      "rss_kib": 3880,
+      "pcm_sha256": "2bb30d6398eb7aaba89c23bad561cb2cc776aa5b2f456f0a74968371ab00b285"
+     },
+     {
+      "cpu": 0.346946,
+      "wall": 0.3683207520000451,
+      "rss_kib": 3596,
+      "pcm_sha256": "2bb30d6398eb7aaba89c23bad561cb2cc776aa5b2f456f0a74968371ab00b285"
+     },
+     {
+      "cpu": 0.30435,
+      "wall": 0.31787400799998977,
+      "rss_kib": 3864,
+      "pcm_sha256": "2bb30d6398eb7aaba89c23bad561cb2cc776aa5b2f456f0a74968371ab00b285"
+     },
+     {
+      "cpu": 0.30853200000000003,
+      "wall": 0.32646836499998244,
+      "rss_kib": 3868,
+      "pcm_sha256": "2bb30d6398eb7aaba89c23bad561cb2cc776aa5b2f456f0a74968371ab00b285"
+     },
+     {
+      "cpu": 0.333186,
+      "wall": 0.34709869399989657,
+      "rss_kib": 3828,
+      "pcm_sha256": "2bb30d6398eb7aaba89c23bad561cb2cc776aa5b2f456f0a74968371ab00b285"
+     },
+     {
+      "cpu": 0.311338,
+      "wall": 0.33154892299990024,
+      "rss_kib": 3844,
+      "pcm_sha256": "2bb30d6398eb7aaba89c23bad561cb2cc776aa5b2f456f0a74968371ab00b285"
+     }
+    ],
+    "baseline": [
+     {
+      "cpu": 0.341752,
+      "wall": 0.36041134300012345,
+      "rss_kib": 3656,
+      "pcm_sha256": "2bb30d6398eb7aaba89c23bad561cb2cc776aa5b2f456f0a74968371ab00b285"
+     },
+     {
+      "cpu": 0.368542,
+      "wall": 0.38772044100005587,
+      "rss_kib": 3720,
+      "pcm_sha256": "2bb30d6398eb7aaba89c23bad561cb2cc776aa5b2f456f0a74968371ab00b285"
+     },
+     {
+      "cpu": 0.36333999999999994,
+      "wall": 0.3867166019999786,
+      "rss_kib": 3752,
+      "pcm_sha256": "2bb30d6398eb7aaba89c23bad561cb2cc776aa5b2f456f0a74968371ab00b285"
+     },
+     {
+      "cpu": 0.341437,
+      "wall": 0.36878264099982516,
+      "rss_kib": 3768,
+      "pcm_sha256": "2bb30d6398eb7aaba89c23bad561cb2cc776aa5b2f456f0a74968371ab00b285"
+     },
+     {
+      "cpu": 0.369801,
+      "wall": 0.3893192769999132,
+      "rss_kib": 3792,
+      "pcm_sha256": "2bb30d6398eb7aaba89c23bad561cb2cc776aa5b2f456f0a74968371ab00b285"
+     },
+     {
+      "cpu": 0.344854,
+      "wall": 0.3698189790000015,
+      "rss_kib": 3752,
+      "pcm_sha256": "2bb30d6398eb7aaba89c23bad561cb2cc776aa5b2f456f0a74968371ab00b285"
+     },
+     {
+      "cpu": 0.35916499999999996,
+      "wall": 0.3754509110001436,
+      "rss_kib": 3660,
+      "pcm_sha256": "2bb30d6398eb7aaba89c23bad561cb2cc776aa5b2f456f0a74968371ab00b285"
+     }
+    ],
+    "ffmpeg": [
+     {
+      "cpu": 1.085688,
+      "wall": 0.5800993240000025,
+      "rss_kib": 18632,
+      "pcm_sha256": "2bb30d6398eb7aaba89c23bad561cb2cc776aa5b2f456f0a74968371ab00b285"
+     },
+     {
+      "cpu": 0.956358,
+      "wall": 0.486304022000013,
+      "rss_kib": 19252,
+      "pcm_sha256": "2bb30d6398eb7aaba89c23bad561cb2cc776aa5b2f456f0a74968371ab00b285"
+     },
+     {
+      "cpu": 1.028614,
+      "wall": 0.522397514999966,
+      "rss_kib": 19108,
+      "pcm_sha256": "2bb30d6398eb7aaba89c23bad561cb2cc776aa5b2f456f0a74968371ab00b285"
+     },
+     {
+      "cpu": 0.8894739999999999,
+      "wall": 0.43118274900007236,
+      "rss_kib": 18944,
+      "pcm_sha256": "2bb30d6398eb7aaba89c23bad561cb2cc776aa5b2f456f0a74968371ab00b285"
+     },
+     {
+      "cpu": 0.895586,
+      "wall": 0.424044560999846,
+      "rss_kib": 18868,
+      "pcm_sha256": "2bb30d6398eb7aaba89c23bad561cb2cc776aa5b2f456f0a74968371ab00b285"
+     },
+     {
+      "cpu": 0.9425889999999999,
+      "wall": 0.46742740599984245,
+      "rss_kib": 19448,
+      "pcm_sha256": "2bb30d6398eb7aaba89c23bad561cb2cc776aa5b2f456f0a74968371ab00b285"
+     },
+     {
+      "cpu": 0.976812,
+      "wall": 0.5125495270001466,
+      "rss_kib": 19008,
+      "pcm_sha256": "2bb30d6398eb7aaba89c23bad561cb2cc776aa5b2f456f0a74968371ab00b285"
+     }
+    ]
+   }
+  },
+  {
+   "input": "album96.wav",
+   "codec": "pcm_s24le",
+   "sample_rate": 96000,
+   "channels": 2,
+   "bits": 24,
+   "duration": 40.734521,
+   "pcm_bytes": 23463084,
+   "pcm_sha256": "be123dbab4eccead47da7c04f1b744bf4773afb7350c8e6161e5561bcb29312c",
+   "flac_bytes": {
+    "native": 16464270,
+    "baseline": 16464270,
+    "ffmpeg": 16474306
+   },
+   "flac_ratio": {
+    "native": 0.7017095450879347,
+    "baseline": 0.7017095450879347,
+    "ffmpeg": 0.7021372808450926
+   },
+   "median": {
+    "native": {
+     "cpu": 0.278508,
+     "wall": 0.3056922220000615,
+     "rss_kib": 3968,
+     "cpu_per_audio_s": 0.006837149257260199
+    },
+    "baseline": {
+     "cpu": 0.29635100000000003,
+     "wall": 0.3277571319999879,
+     "rss_kib": 3760,
+     "cpu_per_audio_s": 0.007275180675378508
+    },
+    "ffmpeg": {
+     "cpu": 0.6342,
+     "wall": 0.3366636830000971,
+     "rss_kib": 21328,
+     "cpu_per_audio_s": 0.015569104151243119
+    }
+   },
+   "runs": {
+    "native": [
+     {
+      "cpu": 0.28810299999999994,
+      "wall": 0.34328065699992294,
+      "rss_kib": 3968,
+      "pcm_sha256": "be123dbab4eccead47da7c04f1b744bf4773afb7350c8e6161e5561bcb29312c"
+     },
+     {
+      "cpu": 0.281419,
+      "wall": 0.3205789639998784,
+      "rss_kib": 3816,
+      "pcm_sha256": "be123dbab4eccead47da7c04f1b744bf4773afb7350c8e6161e5561bcb29312c"
+     },
+     {
+      "cpu": 0.278508,
+      "wall": 0.3056922220000615,
+      "rss_kib": 4060,
+      "pcm_sha256": "be123dbab4eccead47da7c04f1b744bf4773afb7350c8e6161e5561bcb29312c"
+     },
+     {
+      "cpu": 0.26453899999999997,
+      "wall": 0.3034445770001639,
+      "rss_kib": 3788,
+      "pcm_sha256": "be123dbab4eccead47da7c04f1b744bf4773afb7350c8e6161e5561bcb29312c"
+     },
+     {
+      "cpu": 0.25811399999999995,
+      "wall": 0.28409065100004227,
+      "rss_kib": 3972,
+      "pcm_sha256": "be123dbab4eccead47da7c04f1b744bf4773afb7350c8e6161e5561bcb29312c"
+     },
+     {
+      "cpu": 0.266772,
+      "wall": 0.29535362199999327,
+      "rss_kib": 3940,
+      "pcm_sha256": "be123dbab4eccead47da7c04f1b744bf4773afb7350c8e6161e5561bcb29312c"
+     },
+     {
+      "cpu": 0.288254,
+      "wall": 0.31726259700008086,
+      "rss_kib": 4000,
+      "pcm_sha256": "be123dbab4eccead47da7c04f1b744bf4773afb7350c8e6161e5561bcb29312c"
+     }
+    ],
+    "baseline": [
+     {
+      "cpu": 0.377177,
+      "wall": 0.40973963499982347,
+      "rss_kib": 3684,
+      "pcm_sha256": "be123dbab4eccead47da7c04f1b744bf4773afb7350c8e6161e5561bcb29312c"
+     },
+     {
+      "cpu": 0.32475099999999996,
+      "wall": 0.3519537140000466,
+      "rss_kib": 3744,
+      "pcm_sha256": "be123dbab4eccead47da7c04f1b744bf4773afb7350c8e6161e5561bcb29312c"
+     },
+     {
+      "cpu": 0.300091,
+      "wall": 0.3277571319999879,
+      "rss_kib": 3772,
+      "pcm_sha256": "be123dbab4eccead47da7c04f1b744bf4773afb7350c8e6161e5561bcb29312c"
+     },
+     {
+      "cpu": 0.29635100000000003,
+      "wall": 0.3207844080000086,
+      "rss_kib": 3856,
+      "pcm_sha256": "be123dbab4eccead47da7c04f1b744bf4773afb7350c8e6161e5561bcb29312c"
+     },
+     {
+      "cpu": 0.280702,
+      "wall": 0.30369958100004624,
+      "rss_kib": 3760,
+      "pcm_sha256": "be123dbab4eccead47da7c04f1b744bf4773afb7350c8e6161e5561bcb29312c"
+     },
+     {
+      "cpu": 0.293278,
+      "wall": 0.3313389649999863,
+      "rss_kib": 3672,
+      "pcm_sha256": "be123dbab4eccead47da7c04f1b744bf4773afb7350c8e6161e5561bcb29312c"
+     },
+     {
+      "cpu": 0.285544,
+      "wall": 0.31072388199982015,
+      "rss_kib": 3804,
+      "pcm_sha256": "be123dbab4eccead47da7c04f1b744bf4773afb7350c8e6161e5561bcb29312c"
+     }
+    ],
+    "ffmpeg": [
+     {
+      "cpu": 0.671916,
+      "wall": 0.3613712100000157,
+      "rss_kib": 22080,
+      "pcm_sha256": "be123dbab4eccead47da7c04f1b744bf4773afb7350c8e6161e5561bcb29312c"
+     },
+     {
+      "cpu": 0.6342,
+      "wall": 0.3366636830000971,
+      "rss_kib": 21328,
+      "pcm_sha256": "be123dbab4eccead47da7c04f1b744bf4773afb7350c8e6161e5561bcb29312c"
+     },
+     {
+      "cpu": 0.6847179999999999,
+      "wall": 0.36893341400013924,
+      "rss_kib": 21608,
+      "pcm_sha256": "be123dbab4eccead47da7c04f1b744bf4773afb7350c8e6161e5561bcb29312c"
+     },
+     {
+      "cpu": 0.578645,
+      "wall": 0.29861826200021824,
+      "rss_kib": 21316,
+      "pcm_sha256": "be123dbab4eccead47da7c04f1b744bf4773afb7350c8e6161e5561bcb29312c"
+     },
+     {
+      "cpu": 0.580031,
+      "wall": 0.2931423550001,
+      "rss_kib": 21232,
+      "pcm_sha256": "be123dbab4eccead47da7c04f1b744bf4773afb7350c8e6161e5561bcb29312c"
+     },
+     {
+      "cpu": 0.6530229999999999,
+      "wall": 0.34175795999999536,
+      "rss_kib": 21696,
+      "pcm_sha256": "be123dbab4eccead47da7c04f1b744bf4773afb7350c8e6161e5561bcb29312c"
+     },
+     {
+      "cpu": 0.6029720000000001,
+      "wall": 0.3084041419999721,
+      "rss_kib": 21228,
+      "pcm_sha256": "be123dbab4eccead47da7c04f1b744bf4773afb7350c8e6161e5561bcb29312c"
+     }
+    ]
+   }
+  },
+  {
+   "input": "album96.m4a",
+   "codec": "alac",
+   "sample_rate": 96000,
+   "channels": 2,
+   "bits": 24,
+   "duration": 40.734521,
+   "pcm_bytes": 23463084,
+   "pcm_sha256": "be123dbab4eccead47da7c04f1b744bf4773afb7350c8e6161e5561bcb29312c",
+   "flac_bytes": {
+    "native": 16464270,
+    "baseline": 16464270,
+    "ffmpeg": 16474306
+   },
+   "flac_ratio": {
+    "native": 0.7017095450879347,
+    "baseline": 0.7017095450879347,
+    "ffmpeg": 0.7021372808450926
+   },
+   "median": {
+    "native": {
+     "cpu": 0.532898,
+     "wall": 0.5740129790001447,
+     "rss_kib": 3996,
+     "cpu_per_audio_s": 0.013082220851449314
+    },
+    "baseline": {
+     "cpu": 0.539906,
+     "wall": 0.5710564290000093,
+     "rss_kib": 3888,
+     "cpu_per_audio_s": 0.013254261661748765
+    },
+    "ffmpeg": {
+     "cpu": 1.039482,
+     "wall": 0.5245066939999106,
+     "rss_kib": 19264,
+     "cpu_per_audio_s": 0.02551845399139467
+    }
+   },
+   "runs": {
+    "native": [
+     {
+      "cpu": 0.481342,
+      "wall": 0.5069461230000343,
+      "rss_kib": 3996,
+      "pcm_sha256": "be123dbab4eccead47da7c04f1b744bf4773afb7350c8e6161e5561bcb29312c"
+     },
+     {
+      "cpu": 0.532898,
+      "wall": 0.5827555550001762,
+      "rss_kib": 3892,
+      "pcm_sha256": "be123dbab4eccead47da7c04f1b744bf4773afb7350c8e6161e5561bcb29312c"
+     },
+     {
+      "cpu": 0.5340879999999999,
+      "wall": 0.5740129790001447,
+      "rss_kib": 4072,
+      "pcm_sha256": "be123dbab4eccead47da7c04f1b744bf4773afb7350c8e6161e5561bcb29312c"
+     },
+     {
+      "cpu": 0.5705159999999999,
+      "wall": 0.608807127000091,
+      "rss_kib": 3992,
+      "pcm_sha256": "be123dbab4eccead47da7c04f1b744bf4773afb7350c8e6161e5561bcb29312c"
+     },
+     {
+      "cpu": 0.470155,
+      "wall": 0.4982430210000075,
+      "rss_kib": 3980,
+      "pcm_sha256": "be123dbab4eccead47da7c04f1b744bf4773afb7350c8e6161e5561bcb29312c"
+     },
+     {
+      "cpu": 0.464786,
+      "wall": 0.49955335300001025,
+      "rss_kib": 4032,
+      "pcm_sha256": "be123dbab4eccead47da7c04f1b744bf4773afb7350c8e6161e5561bcb29312c"
+     },
+     {
+      "cpu": 0.572932,
+      "wall": 0.6024299380001139,
+      "rss_kib": 4060,
+      "pcm_sha256": "be123dbab4eccead47da7c04f1b744bf4773afb7350c8e6161e5561bcb29312c"
+     }
+    ],
+    "baseline": [
+     {
+      "cpu": 0.50973,
+      "wall": 0.5446091520000209,
+      "rss_kib": 3868,
+      "pcm_sha256": "be123dbab4eccead47da7c04f1b744bf4773afb7350c8e6161e5561bcb29312c"
+     },
+     {
+      "cpu": 0.559228,
+      "wall": 0.5855886439999267,
+      "rss_kib": 4032,
+      "pcm_sha256": "be123dbab4eccead47da7c04f1b744bf4773afb7350c8e6161e5561bcb29312c"
+     },
+     {
+      "cpu": 0.559647,
+      "wall": 0.5973184340000444,
+      "rss_kib": 3940,
+      "pcm_sha256": "be123dbab4eccead47da7c04f1b744bf4773afb7350c8e6161e5561bcb29312c"
+     },
+     {
+      "cpu": 0.5169279999999999,
+      "wall": 0.5440342080000846,
+      "rss_kib": 4036,
+      "pcm_sha256": "be123dbab4eccead47da7c04f1b744bf4773afb7350c8e6161e5561bcb29312c"
+     },
+     {
+      "cpu": 0.491009,
+      "wall": 0.5174960120000378,
+      "rss_kib": 3844,
+      "pcm_sha256": "be123dbab4eccead47da7c04f1b744bf4773afb7350c8e6161e5561bcb29312c"
+     },
+     {
+      "cpu": 0.539906,
+      "wall": 0.5710564290000093,
+      "rss_kib": 3888,
+      "pcm_sha256": "be123dbab4eccead47da7c04f1b744bf4773afb7350c8e6161e5561bcb29312c"
+     },
+     {
+      "cpu": 0.555689,
+      "wall": 0.5874442740000632,
+      "rss_kib": 3856,
+      "pcm_sha256": "be123dbab4eccead47da7c04f1b744bf4773afb7350c8e6161e5561bcb29312c"
+     }
+    ],
+    "ffmpeg": [
+     {
+      "cpu": 1.134418,
+      "wall": 0.5881544839999151,
+      "rss_kib": 19512,
+      "pcm_sha256": "be123dbab4eccead47da7c04f1b744bf4773afb7350c8e6161e5561bcb29312c"
+     },
+     {
+      "cpu": 1.039482,
+      "wall": 0.5313323269999728,
+      "rss_kib": 18968,
+      "pcm_sha256": "be123dbab4eccead47da7c04f1b744bf4773afb7350c8e6161e5561bcb29312c"
+     },
+     {
+      "cpu": 0.971723,
+      "wall": 0.512037355000075,
+      "rss_kib": 19216,
+      "pcm_sha256": "be123dbab4eccead47da7c04f1b744bf4773afb7350c8e6161e5561bcb29312c"
+     },
+     {
+      "cpu": 1.0676579999999998,
+      "wall": 0.5245066939999106,
+      "rss_kib": 18760,
+      "pcm_sha256": "be123dbab4eccead47da7c04f1b744bf4773afb7350c8e6161e5561bcb29312c"
+     },
+     {
+      "cpu": 1.00477,
+      "wall": 0.4758671189999859,
+      "rss_kib": 19264,
+      "pcm_sha256": "be123dbab4eccead47da7c04f1b744bf4773afb7350c8e6161e5561bcb29312c"
+     },
+     {
+      "cpu": 1.033614,
+      "wall": 0.5013133950001247,
+      "rss_kib": 19464,
+      "pcm_sha256": "be123dbab4eccead47da7c04f1b744bf4773afb7350c8e6161e5561bcb29312c"
+     },
+     {
+      "cpu": 1.0791739999999999,
+      "wall": 0.5595763589999478,
+      "rss_kib": 19416,
+      "pcm_sha256": "be123dbab4eccead47da7c04f1b744bf4773afb7350c8e6161e5561bcb29312c"
+     }
+    ]
+   }
+  },
+  {
+   "input": "album96.flac",
+   "codec": "flac",
+   "sample_rate": 96000,
+   "channels": 2,
+   "bits": 24,
+   "duration": 40.734521,
+   "pcm_bytes": 23463084,
+   "pcm_sha256": "be123dbab4eccead47da7c04f1b744bf4773afb7350c8e6161e5561bcb29312c",
+   "flac_bytes": {
+    "native": 16464270,
+    "baseline": 16464270,
+    "ffmpeg": 16474306
+   },
+   "flac_ratio": {
+    "native": 0.7017095450879347,
+    "baseline": 0.7017095450879347,
+    "ffmpeg": 0.7021372808450926
+   },
+   "median": {
+    "native": {
+     "cpu": 0.388935,
+     "wall": 0.42055947800008653,
+     "rss_kib": 4032,
+     "cpu_per_audio_s": 0.009548044028798079
+    },
+    "baseline": {
+     "cpu": 0.432982,
+     "wall": 0.46068955300006564,
+     "rss_kib": 4032,
+     "cpu_per_audio_s": 0.010629362746158227
+    },
+    "ffmpeg": {
+     "cpu": 0.7552049999999999,
+     "wall": 0.3559695669998746,
+     "rss_kib": 19784,
+     "cpu_per_audio_s": 0.018539680385587447
+    }
+   },
+   "runs": {
+    "native": [
+     {
+      "cpu": 0.400036,
+      "wall": 0.4309623660001307,
+      "rss_kib": 3988,
+      "pcm_sha256": "be123dbab4eccead47da7c04f1b744bf4773afb7350c8e6161e5561bcb29312c"
+     },
+     {
+      "cpu": 0.33440099999999995,
+      "wall": 0.3573087190000024,
+      "rss_kib": 4212,
+      "pcm_sha256": "be123dbab4eccead47da7c04f1b744bf4773afb7350c8e6161e5561bcb29312c"
+     },
+     {
+      "cpu": 0.415244,
+      "wall": 0.4375216559999444,
+      "rss_kib": 3924,
+      "pcm_sha256": "be123dbab4eccead47da7c04f1b744bf4773afb7350c8e6161e5561bcb29312c"
+     },
+     {
+      "cpu": 0.35643099999999994,
+      "wall": 0.3947021199999199,
+      "rss_kib": 4032,
+      "pcm_sha256": "be123dbab4eccead47da7c04f1b744bf4773afb7350c8e6161e5561bcb29312c"
+     },
+     {
+      "cpu": 0.343473,
+      "wall": 0.3690743100000873,
+      "rss_kib": 3936,
+      "pcm_sha256": "be123dbab4eccead47da7c04f1b744bf4773afb7350c8e6161e5561bcb29312c"
+     },
+     {
+      "cpu": 0.388935,
+      "wall": 0.42055947800008653,
+      "rss_kib": 4144,
+      "pcm_sha256": "be123dbab4eccead47da7c04f1b744bf4773afb7350c8e6161e5561bcb29312c"
+     },
+     {
+      "cpu": 0.439172,
+      "wall": 0.46257573000002594,
+      "rss_kib": 4148,
+      "pcm_sha256": "be123dbab4eccead47da7c04f1b744bf4773afb7350c8e6161e5561bcb29312c"
+     }
+    ],
+    "baseline": [
+     {
+      "cpu": 0.425126,
+      "wall": 0.45021150299999135,
+      "rss_kib": 4052,
+      "pcm_sha256": "be123dbab4eccead47da7c04f1b744bf4773afb7350c8e6161e5561bcb29312c"
+     },
+     {
+      "cpu": 0.432982,
+      "wall": 0.46068955300006564,
+      "rss_kib": 3932,
+      "pcm_sha256": "be123dbab4eccead47da7c04f1b744bf4773afb7350c8e6161e5561bcb29312c"
+     },
+     {
+      "cpu": 0.414074,
+      "wall": 0.4418694860000869,
+      "rss_kib": 4032,
+      "pcm_sha256": "be123dbab4eccead47da7c04f1b744bf4773afb7350c8e6161e5561bcb29312c"
+     },
+     {
+      "cpu": 0.411918,
+      "wall": 0.4359050399998523,
+      "rss_kib": 3956,
+      "pcm_sha256": "be123dbab4eccead47da7c04f1b744bf4773afb7350c8e6161e5561bcb29312c"
+     },
+     {
+      "cpu": 0.433737,
+      "wall": 0.4865043859999787,
+      "rss_kib": 3996,
+      "pcm_sha256": "be123dbab4eccead47da7c04f1b744bf4773afb7350c8e6161e5561bcb29312c"
+     },
+     {
+      "cpu": 0.438345,
+      "wall": 0.4627117810000527,
+      "rss_kib": 4100,
+      "pcm_sha256": "be123dbab4eccead47da7c04f1b744bf4773afb7350c8e6161e5561bcb29312c"
+     },
+     {
+      "cpu": 0.470439,
+      "wall": 0.4944645919999857,
+      "rss_kib": 4056,
+      "pcm_sha256": "be123dbab4eccead47da7c04f1b744bf4773afb7350c8e6161e5561bcb29312c"
+     }
+    ],
+    "ffmpeg": [
+     {
+      "cpu": 0.6978,
+      "wall": 0.325833590000002,
+      "rss_kib": 19784,
+      "pcm_sha256": "be123dbab4eccead47da7c04f1b744bf4773afb7350c8e6161e5561bcb29312c"
+     },
+     {
+      "cpu": 0.7476269999999999,
+      "wall": 0.33032677300002433,
+      "rss_kib": 19904,
+      "pcm_sha256": "be123dbab4eccead47da7c04f1b744bf4773afb7350c8e6161e5561bcb29312c"
+     },
+     {
+      "cpu": 0.802786,
+      "wall": 0.3873282859999563,
+      "rss_kib": 19780,
+      "pcm_sha256": "be123dbab4eccead47da7c04f1b744bf4773afb7350c8e6161e5561bcb29312c"
+     },
+     {
+      "cpu": 0.666261,
+      "wall": 0.29859704599994075,
+      "rss_kib": 19504,
+      "pcm_sha256": "be123dbab4eccead47da7c04f1b744bf4773afb7350c8e6161e5561bcb29312c"
+     },
+     {
+      "cpu": 0.7552049999999999,
+      "wall": 0.3559695669998746,
+      "rss_kib": 19864,
+      "pcm_sha256": "be123dbab4eccead47da7c04f1b744bf4773afb7350c8e6161e5561bcb29312c"
+     },
+     {
+      "cpu": 0.88262,
+      "wall": 0.4137398559998928,
+      "rss_kib": 19652,
+      "pcm_sha256": "be123dbab4eccead47da7c04f1b744bf4773afb7350c8e6161e5561bcb29312c"
+     },
+     {
+      "cpu": 0.897136,
+      "wall": 0.4055426479999369,
+      "rss_kib": 20112,
+      "pcm_sha256": "be123dbab4eccead47da7c04f1b744bf4773afb7350c8e6161e5561bcb29312c"
+     }
+    ]
+   }
+  },
+  {
+   "input": "syn_pink.wav",
+   "codec": "pcm_s24le",
+   "sample_rate": 48000,
+   "channels": 2,
+   "bits": 24,
+   "duration": 240.0,
+   "pcm_bytes": 69120000,
+   "pcm_sha256": "b060a91fab5ecf799cdbc778460f6fbc8bc14ce0112ace06a8da149a14294dba",
+   "flac_bytes": {
+    "native": 54203886,
+    "baseline": 54203886,
+    "ffmpeg": 54211179
+   },
+   "flac_ratio": {
+    "native": 0.7841997395833333,
+    "baseline": 0.7841997395833333,
+    "ffmpeg": 0.7843052517361111
+   },
+   "median": {
+    "native": {
+     "cpu": 0.85369,
+     "wall": 0.9360387880001326,
+     "rss_kib": 4020,
+     "cpu_per_audio_s": 0.0035570416666666663
+    },
+    "baseline": {
+     "cpu": 0.890845,
+     "wall": 0.9639009219999934,
+     "rss_kib": 3772,
+     "cpu_per_audio_s": 0.0037118541666666667
+    },
+    "ffmpeg": {
+     "cpu": 2.08164,
+     "wall": 0.979897377000043,
+     "rss_kib": 19688,
+     "cpu_per_audio_s": 0.0086735
+    }
+   },
+   "runs": {
+    "native": [
+     {
+      "cpu": 0.85369,
+      "wall": 0.9360387880001326,
+      "rss_kib": 4028,
+      "pcm_sha256": "b060a91fab5ecf799cdbc778460f6fbc8bc14ce0112ace06a8da149a14294dba"
+     },
+     {
+      "cpu": 0.8913169999999999,
+      "wall": 0.9639658260000488,
+      "rss_kib": 3808,
+      "pcm_sha256": "b060a91fab5ecf799cdbc778460f6fbc8bc14ce0112ace06a8da149a14294dba"
+     },
+     {
+      "cpu": 0.815693,
+      "wall": 0.8913202480000564,
+      "rss_kib": 4020,
+      "pcm_sha256": "b060a91fab5ecf799cdbc778460f6fbc8bc14ce0112ace06a8da149a14294dba"
+     },
+     {
+      "cpu": 0.791398,
+      "wall": 0.8699617790000502,
+      "rss_kib": 3928,
+      "pcm_sha256": "b060a91fab5ecf799cdbc778460f6fbc8bc14ce0112ace06a8da149a14294dba"
+     },
+     {
+      "cpu": 0.980216,
+      "wall": 1.0654149169999982,
+      "rss_kib": 4044,
+      "pcm_sha256": "b060a91fab5ecf799cdbc778460f6fbc8bc14ce0112ace06a8da149a14294dba"
+     },
+     {
+      "cpu": 0.8336459999999999,
+      "wall": 0.9032631039999615,
+      "rss_kib": 3928,
+      "pcm_sha256": "b060a91fab5ecf799cdbc778460f6fbc8bc14ce0112ace06a8da149a14294dba"
+     },
+     {
+      "cpu": 0.901515,
+      "wall": 0.9785788579999917,
+      "rss_kib": 4060,
+      "pcm_sha256": "b060a91fab5ecf799cdbc778460f6fbc8bc14ce0112ace06a8da149a14294dba"
+     }
+    ],
+    "baseline": [
+     {
+      "cpu": 0.945183,
+      "wall": 1.0318219210000734,
+      "rss_kib": 3776,
+      "pcm_sha256": "b060a91fab5ecf799cdbc778460f6fbc8bc14ce0112ace06a8da149a14294dba"
+     },
+     {
+      "cpu": 0.890845,
+      "wall": 0.9639009219999934,
+      "rss_kib": 3812,
+      "pcm_sha256": "b060a91fab5ecf799cdbc778460f6fbc8bc14ce0112ace06a8da149a14294dba"
+     },
+     {
+      "cpu": 0.937057,
+      "wall": 1.0353638419999243,
+      "rss_kib": 3704,
+      "pcm_sha256": "b060a91fab5ecf799cdbc778460f6fbc8bc14ce0112ace06a8da149a14294dba"
+     },
+     {
+      "cpu": 0.889786,
+      "wall": 0.9633672740001202,
+      "rss_kib": 3688,
+      "pcm_sha256": "b060a91fab5ecf799cdbc778460f6fbc8bc14ce0112ace06a8da149a14294dba"
+     },
+     {
+      "cpu": 0.877755,
+      "wall": 0.9573711559999083,
+      "rss_kib": 3736,
+      "pcm_sha256": "b060a91fab5ecf799cdbc778460f6fbc8bc14ce0112ace06a8da149a14294dba"
+     },
+     {
+      "cpu": 0.8573319999999999,
+      "wall": 0.9339152970001123,
+      "rss_kib": 3800,
+      "pcm_sha256": "b060a91fab5ecf799cdbc778460f6fbc8bc14ce0112ace06a8da149a14294dba"
+     },
+     {
+      "cpu": 0.938822,
+      "wall": 1.0253755569999612,
+      "rss_kib": 3772,
+      "pcm_sha256": "b060a91fab5ecf799cdbc778460f6fbc8bc14ce0112ace06a8da149a14294dba"
+     }
+    ],
+    "ffmpeg": [
+     {
+      "cpu": 2.245111,
+      "wall": 1.1177242209998894,
+      "rss_kib": 19604,
+      "pcm_sha256": "b060a91fab5ecf799cdbc778460f6fbc8bc14ce0112ace06a8da149a14294dba"
+     },
+     {
+      "cpu": 2.084279,
+      "wall": 1.0165127800000846,
+      "rss_kib": 19688,
+      "pcm_sha256": "b060a91fab5ecf799cdbc778460f6fbc8bc14ce0112ace06a8da149a14294dba"
+     },
+     {
+      "cpu": 2.081761,
+      "wall": 0.979897377000043,
+      "rss_kib": 19708,
+      "pcm_sha256": "b060a91fab5ecf799cdbc778460f6fbc8bc14ce0112ace06a8da149a14294dba"
+     },
+     {
+      "cpu": 2.08164,
+      "wall": 0.9966886429999704,
+      "rss_kib": 20004,
+      "pcm_sha256": "b060a91fab5ecf799cdbc778460f6fbc8bc14ce0112ace06a8da149a14294dba"
+     },
+     {
+      "cpu": 1.960534,
+      "wall": 0.9548117389999788,
+      "rss_kib": 19544,
+      "pcm_sha256": "b060a91fab5ecf799cdbc778460f6fbc8bc14ce0112ace06a8da149a14294dba"
+     },
+     {
+      "cpu": 1.8882910000000002,
+      "wall": 0.8836753949999547,
+      "rss_kib": 19920,
+      "pcm_sha256": "b060a91fab5ecf799cdbc778460f6fbc8bc14ce0112ace06a8da149a14294dba"
+     },
+     {
+      "cpu": 1.872719,
+      "wall": 0.9062587900000381,
+      "rss_kib": 19156,
+      "pcm_sha256": "b060a91fab5ecf799cdbc778460f6fbc8bc14ce0112ace06a8da149a14294dba"
+     }
+    ]
+   }
+  }
+ ],
+ "pure": [],
+ "concurrency": {}
+}

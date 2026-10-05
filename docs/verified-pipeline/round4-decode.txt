@@ -1,0 +1,6 @@
+album44.flac   final-01973f4=0.291c(+0.0%) w=0.29 rss=3452 sz=0  final-11e6b10=0.260c(-10.5%) w=0.28 rss=3520 sz=0
+album48.flac   final-01973f4=0.173c(+0.0%) w=0.18 rss=3456 sz=0  final-11e6b10=0.149c(-13.7%) w=0.15 rss=3556 sz=0
+album96.flac   final-01973f4=0.148c(+0.0%) w=0.15 rss=3584 sz=0  final-11e6b10=0.130c(-12.3%) w=0.13 rss=3548 sz=0
+syn_pink.flac  final-01973f4=0.473c(+0.0%) w=0.48 rss=3456 sz=0  final-11e6b10=0.416c(-12.1%) w=0.42 rss=3524 sz=0
+album44.wav    final-01973f4=0.061c(+0.0%) w=0.06 rss=3112 sz=0  final-11e6b10=0.062c(+0.5%) w=0.06 rss=3316 sz=0
+album44.m4a    final-01973f4=0.566c(+0.0%) w=0.57 rss=3360 sz=0  final-11e6b10=0.583c(+3.0%) w=0.59 rss=3432 sz=0

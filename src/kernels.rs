@@ -233,33 +233,15 @@ unsafe fn rice_neon(residual: &[u32], first: u32, count: usize) -> [u64; 3] {
     out
 }
 
-#[cfg(target_arch = "aarch64")]
-type WeightFn = fn(&[f64; 5], &[f64; 5], &mut [[f64; 2]; 4], [f64; 2]) -> [f64; 2];
+/// Scalar K-weighting for mono and `--scalar`; stereo meters otherwise use
+/// `StereoWeight`, which gives the same bits.
+#[derive(Clone, Copy)]
 pub(crate) struct WeightKernel {
-    #[cfg(target_arch = "aarch64")]
-    apply: WeightFn,
-    #[cfg(not(target_arch = "aarch64"))]
     channels: usize,
 }
 impl WeightKernel {
     pub(crate) fn new(backend: Backend, channels: usize) -> Self {
         assert!(backend.available());
-        #[cfg(target_arch = "aarch64")]
-        {
-            if channels == 2 && backend == Backend::Neon {
-                return Self {
-                    apply: |b, a, s, x| unsafe { weight_neon(b, a, s, x) },
-                };
-            }
-            Self {
-                apply: if channels == 2 {
-                    weight_scalar::<2>
-                } else {
-                    weight_scalar::<1>
-                },
-            }
-        }
-        #[cfg(not(target_arch = "aarch64"))]
         Self { channels }
     }
     #[inline]
@@ -270,19 +252,10 @@ impl WeightKernel {
         state: &mut [[f64; 2]; 4],
         x: [f64; 2],
     ) -> [f64; 2] {
-        #[cfg(target_arch = "aarch64")]
-        {
-            (self.apply)(b, a, state, x)
-        }
-        #[cfg(not(target_arch = "aarch64"))]
-        {
-            // x86's existing scalar arithmetic benefits from inlining into the
-            // fused meter loop. An extra per-frame SIMD call regressed that CPU.
-            if self.channels == 2 {
-                weight_scalar::<2>(b, a, state, x)
-            } else {
-                weight_scalar::<1>(b, a, state, x)
-            }
+        if self.channels == 2 {
+            weight_scalar::<2>(b, a, state, x)
+        } else {
+            weight_scalar::<1>(b, a, state, x)
         }
     }
 }
@@ -318,38 +291,125 @@ fn weight_scalar<const CHANNELS: usize>(
 fn flush_denormal() -> f64 {
     0.0
 }
-// Independent channels share coefficients. Separate multiply/add preserves
-// the scalar filter's per-channel rounding; no FMA/fast-math approximation.
+
+/// The AArch64 form of the x86 `StereoWeight` below: both channels in one
+/// NEON register, `fmul`/`fsub`/`fadd` per lane in `weight_scalar`'s order.
 #[cfg(target_arch = "aarch64")]
-#[target_feature(enable = "neon")]
-unsafe fn weight_neon(
-    b: &[f64; 5],
-    a: &[f64; 5],
-    state: &mut [[f64; 2]; 4],
-    x: [f64; 2],
-) -> [f64; 2] {
-    use std::arch::aarch64::*;
-    let history = state.map(|v| vld1q_f64(v.as_ptr()));
-    let mut n = vld1q_f64(x.as_ptr());
-    for i in 0..4 {
-        n = vsubq_f64(n, vmulq_n_f64(history[i], a[i + 1]));
+pub(crate) struct StereoWeight {
+    b: [std::arch::aarch64::float64x2_t; 5],
+    a: [std::arch::aarch64::float64x2_t; 4],
+    state: [std::arch::aarch64::float64x2_t; 4],
+}
+#[cfg(target_arch = "aarch64")]
+impl StereoWeight {
+    #[inline(always)]
+    pub(crate) fn new(b: &[f64; 5], a: &[f64; 5], state: &[[f64; 2]; 4]) -> Self {
+        use std::arch::aarch64::*;
+        // SAFETY (all NEON intrinsics here): NEON is part of the AArch64
+        // baseline; loads read two f64 from arrays of two.
+        unsafe {
+            Self {
+                b: b.map(|v| vdupq_n_f64(v)),
+                a: std::array::from_fn(|i| vdupq_n_f64(a[i + 1])),
+                state: state.map(|v| vld1q_f64(v.as_ptr())),
+            }
+        }
     }
-    let mut y = vmulq_n_f64(n, b[0]);
-    for i in 0..4 {
-        y = vaddq_f64(y, vmulq_n_f64(history[i], b[i + 1]));
+    #[inline(always)]
+    pub(crate) fn step(&mut self, x: [f64; 2]) -> [f64; 2] {
+        use std::arch::aarch64::*;
+        let s = self.state;
+        // SAFETY: NEON is part of the AArch64 baseline; `x` and `out` hold
+        // two f64.
+        unsafe {
+            let mut n = vld1q_f64(x.as_ptr());
+            for (&a, &h) in self.a.iter().zip(&s) {
+                n = vsubq_f64(n, vmulq_f64(a, h));
+            }
+            let mut y = vmulq_f64(self.b[0], n);
+            for (&b, &h) in self.b[1..].iter().zip(&s) {
+                y = vaddq_f64(y, vmulq_f64(b, h));
+            }
+            let tiny = vcltq_f64(vabsq_f64(n), vdupq_n_f64(1e-30));
+            // Rare; a branch keeps the select off the loop-carried chain.
+            if vmaxvq_u32(vreinterpretq_u32_u64(tiny)) != 0 {
+                n = vbslq_f64(tiny, vdupq_n_f64(0.0), n);
+            }
+            self.state = [n, s[0], s[1], s[2]];
+            let mut out = [0.0; 2];
+            vst1q_f64(out.as_mut_ptr(), y);
+            out
+        }
     }
-    let n = vbslq_f64(
-        vcltq_f64(vabsq_f64(n), vdupq_n_f64(1e-30)),
-        vdupq_n_f64(0.0),
-        n,
-    );
-    for i in (1..4).rev() {
-        vst1q_f64(state[i].as_mut_ptr(), history[i - 1]);
+    pub(crate) fn state(&self) -> [[f64; 2]; 4] {
+        self.state.map(|v| {
+            let mut out = [0.0; 2];
+            // SAFETY: `out` holds two f64.
+            unsafe { std::arch::aarch64::vst1q_f64(out.as_mut_ptr(), v) };
+            out
+        })
     }
-    vst1q_f64(state[0].as_mut_ptr(), n);
-    let mut out = [0.0; 2];
-    vst1q_f64(out.as_mut_ptr(), y);
-    out
+}
+
+/// Stereo K-weighting with the two channels in the lanes of one SSE2
+/// register, for loops that keep the filter in registers. `mulpd`, `subpd`
+/// and `addpd` are per-lane IEEE operations, done in `weight_scalar`'s
+/// order, so each channel's output and history are bit-identical to it.
+#[cfg(target_arch = "x86_64")]
+pub(crate) struct StereoWeight {
+    b: [std::arch::x86_64::__m128d; 5],
+    a: [std::arch::x86_64::__m128d; 4],
+    state: [std::arch::x86_64::__m128d; 4],
+}
+#[cfg(target_arch = "x86_64")]
+impl StereoWeight {
+    #[inline(always)]
+    pub(crate) fn new(b: &[f64; 5], a: &[f64; 5], state: &[[f64; 2]; 4]) -> Self {
+        use std::arch::x86_64::*;
+        // SAFETY (all SSE2 intrinsics here): SSE2 is part of the x86-64
+        // baseline.
+        unsafe {
+            Self {
+                b: b.map(|v| _mm_set1_pd(v)),
+                a: std::array::from_fn(|i| _mm_set1_pd(a[i + 1])),
+                state: state.map(|v| _mm_set_pd(v[1], v[0])),
+            }
+        }
+    }
+    #[inline(always)]
+    pub(crate) fn step(&mut self, x: [f64; 2]) -> [f64; 2] {
+        use std::arch::x86_64::*;
+        let s = self.state;
+        // SAFETY: SSE2 is part of the x86-64 baseline; `out` holds two f64.
+        unsafe {
+            let mut n = _mm_set_pd(x[1], x[0]);
+            for (&a, &h) in self.a.iter().zip(&s) {
+                n = _mm_sub_pd(n, _mm_mul_pd(a, h));
+            }
+            let mut y = _mm_mul_pd(self.b[0], n);
+            for (&b, &h) in self.b[1..].iter().zip(&s) {
+                y = _mm_add_pd(y, _mm_mul_pd(b, h));
+            }
+            let magnitude = _mm_andnot_pd(_mm_set1_pd(-0.0), n);
+            let tiny = _mm_cmplt_pd(magnitude, _mm_set1_pd(1e-30));
+            // Rare; a branch keeps the select off the loop-carried chain.
+            if _mm_movemask_pd(tiny) != 0 {
+                n = _mm_andnot_pd(tiny, n);
+            }
+            self.state = [n, s[0], s[1], s[2]];
+            let mut out = [0.0; 2];
+            _mm_storeu_pd(out.as_mut_ptr(), y);
+            out
+        }
+    }
+    pub(crate) fn state(&self) -> [[f64; 2]; 4] {
+        self.state.map(|v| {
+            let mut out = [0.0; 2];
+            // SAFETY: `out` holds two f64.
+            unsafe { std::arch::x86_64::_mm_storeu_pd(out.as_mut_ptr(), v) };
+            out
+        })
+    }
 }
 #[cfg(target_arch = "aarch64")]
 #[target_feature(enable = "neon")]

@@ -30,6 +30,26 @@ fn invalid<T>(s: &'static str) -> Result<T> {
 }
 fn residual(b: &mut Bits<'_>, p: &mut [i32], order: usize) -> Result<()> {
     let _profile = crate::profile::scope(crate::profile::Stage::FlacResidual);
+    #[cfg(target_arch = "x86_64")]
+    if crate::kernels::bit_ops() {
+        // SAFETY: LZCNT/BMI1/BMI2 were detected at runtime; the body is the
+        // same bounds-checked safe Rust.
+        return unsafe { residual_bit_ops(b, p, order) };
+    }
+    residual_body(b, p, order)
+}
+
+/// Rice decoding is a serial chain of leading-zero counts and variable
+/// shifts. Baseline x86-64 lowers those to BSR plus fix-ups and 3-uop
+/// `shl/shr cl`; LZCNT and BMI2 `shlx/shrx` shorten every step.
+#[cfg(target_arch = "x86_64")]
+#[target_feature(enable = "lzcnt,bmi1,bmi2")]
+unsafe fn residual_bit_ops(b: &mut Bits<'_>, p: &mut [i32], order: usize) -> Result<()> {
+    residual_body(b, p, order)
+}
+
+#[inline(always)]
+fn residual_body(b: &mut Bits<'_>, p: &mut [i32], order: usize) -> Result<()> {
     let method = b.get(2)?;
     let partition = b.get(4)?;
     let partitions = 1usize << partition;

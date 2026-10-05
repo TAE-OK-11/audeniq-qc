@@ -27,6 +27,16 @@ impl Backend {
 
 /// Report available CPU features separately from selected DSP kernels. SVE2
 /// availability alone does not imply an SVE2 kernel was selected.
+/// LZCNT, BMI1 and BMI2 (Haswell and later; every AVX2 x86 host has them).
+/// `std` caches the CPUID result, so this is a load and a test.
+#[cfg(target_arch = "x86_64")]
+#[inline]
+pub(crate) fn bit_ops() -> bool {
+    std::is_x86_feature_detected!("lzcnt")
+        && std::is_x86_feature_detected!("bmi1")
+        && std::is_x86_feature_detected!("bmi2")
+}
+
 pub fn cpu_features() -> Vec<&'static str> {
     let mut features = Vec::new();
     #[cfg(target_arch = "aarch64")]

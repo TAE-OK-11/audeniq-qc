@@ -6,8 +6,6 @@
 // streaming MD5/PCM SHA256, verified output and atomic no-clobber publication.
 #[cfg(feature = "reference-codecs")]
 use crate::audio::pcm_sha256;
-use crate::md5::Md5;
-use crate::sha256::Sha256;
 use crate::{
     audio::AudioReader,
     bits::{crc16, crc8, BeWriter},
@@ -191,12 +189,11 @@ pub fn convert_with_options(
         )?)
     };
     let mut samples = Vec::new();
-    let mut hash = Sha256::new();
-    while reader.next(&mut samples, backend)? {
-        {
-            let _profile = crate::profile::scope(crate::profile::Stage::SourceHash);
-            hash.update(crate::audio::pcm_bytes(&samples));
-        }
+    // Source SHA-256 and, when encoding, the STREAMINFO MD5 of the same
+    // PCM in one fused pass (see `pcm_hash`).
+    let encoding = matches!(writer, Normalizer::Encode(_));
+    let mut hash = crate::pcm_hash::PcmHash::new(spec.bits_per_sample, encoding);
+    while reader.next_hashed(&mut samples, backend, &mut hash)? {
         if let Some(analyzer) = &mut analyzer {
             let _profile = crate::profile::scope(crate::profile::Stage::Qc);
             analyzer.push(&samples);
@@ -215,9 +212,12 @@ pub fn convert_with_options(
         }
     }
     let frames = reader.decoded_frames();
-    let source_hash = crate::hex(&hash.finalize());
+    let (source_sha, pcm_md5) = hash.finish_with(reader.verified_md5())?;
+    let source_hash = crate::hex(&source_sha);
     let (f, header, log) = match writer {
-        Normalizer::Encode(encoder) => encoder.finish()?,
+        Normalizer::Encode(encoder) => {
+            encoder.finish(pcm_md5.ok_or(Error::Invalid("missing PCM MD5"))?)?
+        }
         Normalizer::Copy(file, log) => (file, flac_header(&copied.unwrap()), log),
     };
     f.sync_all()?;
@@ -333,7 +333,6 @@ struct Encoder {
     pending: Vec<i32>,
     frames: u64,
     number: u64,
-    md5: Md5,
     limits: Limits,
     bytes: u64,
     min_frame: usize,
@@ -344,7 +343,6 @@ struct Encoder {
     #[cfg(not(feature = "reference-codecs"))]
     backend: Backend,
     profile: Profile,
-    raw: Vec<u8>,
     frame_buffer: Vec<u8>,
     channel_buffers: [Vec<i32>; 4],
     planner: Planner,
@@ -370,7 +368,6 @@ impl Encoder {
             pending: Vec::new(),
             frames: 0,
             number: 0,
-            md5: Md5::new(),
             limits,
             bytes: 42,
             min_frame: usize::MAX,
@@ -381,7 +378,6 @@ impl Encoder {
             #[cfg(not(feature = "reference-codecs"))]
             backend,
             profile,
-            raw: Vec::with_capacity(raw_capacity),
             frame_buffer: Vec::with_capacity(raw_capacity + 128),
             channel_buffers: std::array::from_fn(|_| Vec::new()),
             planner: Planner {
@@ -395,8 +391,6 @@ impl Encoder {
     }
     fn push(&mut self, samples: &[i32]) -> Result<()> {
         let _profile = crate::profile::scope(crate::profile::Stage::Encoder);
-        crate::audio::compact_pcm(samples, self.spec.bits_per_sample, &mut self.raw);
-        self.md5.update(&self.raw);
         let block = self.profile.block * self.spec.channels as usize;
         let mut pos = 0;
         while pos < samples.len() {
@@ -549,7 +543,7 @@ impl Encoder {
         self.number += 1;
         Ok(())
     }
-    fn finish(mut self) -> Result<(File, [u8; 42], FrameLog)> {
+    fn finish(mut self, md5: [u8; 16]) -> Result<(File, [u8; 42], FrameLog)> {
         if !self.pending.is_empty() {
             let pending = std::mem::take(&mut self.pending);
             self.write_block(&pending)?;
@@ -557,7 +551,6 @@ impl Encoder {
         if self.frames == 0 || self.frames > self.limits.max_frames {
             return Err(Error::Invalid("empty/oversized FLAC output"));
         }
-        let md5 = self.md5.finalize();
         let mut b = BeWriter::new();
         b.put(16, self.profile.block as u64);
         b.put(16, self.profile.block as u64);

@@ -3,7 +3,6 @@
 // Copyright (c) 2011 Jan Kokemüller; derived from libebur128 (MIT).
 // AUDENIQ: fused 50ms meters, four-scalar gate history, fixed-size histogram,
 // explicit null for silence, polyphase true peak, reusable decode buffers.
-use crate::sha256::Sha256;
 use crate::{
     audio::AudioReader,
     kernels::Backend,
@@ -152,12 +151,11 @@ pub fn analyze(
     let mut reader = AudioReader::open(path, limits)?;
     let mut analyzer = Analyzer::new(reader.spec.clone(), backend, want_fingerprint)?;
     let mut samples = Vec::new();
-    let mut hash = Sha256::new();
-    while reader.next(&mut samples, backend)? {
-        hash.update(crate::audio::pcm_bytes(&samples));
+    let mut hash = crate::pcm_hash::PcmHash::new(reader.spec.bits_per_sample, false);
+    while reader.next_hashed(&mut samples, backend, &mut hash)? {
         analyzer.push(&samples);
     }
-    Ok(analyzer.finish(reader.decoded_frames(), crate::hex(&hash.finalize())))
+    Ok(analyzer.finish(reader.decoded_frames(), crate::hex(&hash.finish().0)))
 }
 
 /// Shared streaming meters for standalone analysis and verified FLAC conversion.

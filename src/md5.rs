@@ -14,7 +14,7 @@
 //! Each is the RFC function bit for bit; the tests compare against the RFC
 //! vectors and an independent implementation.
 
-const K: [u32; 64] = [
+pub(crate) const K: [u32; 64] = [
     0xd76aa478, 0xe8c7b756, 0x242070db, 0xc1bdceee, 0xf57c0faf, 0x4787c62a, 0xa8304613, 0xfd469501,
     0x698098d8, 0x8b44f7af, 0xffff5bb1, 0x895cd7be, 0x6b901122, 0xfd987193, 0xa679438e, 0x49b40821,
     0xf61e2562, 0xc040b340, 0x265e5a51, 0xe9b6c7aa, 0xd62f105d, 0x02441453, 0xd8a1e681, 0xe7d3fbc8,
@@ -50,7 +50,9 @@ impl Md5 {
         }
     }
 
-    pub(crate) fn update(&mut self, mut data: &[u8]) {
+    /// Count `data`, complete a partially buffered block from its start,
+    /// and return the rest; it is empty unless the buffer is now empty.
+    pub(crate) fn absorb_head<'a>(&mut self, mut data: &'a [u8]) -> &'a [u8] {
         self.length = self.length.wrapping_add(data.len() as u64);
         if self.buffered != 0 {
             let take = (64 - self.buffered).min(data.len());
@@ -58,16 +60,44 @@ impl Md5 {
             self.buffered += take;
             data = &data[take..];
             if self.buffered < 64 {
-                return;
+                return &[];
             }
             let block = self.buffer;
             compress(&mut self.state, std::slice::from_ref(&block));
             self.buffered = 0;
         }
-        let (blocks, tail) = data.as_chunks::<64>();
+        data
+    }
+    /// Whole blocks of already counted data (buffer empty).
+    pub(crate) fn absorb_blocks(&mut self, blocks: &[[u8; 64]]) {
+        debug_assert!(blocks.is_empty() || self.buffered == 0);
         compress(&mut self.state, blocks);
+    }
+    /// The final partial block of already counted data (buffer empty
+    /// unless `tail` is empty).
+    pub(crate) fn absorb_tail(&mut self, tail: &[u8]) {
+        if tail.is_empty() {
+            return;
+        }
+        debug_assert!(self.buffered == 0 && tail.len() < 64);
         self.buffer[..tail.len()].copy_from_slice(tail);
         self.buffered = tail.len();
+    }
+
+    pub(crate) fn is_empty(&self) -> bool {
+        self.length == 0
+    }
+
+    #[cfg(target_arch = "x86_64")]
+    pub(crate) fn state_mut(&mut self) -> &mut [u32; 4] {
+        &mut self.state
+    }
+
+    pub(crate) fn update(&mut self, data: &[u8]) {
+        let rest = self.absorb_head(data);
+        let (blocks, tail) = rest.as_chunks::<64>();
+        self.absorb_blocks(blocks);
+        self.absorb_tail(tail);
     }
 
     pub(crate) fn finalize(mut self) -> [u8; 16] {
@@ -130,8 +160,8 @@ macro_rules! ii {
     };
 }
 
-#[inline]
-fn compress(state: &mut [u32; 4], blocks: &[[u8; 64]]) {
+#[inline(always)]
+pub(crate) fn compress(state: &mut [u32; 4], blocks: &[[u8; 64]]) {
     let [mut a, mut b, mut c, mut d] = *state;
     for block in blocks {
         let mut m = [0u32; 16];

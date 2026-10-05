@@ -75,13 +75,14 @@ pub fn decode(
     let mut samples = Vec::new();
     let mut raw = Vec::new();
     let mut canonical = Vec::new();
-    let mut hash = Sha256::new();
-    while reader.next(&mut samples, backend)? {
+    let mut hash = crate::pcm_hash::PcmHash::new(spec.bits_per_sample, false);
+    while reader.next_hashed(&mut samples, backend, &mut hash)? {
         raw.clear();
         canonical.clear();
         for &x in &samples {
-            canonical.extend_from_slice(&x.to_le_bytes());
-            if format == Format::Wav {
+            if format != Format::Wav {
+                canonical.extend_from_slice(&x.to_le_bytes());
+            } else {
                 raw.extend_from_slice(
                     &(x >> (32 - spec.bits_per_sample)).to_le_bytes()
                         [..(spec.bits_per_sample / 8) as usize],
@@ -101,11 +102,10 @@ pub fn decode(
         {
             return Err(Error::Limit("PCM output bytes / RIFF size"));
         }
-        hash.update(&canonical);
         file.write_all(bytes)?;
     }
     let frames = reader.decoded_frames();
-    let source_hash = crate::hex(&hash.finalize());
+    let source_hash = crate::hex(&hash.finish().0);
     if format == Format::Wav {
         let data_bytes = (output_bytes - 44) as u32;
         if !data_bytes.is_multiple_of(2) {

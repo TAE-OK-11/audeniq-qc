@@ -22,6 +22,7 @@ pub(crate) struct Decoder {
     frame: u64,
     strategy: Option<bool>,
     md5: Option<Md5>,
+    md5_verified: bool,
     packed: Vec<u8>,
 }
 
@@ -743,6 +744,7 @@ impl Decoder {
             frame: 0,
             strategy: None,
             md5,
+            md5_verified: false,
             packed: Vec::new(),
         })
     }
@@ -767,7 +769,16 @@ impl Decoder {
         }
         Ok(())
     }
-    pub fn next(&mut self, out: &mut Vec<i32>, limits: &Limits, retain: bool) -> Result<()> {
+    /// Decode the next frame into `out` (empty at the verified end). With
+    /// `sha`, the caller's canonical SHA-256 of `out` is computed here,
+    /// fused with this decoder's STREAMINFO MD5 when that check is active.
+    pub fn next(
+        &mut self,
+        out: &mut Vec<i32>,
+        limits: &Limits,
+        retain: bool,
+        sha: Option<&mut crate::sha256::Sha256>,
+    ) -> Result<()> {
         self.retained = None;
         if self.decoded == self.spec.frames.unwrap() {
             out.clear();
@@ -782,6 +793,7 @@ impl Decoder {
                 if md5.finalize()[..] != self.info[18..] {
                     return invalid("FLAC MD5 mismatch");
                 }
+                self.md5_verified = true;
             }
             return Ok(());
         }
@@ -814,10 +826,24 @@ impl Decoder {
                     self.strategy = Some(h.variable);
                     self.decoded += h.samples as u64;
                     self.frame += 1;
-                    if let Some(md5) = &mut self.md5 {
-                        let _profile = crate::profile::scope(crate::profile::Stage::FlacMd5);
-                        crate::audio::compact_pcm(out, self.spec.bits_per_sample, &mut self.packed);
-                        md5.update(&self.packed);
+                    let bits = self.spec.bits_per_sample;
+                    match (&mut self.md5, sha) {
+                        (Some(md5), sha) => {
+                            let _profile = crate::profile::scope(crate::profile::Stage::FlacMd5);
+                            crate::audio::compact_pcm(out, bits, &mut self.packed);
+                            match sha {
+                                Some(sha) => crate::pcm_hash::update_both(
+                                    sha,
+                                    &crate::audio::pcm_bytes(out),
+                                    md5,
+                                    &self.packed,
+                                    bits,
+                                ),
+                                None => md5.update(&self.packed),
+                            }
+                        }
+                        (None, Some(sha)) => sha.update(crate::audio::pcm_bytes(out)),
+                        (None, None) => (),
                     }
                     self.retained = retain.then_some(self.start..self.start + n);
                     if retain {
@@ -832,6 +858,15 @@ impl Decoder {
                 Err(e) => return Err(e),
             }
         }
+    }
+    /// Whether the STREAMINFO MD5 is being checked (it is not all zero).
+    pub fn md5_active(&self) -> bool {
+        self.md5.is_some() || self.md5_verified
+    }
+    /// The STREAMINFO MD5 once the decoded PCM has been verified against it.
+    pub fn verified_md5(&self) -> Option<[u8; 16]> {
+        self.md5_verified
+            .then(|| self.info[18..].try_into().unwrap())
     }
     pub fn flac_frame(&self) -> Option<&[u8]> {
         self.retained

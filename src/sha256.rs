@@ -6,7 +6,7 @@
 //! digest; the tests compare them with the FIPS vectors and an independent
 //! implementation.
 
-const K: [u32; 64] = [
+pub(crate) const K: [u32; 64] = [
     0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5, 0x3956c25b, 0x59f111f1, 0x923f82a4, 0xab1c5ed5,
     0xd807aa98, 0x12835b01, 0x243185be, 0x550c7dc3, 0x72be5d74, 0x80deb1fe, 0x9bdc06a7, 0xc19bf174,
     0xe49b69c1, 0xefbe4786, 0x0fc19dc6, 0x240ca1cc, 0x2de92c6f, 0x4a7484aa, 0x5cb0a9dc, 0x76f988da,
@@ -76,8 +76,9 @@ impl Sha256 {
         }
     }
 
-    pub fn update(&mut self, data: impl AsRef<[u8]>) {
-        let mut data = data.as_ref();
+    /// Count `data`, complete a partially buffered block from its start,
+    /// and return the rest; it is empty unless the buffer is now empty.
+    pub(crate) fn absorb_head<'a>(&mut self, mut data: &'a [u8]) -> &'a [u8] {
         self.length = self.length.wrapping_add(data.len() as u64);
         if self.buffered != 0 {
             let take = (64 - self.buffered).min(data.len());
@@ -85,16 +86,42 @@ impl Sha256 {
             self.buffered += take;
             data = &data[take..];
             if self.buffered < 64 {
-                return;
+                return &[];
             }
             let block = self.buffer;
             self.compress(std::slice::from_ref(&block));
             self.buffered = 0;
         }
-        let (blocks, tail) = data.as_chunks::<64>();
+        data
+    }
+    /// Whole blocks of already counted data (buffer empty).
+    pub(crate) fn absorb_blocks(&mut self, blocks: &[[u8; 64]]) {
+        debug_assert!(blocks.is_empty() || self.buffered == 0);
         self.compress(blocks);
+    }
+    /// The final partial block of already counted data (buffer empty
+    /// unless `tail` is empty).
+    pub(crate) fn absorb_tail(&mut self, tail: &[u8]) {
+        if tail.is_empty() {
+            return;
+        }
+        debug_assert!(self.buffered == 0 && tail.len() < 64);
         self.buffer[..tail.len()].copy_from_slice(tail);
         self.buffered = tail.len();
+    }
+
+    /// The compression state when blocks are compressed with the SHA
+    /// extensions (for interleaving with another hash), otherwise `None`.
+    #[cfg(target_arch = "x86_64")]
+    pub(crate) fn sha_ni_state(&mut self) -> Option<&mut [u32; 8]> {
+        (self.engine == Engine::ShaNi).then_some(&mut self.state)
+    }
+
+    pub fn update(&mut self, data: impl AsRef<[u8]>) {
+        let rest = self.absorb_head(data.as_ref());
+        let (blocks, tail) = rest.as_chunks::<64>();
+        self.absorb_blocks(blocks);
+        self.absorb_tail(tail);
     }
 
     pub fn finalize(mut self) -> [u8; 32] {
@@ -176,7 +203,8 @@ fn compress_portable(state: &mut [u32; 8], blocks: &[[u8; 64]]) {
 /// message schedule four words at a time.
 #[cfg(target_arch = "x86_64")]
 #[target_feature(enable = "sha,sse2,ssse3,sse4.1")]
-unsafe fn compress_sha_ni(state: &mut [u32; 8], blocks: &[[u8; 64]]) {
+#[inline]
+pub(crate) unsafe fn compress_sha_ni(state: &mut [u32; 8], blocks: &[[u8; 64]]) {
     use std::arch::x86_64::*;
     let byte_swap = _mm_set_epi64x(0x0c0d0e0f08090a0b, 0x0405060700010203);
     // SAFETY (all loads/stores below): every pointer comes from a live

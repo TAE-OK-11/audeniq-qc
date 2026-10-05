@@ -92,9 +92,21 @@ fn codec_hashes_and_verified_conversion_match_ffmpeg() {
 fn tta_and_wavpack_modes_decode_to_the_source() {
     let d = Dir::new();
     for (name, filter, format) in [
-        ("tone16", "aevalsrc=0.7*sin(2*PI*997*t)|0.3*sin(2*PI*441*t):s=44100:d=0.9", "pcm_s16le"),
-        ("noise16", "anoisesrc=d=0.9:c=pink:r=44100:a=0.5", "pcm_s16le"),
-        ("tone24", "aevalsrc=0.6*sin(2*PI*1999*t)|0.6*sin(2*PI*31*t):s=96000:d=0.4", "pcm_s24le"),
+        (
+            "tone16",
+            "aevalsrc=0.7*sin(2*PI*997*t)|0.3*sin(2*PI*441*t):s=44100:d=0.9",
+            "pcm_s16le",
+        ),
+        (
+            "noise16",
+            "anoisesrc=d=0.9:c=pink:r=44100:a=0.5",
+            "pcm_s16le",
+        ),
+        (
+            "tone24",
+            "aevalsrc=0.6*sin(2*PI*1999*t)|0.6*sin(2*PI*31*t):s=96000:d=0.4",
+            "pcm_s24le",
+        ),
     ] {
         for channels in ["1", "2"] {
             let src = d.0.join(format!("{name}-{channels}.wav"));
@@ -114,7 +126,9 @@ fn tta_and_wavpack_modes_decode_to_the_source() {
             for (i, (ext, args)) in variants.iter().enumerate() {
                 let p = d.0.join(format!("{name}-{channels}-{i}.{ext}"));
                 let mut c = Command::new("ffmpeg");
-                c.args(["-v", "error", "-nostdin", "-i"]).arg(&src).args(args);
+                c.args(["-v", "error", "-nostdin", "-i"])
+                    .arg(&src)
+                    .args(args);
                 if *ext == "wv" && format == "pcm_s24le" {
                     c.args(["-bits_per_raw_sample", "24"]);
                 }

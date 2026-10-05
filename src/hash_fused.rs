@@ -31,13 +31,20 @@ macro_rules! step {
 }
 macro_rules! ff {
     ($a:ident, $b:ident, $c:ident, $d:ident, $m:expr, $i:expr, $s:expr) => {
-        step!($a, $b, $d ^ ($b & ($c ^ $d)), MD5_K[$i], $m, $s)
+        step!(
+            $a,
+            $b,
+            $d ^ ($b & ($c ^ $d)),
+            std::hint::black_box(&MD5_K)[$i],
+            $m,
+            $s
+        )
     };
 }
 macro_rules! gg {
     ($a:ident, $b:ident, $c:ident, $d:ident, $m:expr, $i:expr, $s:expr) => {
         $a = $b.wrapping_add(
-            $a.wrapping_add(MD5_K[$i])
+            $a.wrapping_add(std::hint::black_box(&MD5_K)[$i])
                 .wrapping_add($m)
                 .wrapping_add($c & !$d)
                 .wrapping_add($b & $d)
@@ -47,12 +54,26 @@ macro_rules! gg {
 }
 macro_rules! hh {
     ($a:ident, $b:ident, $c:ident, $d:ident, $m:expr, $i:expr, $s:expr) => {
-        step!($a, $b, $b ^ ($c ^ $d), MD5_K[$i], $m, $s)
+        step!(
+            $a,
+            $b,
+            $b ^ ($c ^ $d),
+            std::hint::black_box(&MD5_K)[$i],
+            $m,
+            $s
+        )
     };
 }
 macro_rules! ii {
     ($a:ident, $b:ident, $c:ident, $d:ident, $m:expr, $i:expr, $s:expr) => {
-        step!($a, $b, $c ^ ($b | !$d), MD5_K[$i], $m, $s)
+        step!(
+            $a,
+            $b,
+            $c ^ ($b | !$d),
+            std::hint::black_box(&MD5_K)[$i],
+            $m,
+            $s
+        )
     };
 }
 macro_rules! rounds {

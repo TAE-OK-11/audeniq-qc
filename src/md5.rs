@@ -121,6 +121,9 @@ impl Md5 {
 }
 
 /// One MD5 step: `a = b + rotl(a + f + K + M, s)` with `f` already formed.
+/// The round constants are read through `black_box` so LLVM cannot treat
+/// them as immediates: it moves constant addends to the end of a sum, which
+/// put an extra add between `f` (the chain) and the rotate.
 macro_rules! step {
     ($a:ident, $b:ident, $f:expr, $k:expr, $m:expr, $s:expr) => {
         $a = $b.wrapping_add(
@@ -133,7 +136,14 @@ macro_rules! step {
 }
 macro_rules! ff {
     ($a:ident, $b:ident, $c:ident, $d:ident, $m:expr, $i:expr, $s:expr) => {
-        step!($a, $b, $d ^ ($b & ($c ^ $d)), K[$i], $m, $s)
+        step!(
+            $a,
+            $b,
+            $d ^ ($b & ($c ^ $d)),
+            std::hint::black_box(&K)[$i],
+            $m,
+            $s
+        )
     };
 }
 macro_rules! gg {
@@ -141,7 +151,7 @@ macro_rules! gg {
         // (b & d) | (c & !d) with disjoint bits: the `c & !d` term and the
         // constants are summed before `b` is needed.
         $a = $b.wrapping_add(
-            $a.wrapping_add(K[$i])
+            $a.wrapping_add(std::hint::black_box(&K)[$i])
                 .wrapping_add($m)
                 .wrapping_add($c & !$d)
                 .wrapping_add($b & $d)
@@ -151,12 +161,19 @@ macro_rules! gg {
 }
 macro_rules! hh {
     ($a:ident, $b:ident, $c:ident, $d:ident, $m:expr, $i:expr, $s:expr) => {
-        step!($a, $b, $b ^ ($c ^ $d), K[$i], $m, $s)
+        step!($a, $b, $b ^ ($c ^ $d), std::hint::black_box(&K)[$i], $m, $s)
     };
 }
 macro_rules! ii {
     ($a:ident, $b:ident, $c:ident, $d:ident, $m:expr, $i:expr, $s:expr) => {
-        step!($a, $b, $c ^ ($b | !$d), K[$i], $m, $s)
+        step!(
+            $a,
+            $b,
+            $c ^ ($b | !$d),
+            std::hint::black_box(&K)[$i],
+            $m,
+            $s
+        )
     };
 }
 

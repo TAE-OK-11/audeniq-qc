@@ -3,6 +3,7 @@
 // Copyright (c) 2011 Jan Kokemüller; derived from libebur128 (MIT).
 // AUDENIQ: fused 50ms meters, four-scalar gate history, fixed-size histogram,
 // explicit null for silence, polyphase true peak, reusable decode buffers.
+use crate::sha256::Sha256;
 use crate::{
     audio::AudioReader,
     kernels::Backend,
@@ -10,7 +11,6 @@ use crate::{
     AudioSpec, Error, Limits, Result,
 };
 use serde::Serialize;
-use sha2::{Digest, Sha256};
 use std::{f64::consts::PI, path::Path};
 
 #[derive(Debug, Serialize)]

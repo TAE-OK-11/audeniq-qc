@@ -7,6 +7,7 @@
 #[cfg(feature = "reference-codecs")]
 use crate::audio::pcm_sha256;
 use crate::md5::Md5;
+use crate::sha256::Sha256;
 use crate::{
     audio::AudioReader,
     bits::{crc16, crc8, BeWriter},
@@ -14,7 +15,6 @@ use crate::{
     AudioSpec, Error, Limits, Result,
 };
 use serde::Serialize;
-use sha2::{Digest, Sha256};
 use std::{
     fs::{File, OpenOptions},
     io::{Seek, SeekFrom, Write},

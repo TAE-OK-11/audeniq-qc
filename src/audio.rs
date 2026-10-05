@@ -637,7 +637,7 @@ pub fn pcm_sha256(
     limits: Limits,
     backend: Backend,
 ) -> Result<(AudioSpec, String, u64)> {
-    use sha2::{Digest, Sha256};
+    use crate::sha256::Sha256;
     let mut r = AudioReader::open(path, limits)?;
     let mut s = Vec::new();
     let mut h = Sha256::new();

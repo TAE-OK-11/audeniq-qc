@@ -18,6 +18,7 @@ mod msb;
 pub mod pcm;
 pub mod probe;
 mod profile;
+mod sha256;
 #[cfg(feature = "profile-native")]
 pub use profile::report as native_profile;
 pub mod resample;

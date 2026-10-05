@@ -1,11 +1,11 @@
 //! Verified WAV or canonical raw s32le export; input sample values are preserved.
+use crate::sha256::Sha256;
 use crate::{
     audio::{pcm_sha256, AudioReader},
     kernels::Backend,
     AudioSpec, Error, Limits, Result,
 };
 use serde::Serialize;
-use sha2::{Digest, Sha256};
 use std::{
     fs::{File, OpenOptions},
     io::{BufWriter, Read, Seek, SeekFrom, Write},

@@ -462,6 +462,58 @@ meter runs at about 7 ns per stereo frame, close to its floor: the
 K-weighting recursion is 1 multiply and 4 dependent subtractions per
 frame (about 20 cycles), and its order is fixed by bit-identical output.
 
+## Round 7: in-repository JPEG/PNG cover validation
+
+`probe::cover` (the `image-probe` command and covers found by `probe`) now
+uses `src/jpeg.rs`, `src/png.rs` and `src/inflate.rs` instead of image
+0.24.9; image, png, jpeg-decoder, fdeflate and crc32fast are no longer in
+the default build (binary 1.49 -> 1.14 MB). The goal was the same accept /
+reject decision and reported size as before, not a stricter or looser one:
+
+* PNG: everything png 0.17 checked before the end of the first image-data
+  run (chunk order and CRCs, per-chunk rules, zlib header, complete DEFLATE
+  stream with the Adler-32 present but unchecked, every row's filter type,
+  APNG frame-size rules, its memory budget), and nothing after it, as png
+  0.17 never read further. Empty chunks are not parsed, as there.
+* JPEG: jpeg-decoder 0.3.2's marker and segment rules and a full Huffman
+  decode of every scan with the same 64-bit bit reader, whose look-ahead
+  decides where markers are found and pads zero bits after one; restart
+  markers, EOB runs, progressive refinement (coefficients kept) and the
+  component and colour-transform requirements at EOI. Pixels are not
+  reconstructed (IDCT, upsampling and colour conversion cannot fail).
+* Files on which the previous decoder **panicked** (abort in release
+  builds): indexed PNGs with a PLTE length that is not a multiple of three
+  or over 768, and lossless JPEGs whose precision image mis-sized. These are
+  now rejected with an error instead of crashing the process.
+
+Differential runs against the previous engine binary (stdout JSON and exit
+status) over 250 generated covers (every PNG colour type and bit depth,
+palette and tRNS, interlace; baseline, progressive, grey, CMYK, restart and
+subsampling JPEGs; five sizes), 254 generated lossless JPEGs and 35,602
+mutations (random, PNG chunk-aware with recomputed CRCs and recompressed
+IDAT, JPEG segment-aware): **no difference except the 376 previous panics**
+([raw](verified-pipeline/round7-covers.txt);
+scripts in `tools/scripts/cover_differential/`). `tests/cover_oracle.rs`
+repeats this on committed fixtures and 3,060 deterministic mutations with
+image as a dev-dependency oracle on every CI run.
+
+CPU (median of 15) and peak RSS, previous -> in-repository:
+
+| Cover | CPU ms | RSS MiB |
+| --- | ---: | ---: |
+| PNG 600x600 (0.3 MB) | 6.4 -> 4.9 | 10.1 -> 10.1 |
+| PNG 1400x1400 (1.5 MB) | 26.9 -> 17.8 | 10.3 -> 10.3 |
+| JPEG 600x600 baseline | 9.2 -> 2.5 | 10.3 -> 10.5 |
+| JPEG 1400x1400 baseline | 34.1 -> 7.4 | 14.7 -> 10.5 |
+| JPEG 1400x1400 progressive | 62.6 -> 31.3 | 26.0 -> 14.4 |
+| JPEG 4000x4000 baseline | 278.7 -> 81.3 | 95.2 -> 10.5 |
+| JPEG 4000x4000 progressive | 590.6 -> 353.6 | 186.7 -> 98.9 |
+| PNG 4000x4000 noise (24.7 MB, incompressible) | 146.2 -> 209.6 | 49.3 -> 26.6 |
+
+The one slower case is a near-incompressible PNG at the 64 MiB input limit's
+scale: fdeflate's literal decoding is faster than this decoder's; typical
+covers are faster and no case uses more memory.
+
 ## Remaining hotspots (after round 6), ranked by expected ROI
 
 1. **MD5 and SHA-256** (round 4): in-repository, fused into one pass, and

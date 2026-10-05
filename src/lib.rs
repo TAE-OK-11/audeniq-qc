@@ -10,6 +10,8 @@ pub mod flac;
 #[cfg(not(feature = "reference-codecs"))]
 mod flac_decode;
 mod hash_fused;
+mod inflate;
+mod jpeg;
 pub mod kernels;
 mod m4a;
 mod md5;
@@ -19,6 +21,7 @@ mod mp4;
 mod msb;
 pub mod pcm;
 mod pcm_hash;
+mod png;
 pub mod probe;
 mod profile;
 mod sha256;

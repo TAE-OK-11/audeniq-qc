@@ -45,24 +45,73 @@ pub fn cover(path: &Path, limits: Limits) -> Result<Value> {
     if meta.len() > (64 * 1024 * 1024).min(limits.max_file_bytes) {
         return Err(Error::Limit("cover bytes"));
     }
-    let mut reader = image::io::Reader::open(path)?.with_guessed_format()?;
-    let format = reader.format().ok_or(Error::Unsupported("cover format"))?;
-    if !matches!(format, image::ImageFormat::Jpeg | image::ImageFormat::Png) {
-        return Err(Error::Unsupported("JPEG/PNG covers only"));
-    }
-    let mut image_limits = image::io::Limits::default();
-    image_limits.max_image_width = Some(8192);
-    image_limits.max_image_height = Some(8192);
-    image_limits.max_alloc = Some(128 * 1024 * 1024);
-    reader.limits(image_limits);
-    let decoded = reader
-        .decode()
-        .map_err(|_| Error::Invalid("cover decode"))?;
+    let data = std::fs::read(path)?;
+    let jpeg = match cover_format(path, &data) {
+        None => return Err(Error::Unsupported("cover format")),
+        Some(CoverFormat::Jpeg) => true,
+        Some(CoverFormat::Png) => false,
+        Some(CoverFormat::Other) => return Err(Error::Unsupported("JPEG/PNG covers only")),
+    };
+    let (width, height) = if jpeg {
+        crate::jpeg::validate(&data)?
+    } else {
+        crate::png::validate(&data)?
+    };
     limits.check()?;
-    let (width, height) = (decoded.width(), decoded.height());
     Ok(
-        json!({"engine":crate::ENGINE_VERSION,"fully_decoded":true,"streams":[{"codec_type":"video","codec_name":if format==image::ImageFormat::Jpeg{"mjpeg"}else{"png"},"width":width,"height":height}],"format":{"format_name":if format==image::ImageFormat::Jpeg{"jpeg_pipe"}else{"png_pipe"}}}),
+        json!({"engine":crate::ENGINE_VERSION,"fully_decoded":true,"streams":[{"codec_type":"video","codec_name":if jpeg{"mjpeg"}else{"png"},"width":width,"height":height}],"format":{"format_name":if jpeg{"jpeg_pipe"}else{"png_pipe"}}}),
     )
+}
+
+enum CoverFormat {
+    Jpeg,
+    Png,
+    Other,
+}
+/// The format the previous image library chose: the first matching magic
+/// number among the formats it knew, else the file extension.
+fn cover_format(path: &Path, data: &[u8]) -> Option<CoverFormat> {
+    const MAGIC: [&[u8]; 23] = [
+        b"\x89PNG\r\n\x1a\n",
+        &[0xff, 0xd8, 0xff],
+        b"GIF89a",
+        b"GIF87a",
+        b"RIFF",
+        b"MM\x00*",
+        b"II*\x00",
+        b"DDS ",
+        b"BM",
+        &[0, 0, 1, 0],
+        b"#?RADIANCE",
+        b"P1",
+        b"P2",
+        b"P3",
+        b"P4",
+        b"P5",
+        b"P6",
+        b"P7",
+        b"farbfeld",
+        b"\0\0\0 ftypavif",
+        b"\0\0\0\x1cftypavif",
+        &[0x76, 0x2f, 0x31, 0x01],
+        b"qoif",
+    ];
+    let head = &data[..data.len().min(16)];
+    if let Some(i) = MAGIC.iter().position(|m| head.starts_with(m)) {
+        return Some(match i {
+            0 => CoverFormat::Png,
+            1 => CoverFormat::Jpeg,
+            _ => CoverFormat::Other,
+        });
+    }
+    let ext = path.extension()?.to_str()?.to_ascii_lowercase();
+    Some(match ext.as_str() {
+        "jpg" | "jpeg" => CoverFormat::Jpeg,
+        "png" => CoverFormat::Png,
+        "avif" | "gif" | "webp" | "tif" | "tiff" | "tga" | "dds" | "bmp" | "ico" | "hdr"
+        | "exr" | "pbm" | "pam" | "ppm" | "pgm" | "ff" | "farbfeld" | "qoi" => CoverFormat::Other,
+        _ => return None,
+    })
 }
 fn insert(tags: &mut Tags, key: &str, value: &[u8]) -> Result<()> {
     if value.len() > 65536 || tags.len() >= 128 {

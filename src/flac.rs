@@ -449,13 +449,12 @@ impl Encoder {
             rice: &self.rice,
             profile: self.profile,
         };
-        let planner = &mut self.planner;
         // FLAC channel assignment: 1 = L/R, 8 = left/side, 9 = side/right,
         // 10 = mid/side; side carries one extra bit. As in FFmpeg's flacenc,
         // second-order fixed residual sums estimate all four pairs, and only
         // the two subframes of the cheapest pair are planned.
-        let (assignment, first, second) = if channels == 1 {
-            (0u64, Plan::new(left, depth, &ctx, planner), None)
+        let (assignment, subframes) = if channels == 1 {
+            (0u64, [Some((0, depth)), None])
         } else {
             mid.resize(n, 0);
             side.resize(n, 0);
@@ -483,22 +482,13 @@ impl Encoder {
             );
             let costs = [l + r, l + d, d + r, m + d];
             let best = (0..4).min_by_key(|&i| costs[i]).unwrap();
-            let (assignment, a, b, a_depth, b_depth) = match best {
-                0 => (1, left, right, depth, depth),
-                1 => (8, left, side, depth, depth + 1),
-                2 => (9, side, right, depth + 1, depth),
-                _ => (10, mid, side, depth, depth + 1),
-            };
-            let first = Plan::new(a, a_depth, &ctx, planner);
-            let second = Plan::new(b, b_depth, &ctx, planner);
-            (assignment, first, Some(second))
-        };
-        let [left, right, mid, side] = &self.channel_buffers;
-        let (a, b): (&[i32], &[i32]) = match assignment {
-            0 | 1 => (left, right),
-            8 => (left, side),
-            9 => (side, right),
-            _ => (mid, side),
+            // Indices into channel_buffers: left, right, mid, side.
+            match best {
+                0 => (1, [Some((0, depth)), Some((1, depth))]),
+                1 => (8, [Some((0, depth)), Some((3, depth + 1))]),
+                2 => (9, [Some((3, depth + 1)), Some((1, depth))]),
+                _ => (10, [Some((2, depth)), Some((3, depth + 1))]),
+            }
         };
         let mut bw = BeWriter::reuse(std::mem::take(&mut self.frame_buffer));
         bw.put(16, 0xfff8);
@@ -511,10 +501,14 @@ impl Encoder {
         bw.put(16, (n - 1) as u64);
         let crc = crc8(&bw.bytes);
         bw.put(8, crc as u64);
+        // The header does not depend on subframe contents, so each subframe
+        // is planned and written in turn: only one planned model (and its
+        // stored residual) is alive at a time.
         let planner = &mut self.planner;
-        first.write(&mut bw, a, &ctx, planner)?;
-        if let Some(second) = second {
-            second.write(&mut bw, b, &ctx, planner)?;
+        for (index, subframe_depth) in subframes.into_iter().flatten() {
+            let samples = &mut self.channel_buffers[index];
+            let plan = Plan::new(samples, subframe_depth, &ctx, planner);
+            plan.write(&mut bw, samples, &ctx, planner)?;
         }
         bw.align();
         let crc = crc16(&bw.bytes);
@@ -781,6 +775,8 @@ enum Mode {
         order: usize,
         shift: u32,
         rice: Box<Rice>,
+        /// Folded residuals stored while the model was costed, if they were.
+        residual: Option<Vec<u32>>,
     },
 }
 #[derive(Clone)]
@@ -1013,7 +1009,15 @@ impl Plan {
                     candidates[i] = None;
                 }
             }
-            for candidate in candidates.iter_mut() {
+            // Cost the highest order first and keep its residual (it wins
+            // most real-music subframes), so the writer need not recompute it;
+            // lower orders are summed only. Iterating downwards, a lower order
+            // also replaces an equal-cost LPC model, which selects the same
+            // model as ascending evaluation with strict comparisons (lowest
+            // order among equal costs; LPC must beat fixed/verbatim
+            // strictly). At most one residual buffer is held per subframe.
+            let mut stored = false;
+            for candidate in candidates.iter_mut().rev() {
                 let Some(LpcCandidate {
                     coefficients,
                     order,
@@ -1023,13 +1027,35 @@ impl Plan {
                 else {
                     continue;
                 };
-                if !ctx.lpc.partition_sums(
-                    samples,
-                    &coefficients[..order],
-                    shift,
-                    size,
-                    &mut planner.sums,
-                ) {
+                let coefficients_used = &coefficients[..order];
+                let mut residual = None;
+                let valid = if stored {
+                    ctx.lpc.partition_sums(
+                        samples,
+                        coefficients_used,
+                        shift,
+                        size,
+                        &mut planner.sums,
+                    )
+                } else {
+                    stored = true;
+                    let mut buffer = planner.residual();
+                    let valid = ctx.lpc.partition_sums_into(
+                        samples,
+                        coefficients_used,
+                        shift,
+                        size,
+                        &mut planner.sums[..parts],
+                        &mut buffer,
+                    );
+                    if valid {
+                        residual = Some(buffer);
+                    } else {
+                        planner.recycle(buffer);
+                    }
+                    valid
+                };
+                if !valid {
                     continue;
                 }
                 let rice = choose_rice(&planner.sums, n, order, finest);
@@ -1039,18 +1065,32 @@ impl Plan {
                     + 5
                     + order as u64 * LPC_PRECISION as u64
                     + rice.bits;
-                if cost < best.cost {
-                    best = Self {
-                        cost,
-                        depth,
-                        wasted,
-                        mode: Mode::Lpc {
-                            coefficients,
-                            order,
-                            shift,
-                            rice: Box::new(rice),
+                let lpc_best = matches!(best.mode, Mode::Lpc { .. });
+                if cost < best.cost || (lpc_best && cost == best.cost) {
+                    let replaced = std::mem::replace(
+                        &mut best,
+                        Self {
+                            cost,
+                            depth,
+                            wasted,
+                            mode: Mode::Lpc {
+                                coefficients,
+                                order,
+                                shift,
+                                rice: Box::new(rice),
+                                residual,
+                            },
                         },
-                    };
+                    );
+                    if let Mode::Lpc {
+                        residual: Some(buffer),
+                        ..
+                    } = replaced.mode
+                    {
+                        planner.recycle(buffer);
+                    }
+                } else if let Some(buffer) = residual {
+                    planner.recycle(buffer);
                 }
             }
         }
@@ -1099,6 +1139,7 @@ impl Plan {
                 order,
                 shift,
                 rice,
+                residual,
             } => {
                 header(bw, 32 + order as u64 - 1);
                 for x in &samples[..order] {
@@ -1109,15 +1150,22 @@ impl Plan {
                 for &c in &coefficients[..order] {
                     bw.put(LPC_PRECISION, c as u64);
                 }
-                let mut residual = planner.residual();
-                // Planning proved every residual of this model fits i32.
-                if ctx
-                    .lpc
-                    .residual_into(samples, &coefficients[..order], shift, &mut residual)
-                    .is_none()
-                {
-                    return Err(Error::Invalid("planned LPC residual range"));
-                }
+                let residual = match residual {
+                    // Stored while costing; every value was range-checked.
+                    Some(residual) => residual,
+                    None => {
+                        let mut residual = planner.residual();
+                        // Planning proved every residual of this model fits i32.
+                        if ctx
+                            .lpc
+                            .residual_into(samples, &coefficients[..order], shift, &mut residual)
+                            .is_none()
+                        {
+                            return Err(Error::Invalid("planned LPC residual range"));
+                        }
+                        residual
+                    }
+                };
                 write_residual(bw, &residual, samples.len(), order, &rice, ctx.rice);
                 planner.recycle(residual);
             }

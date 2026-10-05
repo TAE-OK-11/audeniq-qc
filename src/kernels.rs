@@ -572,6 +572,92 @@ impl LpcKernel {
         }
         dispatch!(1 2 3 4 5 6 7 8)
     }
+    /// [`Self::partition_sums`] that also stores the folded residuals for
+    /// samples `order..` in `out`, exactly as [`Self::residual_into`] would,
+    /// so the winning model need not be recomputed when it is written.
+    pub(crate) fn partition_sums_into(
+        &self,
+        samples: &[i32],
+        coefficients: &[i32],
+        shift: u32,
+        size: usize,
+        sums: &mut [u64],
+        out: &mut Vec<u32>,
+    ) -> bool {
+        assert!(shift <= 15 && size > coefficients.len());
+        assert!(sums.len() * size == samples.len());
+        assert!(coefficients.iter().all(|&c| (-16384..=16383).contains(&c)));
+        out.resize(samples.len() - coefficients.len(), 0);
+        macro_rules! dispatch {
+            ($($n:literal)*) => {
+                match coefficients.len() {
+                    $($n => {
+                        #[cfg(target_arch = "x86_64")]
+                        if self.0 == Backend::Avx2 {
+                            // SAFETY: AVX2 selected at construction; the generic
+                            // body is bounds-checked safe Rust.
+                            return unsafe { lpc_sums_into_avx2::<$n>(samples, coefficients, shift, size, sums, out) };
+                        }
+                        lpc_sums_into::<$n>(samples, coefficients, shift, size, sums, out)
+                    })*
+                    _ => unreachable!("unsupported LPC order"),
+                }
+            };
+        }
+        dispatch!(1 2 3 4 5 6 7 8)
+    }
+}
+
+#[inline(always)]
+fn lpc_sums_into<const N: usize>(
+    samples: &[i32],
+    coefficients: &[i32],
+    shift: u32,
+    size: usize,
+    sums: &mut [u64],
+    out: &mut [u32],
+) -> bool {
+    let mut c = [0i64; N];
+    for (c, &x) in c.iter_mut().zip(coefficients) {
+        *c = x as i64;
+    }
+    let mut bad = 0u64;
+    for (p, sum) in sums.iter_mut().enumerate() {
+        let start = (p * size).max(N);
+        let end = (p + 1) * size;
+        let mut total = 0u64;
+        for ((window, &x), o) in samples[start - N..end - 1]
+            .windows(N)
+            .zip(&samples[start..end])
+            .zip(&mut out[start - N..end - N])
+        {
+            let window: &[i32; N] = window.try_into().unwrap();
+            let mut prediction = 0i64;
+            for j in 0..N {
+                prediction += c[j] * window[N - 1 - j] as i64;
+            }
+            let r = x as i64 - (prediction >> shift);
+            bad |= (r.wrapping_add(1 << 31) as u64) >> 32;
+            let folded = ((r << 1) ^ (r >> 63)) as u64;
+            total += folded;
+            *o = folded as u32;
+        }
+        *sum = total;
+    }
+    bad == 0
+}
+
+#[cfg(target_arch = "x86_64")]
+#[target_feature(enable = "avx2")]
+unsafe fn lpc_sums_into_avx2<const N: usize>(
+    samples: &[i32],
+    coefficients: &[i32],
+    shift: u32,
+    size: usize,
+    sums: &mut [u64],
+    out: &mut [u32],
+) -> bool {
+    lpc_sums_into::<N>(samples, coefficients, shift, size, sums, out)
 }
 
 #[inline(always)]
@@ -994,6 +1080,23 @@ mod tests {
                         let ok =
                             kernel.partition_sums(&samples, &coefficients, shift, size, &mut sums);
                         assert_eq!(ok, stored, "order {order} shift {shift}");
+                        // The storing variant agrees on the verdict, the sums
+                        // and, when valid, every stored residual.
+                        let mut into_sums = vec![u64::MAX; samples.len() / size];
+                        let mut into = vec![7u32; 3];
+                        let into_ok = kernel.partition_sums_into(
+                            &samples,
+                            &coefficients,
+                            shift,
+                            size,
+                            &mut into_sums,
+                            &mut into,
+                        );
+                        assert_eq!(into_ok, ok, "into order {order} shift {shift}");
+                        if ok {
+                            assert_eq!(into_sums, sums);
+                            assert_eq!(into, residual);
+                        }
                         if ok {
                             for (p, &sum) in sums.iter().enumerate() {
                                 let start = (p * size).max(order) - order;

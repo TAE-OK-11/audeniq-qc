@@ -295,9 +295,17 @@ fn weight_scalar<const CHANNELS: usize>(
         for i in (1..4).rev() {
             state[i][ch] = state[i - 1][ch];
         }
-        state[0][ch] = if n.abs() < 1e-30 { 0.0 } else { n };
+        // A select here sat on the filter's loop-carried dependency chain
+        // (abs, compare, mask). A predictable branch keeps it off the chain;
+        // the stored value is identical.
+        state[0][ch] = if n.abs() < 1e-30 { flush_denormal() } else { n };
     }
     out
+}
+#[cold]
+#[inline(never)]
+fn flush_denormal() -> f64 {
+    0.0
 }
 // Independent channels share coefficients. Separate multiply/add preserves
 // the scalar filter's per-channel rounding; no FMA/fast-math approximation.

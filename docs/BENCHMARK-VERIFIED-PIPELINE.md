@@ -652,6 +652,63 @@ branch-free Rice writer against per-code writes (all offsets, k = 0..30,
 long quotients); the existing bit-flip differential test covers the new
 verification. [Raw](verified-pipeline/round10-codec.txt).
 
+## Round 11: FFmpeg-derived decoders redesigned; every codec against FFmpeg
+
+The modules that started as FFmpeg ports were checked part by part. Parts
+already redesigned in earlier rounds stay (FLAC LPC restore, CRC-16, frame
+verification and encoder planning; ALAC output stage and constant-order
+predictors; the QC meter). The TTA and WavPack decoders, untouched ports
+until now, were restructured; the format arithmetic is unchanged (and the
+attribution in THIRD_PARTY.md stays):
+
+* **TTA**: entropy decoding, filtering and output are separate passes over
+  a frame. The adaptive Rice state lives in registers and adapts without
+  branches; the eight-tap filter is rewritten as `C + x * Q` (the delay
+  line's four newest values are affine in the new sample), so the serial
+  path is one multiply, two adds and a shift. A shared LSB reader with
+  unaligned word refills replaces the byte-copying one.
+* **WavPack**: the entropy state is copied into registers per block, the
+  medians update without branches (shifts while no overflow is possible),
+  decorrelation keeps the per-sample term order (overlapping the terms'
+  chains) with branch-free weight steps, and output has a check-free path
+  when there are no extra bits.
+* **FLAC fixed predictors** keep their history in locals.
+
+Errors are reported in the same order as before (an out-of-range or
+extra-bits error before a later decoding error), which 5,400 CRC-repaired
+TTA and 3,000 WavPack mutations confirm against the previous binary.
+
+Single-thread CPU against FFmpeg 8.1.2. Ours decodes with every check and
+hashes (SHA-256 of the canonical PCM); FFmpeg is shown both doing the same
+hash and only decoding:
+
+| Input | Ours | FFmpeg decode + SHA-256 | FFmpeg decode only |
+| --- | ---: | ---: | ---: |
+| FLAC 16/44.1 (album44) | 0.283 s | 0.898 s (-68%) | 0.403 s (-30%) |
+| FLAC 24/96 (album96) | 0.137 s | 0.310 s (-56%) | 0.166 s (-18%) |
+| ALAC 16/44.1 | 0.587 s | 1.312 s (-55%) | 0.916 s (-36%) |
+| ALAC 24/96 | 0.235 s | 0.533 s (-56%) | 0.381 s (-38%) |
+| TTA 16/44.1 | 0.505 s | 0.894 s (-43%) | 0.554 s (-9%) |
+| TTA 24/96 | 0.240 s | 0.425 s (-43%) | 0.269 s (-11%) |
+| WavPack default | 0.682 s | 1.031 s (-34%) | 0.728 s (-6%) |
+| WavPack high | 1.113 s | 1.847 s (-40%) | 1.638 s (-32%) |
+
+Round 10 -> 11: TTA -35%, WavPack -13% (default) and -16% (high).
+
+Conversion to FLAC level 5, ours with SHA-256, STREAMINFO MD5, per-frame
+verification and fsync against FFmpeg encoding only: WAV 16/44.1 -16%,
+ALAC -25%, TTA -18%, WavPack -5%, with 0.06-0.35% smaller files. The one
+row where FFmpeg's encode-only time is lower is WAV 24/96 (+8%): there the
+extra SHA-256 of 32-bit PCM and the verification are a larger share; with
+the same hashing and verification FFmpeg needs a second decode and hash
+pass, which alone takes longer than the difference.
+
+Measured and not kept: an AVX2 TTA filter with the state in vector
+registers (equal: cross-lane latency), WavPack decorrelation as one
+whole-block pass per term (2.3x slower: no overlap between terms), and
+i64 / exact-f64 AVX2 kernels for 24-bit FLAC frame verification (equal).
+[Raw](verified-pipeline/round11-ffmpeg.txt).
+
 ## Remaining hotspots (after round 10), ranked by expected ROI
 
 0. **Conversion after round 10**: the fused MD5/SHA-256 pass is now the

@@ -1,0 +1,53 @@
+Round 11: FFmpeg-derived decoders restructured; every codec against FFmpeg 8.1.2
+Host: 4 vCPU x86-64 container (Intel Xeon @ 2.10GHz). CPU = user+sys, median of 5-7
+interleaved runs, single thread on both sides (ffmpeg -threads 1).
+
+Decode. "ours" = audeniq-qc pcm-hash: full decode with all checks (frame CRCs, FLAC
+MD5, WavPack sample CRC) plus SHA-256 of the canonical left-aligned s32le PCM.
+"ffmpeg+sha256" = same output hashed (-c:a pcm_s32le -f hash -hash sha256);
+"ffmpeg-decode-only" = decode to the null muxer (less work than ours).
+album44.flac       ours=0.283  ffmpeg+sha256=0.898 (-68%)  ffmpeg-decode-only=0.403 (-30%)
+album96.flac       ours=0.137  ffmpeg+sha256=0.310 (-56%)  ffmpeg-decode-only=0.166 (-18%)
+a2.flac            ours=0.226  ffmpeg+sha256=0.734 (-69%)  ffmpeg-decode-only=0.356 (-36%)
+album44.m4a        ours=0.587  ffmpeg+sha256=1.312 (-55%)  ffmpeg-decode-only=0.916 (-36%)
+album96.m4a        ours=0.235  ffmpeg+sha256=0.533 (-56%)  ffmpeg-decode-only=0.381 (-38%)
+album44.tta        ours=0.505  ffmpeg+sha256=0.894 (-43%)  ffmpeg-decode-only=0.554 (-9%)
+album96.tta        ours=0.240  ffmpeg+sha256=0.425 (-43%)  ffmpeg-decode-only=0.269 (-11%)
+album44.wv         ours=0.682  ffmpeg+sha256=1.031 (-34%)  ffmpeg-decode-only=0.728 (-6%)
+album48.wv         ours=0.403  ffmpeg+sha256=0.652 (-38%)  ffmpeg-decode-only=0.437 (-8%)
+album44.wvh.wv     ours=1.113  ffmpeg+sha256=1.847 (-40%)  ffmpeg-decode-only=1.638 (-32%)
+
+Inputs: corpus album44/album96 (16-bit 44.1 kHz, 24-bit 96 kHz real music); TTA and
+WavPack made from the same WAVs with FFmpeg (wavpack default, and -compression_level 3
+as ".wvh"); a2.flac = this engine's level-2 output (fixed predictors only).
+
+Round 10 -> round 11 (pcm-hash CPU)
+album44.tta round10 0.747 -> round11 0.486 (-35%)
+album44.wv round10 0.718 -> round11 0.624 (-13%)
+album44.wvh.wv round10 1.403 -> round11 1.174 (-16%)
+
+Conversion to FLAC level 5. ours = audeniq-qc convert (decode, SHA-256 + STREAMINFO MD5,
+encode, every frame verified, fsync, publish); ffmpeg = encode only (MD5 only, no
+hash, no verification).
+convert album44.wav    ours(hash+verify)=0.462s 17084647 B   ffmpeg-encode-only=0.549s 17144474 B   cpu -16%  size -0.35%
+convert album96.wav    ours(hash+verify)=0.275s 16464270 B   ffmpeg-encode-only=0.254s 16474306 B   cpu +8%  size -0.06%
+convert album44.m4a    ours(hash+verify)=0.958s 17084647 B   ffmpeg-encode-only=1.280s 17144549 B   cpu -25%  size -0.35%
+convert album44.tta    ours(hash+verify)=0.874s 17084647 B   ffmpeg-encode-only=1.064s 17144474 B   cpu -18%  size -0.35%
+convert album44.wv     ours(hash+verify)=0.995s 17084647 B   ffmpeg-encode-only=1.051s 17144474 B   cpu -5%  size -0.35%
+
+TTA stages (album44, perf ms of samples): entropy 617 -> 370 (registers, branch-free
+adaptation, word-refill reader), filter 392 -> 243 (C + x*Q form). An AVX2 filter
+with the state in vector registers measured equal (cross-lane latency) and was not kept.
+WavPack stages (album44): entropy (inlined, register state) 790 -> 650; a per-term
+whole-block decorrelation measured slower (2.8 s vs 1.2 s on the high mode: one serial
+chain per pass instead of overlapping terms) and was replaced by the per-sample order
+with branch-free weight steps; check-free output when there are no extra bits.
+FLAC 24-bit verification: an i64 constant-order path and an exact-f64 AVX2 path
+(products and sums below 2^52 are exact) both measured equal to the existing code; not kept.
+
+Equivalence: 5,400 CRC-repaired TTA mutations (stereo/mono, 16/24-bit) and 3,000 WavPack
+mutations (payload, metadata, header) produce byte-identical stdout/stderr/exit status
+to the round-10 binary (errors in the same order); all corpus outputs, qualify,
+codec-stress, standards and mutation-fuzz counts unchanged; x86 and AArch64 (QEMU)
+decode identically. New test: every TTA/WavPack mode (levels 0-3), mono/stereo,
+16/24-bit, tone/noise decodes to the source PCM.

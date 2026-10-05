@@ -29,6 +29,106 @@ pub(crate) struct Decoder {
 fn invalid<T>(s: &'static str) -> Result<T> {
     Err(Error::Invalid(s))
 }
+/// What a subframe header (RFC 9639 section 9.2) declares. `kind` is None
+/// for a reserved type, which callers reject where the format's other
+/// checks have passed.
+struct Head {
+    kind: Option<Kind>,
+    wasted: u32,
+    /// Bits per sample after removing the wasted bits.
+    width: u32,
+}
+#[derive(Clone, Copy)]
+enum Kind {
+    Constant,
+    Verbatim,
+    Fixed(usize),
+    Lpc(usize),
+}
+
+/// The subframe header: zero padding bit, 6-bit type, wasted-bits flag and
+/// unary count, for a channel of `bits` bits.
+fn head(b: &mut Bits<'_>, bits: u32) -> Result<Head> {
+    if b.get(1)? != 0 {
+        return invalid("FLAC subframe padding");
+    }
+    let kind = match b.get(6)? {
+        0 => Some(Kind::Constant),
+        1 => Some(Kind::Verbatim),
+        t @ 8..=12 => Some(Kind::Fixed((t - 8) as usize)),
+        t @ 32..=63 => Some(Kind::Lpc((t - 31) as usize)),
+        _ => None,
+    };
+    let wasted = if b.get(1)? != 0 {
+        1 + b.unary(false, bits)?
+    } else {
+        0
+    };
+    if wasted >= bits {
+        return invalid("FLAC wasted bits");
+    }
+    Ok(Head {
+        kind,
+        wasted,
+        width: bits - wasted,
+    })
+}
+
+/// LPC parameters after the warm-up samples: coefficient precision (4 bits,
+/// 15 reserved), signed 5-bit shift and `order` signed coefficients.
+fn lpc_parameters(b: &mut Bits<'_>, order: usize) -> Result<(i32, [i32; 32])> {
+    let precision = b.get(4)?;
+    if precision == 15 {
+        return invalid("FLAC LPC precision");
+    }
+    let shift = b.signed(5)?;
+    let mut coeff = [0i32; 32];
+    for c in &mut coeff[..order] {
+        *c = b.signed(precision + 1)?;
+    }
+    Ok((shift, coeff))
+}
+
+/// The residual section's coding method and partition order, checked
+/// against a block of `len` samples with `order` warm-up samples.
+struct Partitions {
+    count: usize,
+    size: usize,
+    /// Width of each partition's parameter; the all-ones value escapes.
+    width: u32,
+    order: usize,
+}
+impl Partitions {
+    fn read(b: &mut Bits<'_>, len: usize, order: usize) -> Result<Self> {
+        let method = b.get(2)?;
+        let count = 1usize << b.get(4)?;
+        if method > 1 || !len.is_multiple_of(count) {
+            return invalid("FLAC Rice partition");
+        }
+        let size = len / count;
+        if size < order {
+            return invalid("FLAC residual predictor order");
+        }
+        Ok(Self {
+            count,
+            size,
+            width: 4 + method,
+            order,
+        })
+    }
+    /// Samples coded in partition `i` (the first skips the warm-up).
+    fn range(&self, i: usize) -> std::ops::Range<usize> {
+        (if i == 0 { self.order } else { i * self.size })..(i + 1) * self.size
+    }
+    /// The next partition's Rice parameter, or None for an escape (whose
+    /// 5-bit sample width the caller reads).
+    #[inline(always)]
+    fn parameter(&self, b: &mut Bits<'_>) -> Result<Option<u32>> {
+        let k = b.get(self.width)?;
+        Ok((k != (1 << self.width) - 1).then_some(k))
+    }
+}
+
 fn residual(b: &mut Bits<'_>, p: &mut [i32], order: usize) -> Result<()> {
     let _profile = crate::profile::scope(crate::profile::Stage::FlacResidual);
     #[cfg(target_arch = "x86_64")]
@@ -51,98 +151,63 @@ unsafe fn residual_bit_ops(b: &mut Bits<'_>, p: &mut [i32], order: usize) -> Res
 
 #[inline(always)]
 fn residual_body(b: &mut Bits<'_>, p: &mut [i32], order: usize) -> Result<()> {
-    let method = b.get(2)?;
-    let partition = b.get(4)?;
-    let partitions = 1usize << partition;
-    if method > 1 || !p.len().is_multiple_of(partitions) {
-        return invalid("FLAC Rice partition");
-    }
-    let size = p.len() / partitions;
-    if size < order {
-        return invalid("FLAC residual predictor order");
-    }
-    let width = 4 + method;
-    let escape = (1 << width) - 1;
-    for i in 0..partitions {
-        let k = b.get(width)?;
-        let begin = if i == 0 { order } else { i * size };
-        let dst = &mut p[begin..(i + 1) * size];
-        if k == escape {
-            let bits = b.get(5)?;
-            for v in dst {
-                *v = b.signed(bits)?;
+    let parts = Partitions::read(b, p.len(), order)?;
+    for i in 0..parts.count {
+        let dst = &mut p[parts.range(i)];
+        match parts.parameter(b)? {
+            Some(k) => b.rice_run(k, dst)?,
+            None => {
+                let bits = b.get(5)?;
+                for v in dst {
+                    *v = b.signed(bits)?;
+                }
             }
-        } else {
-            b.rice_run(k, dst)?;
         }
     }
     Ok(())
 }
 fn subframe(b: &mut Bits<'_>, p: &mut [i32], bits: u32) -> Result<()> {
-    if b.get(1)? != 0 {
-        return invalid("FLAC subframe padding");
-    }
-    let mode = b.get(6)?;
-    let wasted = if b.get(1)? != 0 {
-        1 + b.unary(false, bits)?
-    } else {
-        0
-    };
-    if wasted >= bits {
-        return invalid("FLAC wasted bits");
-    }
-    let width = bits - wasted;
-    match mode {
-        0 => p.fill(b.signed(width)?),
-        1 => {
+    let Head {
+        kind,
+        wasted,
+        width,
+    } = head(b, bits)?;
+    match kind.ok_or(Error::Invalid("FLAC subframe mode"))? {
+        Kind::Constant => p.fill(b.signed(width)?),
+        Kind::Verbatim => {
             for v in p.iter_mut() {
                 *v = b.signed(width)?;
             }
         }
-        8..=12 | 32..=63 => {
-            let order = if mode < 32 {
-                (mode - 8) as usize
-            } else {
-                (mode - 31) as usize
-            };
+        kind @ (Kind::Fixed(order) | Kind::Lpc(order)) => {
             if order > p.len() {
                 return invalid("FLAC predictor order");
             }
             for v in &mut p[..order] {
                 *v = b.signed(width)?;
             }
-            let mut coeff = [0i32; 32];
-            let mut shift = 0;
-            if mode >= 32 {
-                let precision = b.get(4)?;
-                if precision == 15 {
-                    return invalid("FLAC LPC precision");
-                }
-                shift = b.signed(5)?;
-                for c in &mut coeff[..order] {
-                    *c = b.signed(precision + 1)?;
-                }
-            }
-            residual(b, p, order)?;
-            if mode >= 32 {
+            if let Kind::Lpc(_) = kind {
+                let (shift, coeff) = lpc_parameters(b, order)?;
+                residual(b, p, order)?;
+                let c = &coeff[..order];
                 match order {
-                    1 => restore_lpc::<1>(p, &coeff[..order], shift, width)?,
-                    2 => restore_lpc::<2>(p, &coeff[..order], shift, width)?,
-                    3 => restore_lpc::<3>(p, &coeff[..order], shift, width)?,
-                    4 => restore_lpc::<4>(p, &coeff[..order], shift, width)?,
-                    5 => restore_lpc::<5>(p, &coeff[..order], shift, width)?,
-                    6 => restore_lpc::<6>(p, &coeff[..order], shift, width)?,
-                    7 => restore_lpc::<7>(p, &coeff[..order], shift, width)?,
-                    8 => restore_lpc::<8>(p, &coeff[..order], shift, width)?,
-                    10 => restore_lpc::<10>(p, &coeff[..order], shift, width)?,
-                    12 => restore_lpc::<12>(p, &coeff[..order], shift, width)?,
-                    _ => restore_lpc::<0>(p, &coeff[..order], shift, width)?,
+                    1 => restore_lpc::<1>(p, c, shift, width)?,
+                    2 => restore_lpc::<2>(p, c, shift, width)?,
+                    3 => restore_lpc::<3>(p, c, shift, width)?,
+                    4 => restore_lpc::<4>(p, c, shift, width)?,
+                    5 => restore_lpc::<5>(p, c, shift, width)?,
+                    6 => restore_lpc::<6>(p, c, shift, width)?,
+                    7 => restore_lpc::<7>(p, c, shift, width)?,
+                    8 => restore_lpc::<8>(p, c, shift, width)?,
+                    10 => restore_lpc::<10>(p, c, shift, width)?,
+                    12 => restore_lpc::<12>(p, c, shift, width)?,
+                    _ => restore_lpc::<0>(p, c, shift, width)?,
                 }
             } else {
+                residual(b, p, order)?;
                 restore_fixed(p, order, width)?;
             }
         }
-        _ => return invalid("FLAC subframe mode"),
     }
     if wasted != 0 {
         for v in p {
@@ -403,19 +468,11 @@ fn verify_subframe(
     bits: u32,
     backend: Backend,
 ) -> Result<()> {
-    if b.get(1)? != 0 {
-        return invalid("FLAC subframe padding");
-    }
-    let mode = b.get(6)?;
-    let wasted = if b.get(1)? != 0 {
-        1 + b.unary(false, bits)?
-    } else {
-        0
-    };
-    if wasted >= bits {
-        return invalid("FLAC wasted bits");
-    }
-    let width = bits - wasted;
+    let Head {
+        kind,
+        wasted,
+        width,
+    } = head(b, bits)?;
     // `decode` outputs v << wasted for a `width`-bit v, so x must have zero
     // low bits and v must equal x >> wasted (which is then within `width`).
     if wasted != 0 {
@@ -431,26 +488,21 @@ fn verify_subframe(
     }
     let x = &*x;
     let mismatch = || invalid("lossless frame verification");
-    match mode {
-        0 => {
+    match kind.ok_or(Error::Invalid("FLAC subframe mode"))? {
+        Kind::Constant => {
             let value = b.signed(width)?;
             if x.iter().any(|&v| v != value) {
                 return mismatch();
             }
         }
-        1 => {
+        Kind::Verbatim => {
             for &v in x {
                 if b.signed(width)? != v {
                     return mismatch();
                 }
             }
         }
-        8..=12 | 32..=63 => {
-            let order = if mode < 32 {
-                (mode - 8) as usize
-            } else {
-                (mode - 31) as usize
-            };
+        kind @ (Kind::Fixed(order) | Kind::Lpc(order)) => {
             if order > x.len() {
                 return invalid("FLAC predictor order");
             }
@@ -459,22 +511,12 @@ fn verify_subframe(
                     return mismatch();
                 }
             }
-            let mut coeff = [0i32; 32];
-            let mut shift = 0;
-            if mode >= 32 {
-                let precision = b.get(4)?;
-                if precision == 15 {
-                    return invalid("FLAC LPC precision");
-                }
-                shift = b.signed(5)?;
-                for c in &mut coeff[..order] {
-                    *c = b.signed(precision + 1)?;
-                }
-            }
-            // The residuals that make the decoder reproduce x exactly; the
-            // stream must hold exactly their codes.
+            let lpc = match kind {
+                Kind::Lpc(_) => Some(lpc_parameters(b, order)?),
+                _ => None,
+            };
             r.resize(x.len(), 0);
-            let fits = if mode >= 32 {
+            let fits = if let Some((shift, coeff)) = lpc {
                 let c = &coeff[..order];
                 match order {
                     1 => expected_lpc::<1>(x, c, shift, r, backend),
@@ -494,7 +536,6 @@ fn verify_subframe(
                 return mismatch();
             }
         }
-        _ => return invalid("FLAC subframe mode"),
     }
     Ok(())
 }
@@ -651,32 +692,20 @@ fn expected_lpc_wide(x: &[i32], coeff: &[i32], shift: i32, e: &mut [i32]) -> boo
 /// in the same places, by induction over the values.
 fn verify_residual(b: &mut Bits<'_>, e: &[i32], order: usize) -> Result<bool> {
     let _profile = crate::profile::scope(crate::profile::Stage::FlacResidual);
-    let method = b.get(2)?;
-    let partition = b.get(4)?;
-    let partitions = 1usize << partition;
-    if method > 1 || !e.len().is_multiple_of(partitions) {
-        return invalid("FLAC Rice partition");
-    }
-    let size = e.len() / partitions;
-    if size < order {
-        return invalid("FLAC residual predictor order");
-    }
-    let width = 4 + method;
-    let escape = (1 << width) - 1;
+    let parts = Partitions::read(b, e.len(), order)?;
     let mut ok = true;
-    for i in 0..partitions {
-        let k = b.get(width)?;
-        let begin = if i == 0 { order } else { i * size };
-        let values = &e[begin..(i + 1) * size];
-        if k == escape {
-            let bits = b.get(5)?;
-            for &v in values {
-                ok &= b.signed(bits)? == v;
-            }
-        } else {
-            match rice_codes_at(b.data(), b.pos, k, values) {
+    for i in 0..parts.count {
+        let values = &e[parts.range(i)];
+        match parts.parameter(b)? {
+            Some(k) => match rice_codes_at(b.data(), b.pos, k, values) {
                 Some(end) => b.seek(end)?,
                 None => return Ok(false),
+            },
+            None => {
+                let bits = b.get(5)?;
+                for &v in values {
+                    ok &= b.signed(bits)? == v;
+                }
             }
         }
     }

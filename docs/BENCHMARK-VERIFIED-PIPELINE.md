@@ -709,6 +709,39 @@ whole-block pass per term (2.3x slower: no overlap between terms), and
 i64 / exact-f64 AVX2 kernels for 24-bit FLAC frame verification (equal).
 [Raw](verified-pipeline/round11-ffmpeg.txt).
 
+## Round 12: FLAC encoder cost model, block size and stereo trials
+
+The encoder parts still following FFmpeg's choices were rederived from the
+format and measured on the 55-file corpus (decoders are unchanged):
+
+* **Rice estimate**: with parameter k a value u costs k + 1 + floor(u / 2^k)
+  bits; if the k low bits are spread evenly the quotients of a partition
+  total about (2 sum - count (2^k - 1)) / 2^(k+1). The parameter is
+  floor(log2(mean)), found from bit lengths without a division (a division
+  per partition and order made the fixed-predictor stage 15% slower).
+  Evaluating its neighbours as well saved 0.0006% for 2% more CPU. The
+  writer still picks each partition's exact best parameter.
+* **Block size**: levels 2-8 use 4096-frame blocks. Level 5 had 4608 and
+  levels 6-8 up to 32768, which compressed worse than level 5.
+* **Stereo assignment**: level 7 plans the channels of the two best
+  estimated assignments and level 8 all four, and the smallest exact pair
+  is written; lower levels plan only the best estimate.
+* **LPC quantization**: the error-feedback rounding stays; plain rounding
+  made the corpus 0.25% larger.
+
+| Level | Bytes | vs level 5 before |
+| --- | ---: | ---: |
+| 5 before | 300,072,692 | |
+| 5 | 299,882,124 | -0.064% |
+| 6 | 299,846,990 | -0.075% |
+| 7 | 299,519,096 | -0.184% |
+| 8 | 299,494,407 | -0.193% |
+
+Every level now compresses at least as well as the one below it. Level 5
+CPU is neutral (whole corpus, eight alternating runs: 11.48 s before,
+11.50 s after) and peak RSS unchanged; levels 6-8 use about 1.6 MiB less.
+[Raw](verified-pipeline/round12-encoder.txt).
+
 ## Remaining hotspots (after round 10), ranked by expected ROI
 
 0. **Conversion after round 10**: the fused MD5/SHA-256 pass is now the

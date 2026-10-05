@@ -30,6 +30,7 @@ impl Backend {
 /// LZCNT, BMI1 and BMI2 (Haswell and later; every AVX2 x86 host has them).
 /// `std` caches the CPUID result, so this is a load and a test.
 #[cfg(target_arch = "x86_64")]
+#[cfg_attr(feature = "reference-codecs", allow(dead_code))] // native decoders only
 #[inline]
 pub(crate) fn bit_ops() -> bool {
     std::is_x86_feature_detected!("lzcnt")

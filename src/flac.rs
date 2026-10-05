@@ -384,7 +384,10 @@ impl Encoder {
             raw: Vec::with_capacity(raw_capacity),
             frame_buffer: Vec::with_capacity(raw_capacity + 128),
             channel_buffers: std::array::from_fn(|_| Vec::new()),
-            planner: Planner::default(),
+            planner: Planner {
+                fixed_sums: vec![[0; PARTITIONS]; 5],
+                ..Default::default()
+            },
             log: FrameLog::default(),
             #[cfg(not(feature = "reference-codecs"))]
             verify: Default::default(),
@@ -725,6 +728,46 @@ fn fixed_sum(x: &[i32], order: usize, start: usize, end: usize) -> u64 {
     total
 }
 
+/// `sums[order][i] == fixed_sum(x, order, max(i * size, order), (i + 1) * size)`
+/// for every order 0..=4, from one traversal instead of five. Residuals are
+/// formed as repeated differences of the same samples, which equal the
+/// direct fixed-predictor formulas as integers (no intermediate exceeds the
+/// order-4 residual bound), so every sum and planning decision is unchanged.
+fn fixed_partition_sums(x: &[i32], size: usize, parts: usize, sums: &mut [[u64; PARTITIONS]]) {
+    for i in 0..parts {
+        let (lo, hi) = (i * size, (i + 1) * size);
+        let mut acc = [0u64; 5];
+        // Order k has residuals only from sample k; before sample 4 the
+        // orders are summed separately (first partition only).
+        let start = lo.max(4).min(hi);
+        for (order, acc) in acc.iter_mut().enumerate() {
+            if lo.max(order) < start {
+                *acc = fixed_sum(x, order, lo.max(order), start);
+            }
+        }
+        let [a0, a1, a2, a3, a4] = &mut acc;
+        for ((((&a, &b), &c), &d), &e) in x[start..hi]
+            .iter()
+            .zip(&x[start - 1..hi - 1])
+            .zip(&x[start - 2..hi - 2])
+            .zip(&x[start - 3..hi - 3])
+            .zip(&x[start - 4..hi - 4])
+        {
+            let (d1, d1b, d1c, d1d) = (a - b, b - c, c - d, d - e);
+            let (d2, d2b, d2c) = (d1 - d1b, d1b - d1c, d1c - d1d);
+            let (d3, d3b) = (d2 - d2b, d2b - d2c);
+            *a0 += fold(a) as u64;
+            *a1 += fold(d1) as u64;
+            *a2 += fold(d2) as u64;
+            *a3 += fold(d3) as u64;
+            *a4 += fold(d3 - d3b) as u64;
+        }
+        for (sums, total) in sums.iter_mut().zip(acc) {
+            sums[i] = total;
+        }
+    }
+}
+
 #[derive(Clone)]
 enum Mode {
     Constant,
@@ -759,6 +802,7 @@ struct Planner {
     windowed: Vec<f64>,
     residuals: Vec<Vec<u32>>,
     sums: Vec<u64>,
+    fixed_sums: Vec<[u64; PARTITIONS]>,
 }
 impl Planner {
     fn residual(&mut self) -> Vec<u32> {
@@ -849,13 +893,23 @@ impl Plan {
         let size = n >> finest;
         let parts = 1usize << finest;
         planner.sums.resize(parts, 0);
+        let fused = profile.fixed == 4 && size > 4;
+        if fused {
+            fixed_partition_sums(samples, size, parts, &mut planner.fixed_sums);
+        }
         for order in 0..=profile.fixed.min(n - 1) {
             if size <= order {
                 break;
             }
-            for (i, sum) in planner.sums.iter_mut().enumerate() {
-                let start = (i * size).max(order);
-                *sum = fixed_sum(samples, order, start, (i + 1) * size);
+            if fused {
+                planner
+                    .sums
+                    .copy_from_slice(&planner.fixed_sums[order][..parts]);
+            } else {
+                for (i, sum) in planner.sums.iter_mut().enumerate() {
+                    let start = (i * size).max(order);
+                    *sum = fixed_sum(samples, order, start, (i + 1) * size);
+                }
             }
             let rice = choose_rice(&planner.sums, n, order, finest);
             let cost = header + order as u64 * depth as u64 + rice.bits;
@@ -1204,6 +1258,34 @@ mod tests {
     ) -> bool {
         crate::flac_decode::verify(frame, spec, block, samples, scratch, Backend::detect())
             .is_ok_and(|(length, _)| length == frame.len())
+    }
+
+    #[test]
+    fn fused_fixed_sums_equal_per_order_sums() {
+        let mut seed = 99u64;
+        for bits in [16u32, 17, 24, 25] {
+            let max = (1i64 << (bits - 1)) - 1;
+            for (size, parts) in [(5usize, 1usize), (18, 256), (16, 8), (4608, 1), (37, 3)] {
+                let n = size * parts;
+                for pattern in 0..3 {
+                    let x: Vec<i32> = (0..n)
+                        .map(|i| match pattern {
+                            0 => (rng(&mut seed) as i64 % (max + 1)) as i32,
+                            1 => (if i % 2 == 0 { max } else { -max - 1 }) as i32,
+                            _ => ((i as f64 * 0.01).sin() * max as f64) as i32,
+                        })
+                        .collect();
+                    let mut sums = vec![[0u64; PARTITIONS]; 5];
+                    fixed_partition_sums(&x, size, parts, &mut sums);
+                    for (order, sums) in sums.iter().enumerate() {
+                        for (i, &sum) in sums[..parts].iter().enumerate() {
+                            let start = (i * size).max(order);
+                            assert_eq!(sum, fixed_sum(&x, order, start, (i + 1) * size));
+                        }
+                    }
+                }
+            }
+        }
     }
 
     #[test]

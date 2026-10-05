@@ -556,7 +556,49 @@ Float formatting alone is still about 3x slower than ryu (bounded by Rust's
 release build of the engine takes 6.2 s instead of 13.3 s (no proc-macro
 derive). [Raw](verified-pipeline/round8-json.txt).
 
-## Remaining hotspots (after round 6), ranked by expected ROI
+## Round 9: profiling the in-repository components
+
+Every command was profiled again on real music (perf cpu-clock sampling; the
+VM has no hardware counters), first as whole commands and then per function
+and per source line, and each in-repository component was checked against its
+floor. Three were not at it; everything else was (see the list below).
+
+| Change | Where it showed | Effect |
+| --- | --- | --- |
+| FLAC CRC-16 folded with carry-less multiplication (`src/crc16.rs`): the non-reflected form of the CRC-32 folding, PCLMULQDQ / PMULL, four lanes, constants x^n mod P computed at compile time; the 128-bit residue and the tail go through the slicing table | 3-4% of every FLAC decode and of the encoder's frame CRC | 17.1 -> 1.6 ms on album44 (about 10x) |
+| LPC restore with the last N samples in a register ring and the loop unrolled N times; the residual is added before the shift ((s + r*2^k) >> k == (s >> k) + r) and the newest product last, all exact in i64 | 22-26% of FLAC decode; the old loop was at one multiply per tap plus a store-to-load round trip per sample | order 8: 67.7 -> 41.8 ms; order 7: 25.4 -> 16.2 ms |
+| Fingerprint tap: the next output's input count is cached instead of recomputed per input; the dedicated `fingerprint` command counts, without mixing, the inputs that no retained 30 s window reads; `round()` (a libm call) replaced by an exact branch-free equivalent | 8-36% of fingerprint workloads | tap 67.6 -> 23.0 ms, mixing 43.5 -> 11.3 ms, roundf 9.7 -> 0 ms |
+
+Paired CPU, previous -> this round (median ratio, 95% CI):
+
+| Command | Input | Change |
+| --- | --- | --- |
+| `pcm-hash` | album44.flac / album96.flac | -14.2% [-16.8, -11.1] / -19.8% [-22.2, -18.3] |
+| `analyze` | album44.flac / album44.wav / album44.m4a | -12.0% [-18.4, -9.1] / -0.7% (noise) / 0.0% (noise) |
+| `analyze --fingerprint` | album44.flac / album44.wav | -18.7% [-22.5, -9.4] / -13.0% [-20.0, -6.0] |
+| `fingerprint` | album44.flac / album44.wav | -23.5% [-28.8, -18.4] / -46.7% [-53.5, -39.6] |
+| `convert` | album44.flac / album44.m4a / album44.wav | -11.3% [-17.6, -8.7] / -6.6% [-9.2, +0.3] / -2.0% (noise) |
+
+Peak RSS is unchanged within run-to-run variation (binary +3.9 KB). WAV and
+ALAC inputs gain little because their time is in the meter, SHA-256 and the
+ALAC predictor, which earlier rounds left at their floors.
+
+Outputs are unchanged: 2,931 corpus command outputs identical to the previous
+binary; `analyze --fingerprint`, `fingerprint` and `pcm-hash` identical on x86
+and AArch64 (QEMU); qualify, codec-stress and standards reports identical;
+mutation-fuzz counts identical. New tests compare the CRC-16 with a bit-wise
+definition for every length up to 1,200 bytes at four offsets, the
+fingerprint's skipped inputs with pushing every input (several rates, lengths
+around the three-window threshold, any stretch size), and the rounding
+replacement with `round().clamp()` on 6 million values and the special
+cases. The LPC tests already cover every order, width, shift and short tail.
+
+Measured and rejected this round: the register-window LPC without unrolling
+(slower, extra moves), four fingerprint dot products per call (+10..13%), a
+branchy rounding replacement (+13..16%, mispredicts), and a fixed-width JSON
+integer copy (slower). [Raw](verified-pipeline/round9-profile.txt).
+
+## Remaining hotspots (after round 9), ranked by expected ROI
 
 1. **MD5 and SHA-256** (round 4): in-repository, fused into one pass, and
    near the per-step latency floor (MD5 about 4.5 cycles per step; SHA-NI
@@ -572,6 +614,11 @@ derive). [Raw](verified-pipeline/round8-json.txt).
 5. **QC meter** (round 6): near the K-weighting recursion's latency floor
    (about 20 cycles per frame); shortening it would change the operation
    order and therefore the reported bits. True peak is mostly skipped.
+6. **FLAC LPC restore** (round 9): now bound by its loop-carried multiply,
+   add and shift per sample; a SIMD history term would put a vector
+   reduction on that path.
+7. **PNG inflate** (round 7): one table load per literal (~7 cycles); only
+   near-incompressible covers spend noticeable time in it.
 
 Repository hygiene: `reference-target/` (1,784 build artifacts) is tracked in git.
 

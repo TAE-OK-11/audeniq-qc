@@ -937,11 +937,32 @@ fn restore_lpc<const N: usize>(p: &mut [i32], coeff: &[i32], shift: i32, bits: u
     for &v in &p[..order] {
         bad |= (v as i64).wrapping_sub(low) as u64 > span;
     }
+    if N != 0 && (0..32).contains(&shift) && p.len() >= 2 * N {
+        let blocks = (p.len() - N) / N * N;
+        bad |= lpc_unrolled::<N>(&mut p[..N + blocks], coeff, shift as u32, low, span);
+        // The remaining samples continue from the restored ones below.
+        return lpc_tail(p, coeff, shift, bits, N + blocks, bad);
+    }
+    lpc_tail(p, coeff, shift, bits, order, bad)
+}
+
+/// Samples from `start` restored one at a time from the stored window.
+fn lpc_tail(
+    p: &mut [i32],
+    coeff: &[i32],
+    shift: i32,
+    bits: u32,
+    start: usize,
+    mut bad: bool,
+) -> Result<()> {
+    let order = coeff.len();
+    let low = -(1i64 << (bits - 1));
+    let span = (1u64 << bits) - 1;
     let largest = coeff.iter().map(|c| c.unsigned_abs()).max().unwrap_or(0) as u64;
     // Sum of |c| * |x| over the order, with |x| <= 2^(bits-1).
     let bound = largest * order as u64 * (1u64 << (bits - 1));
     if (0..32).contains(&shift) && bound < 1 << 31 {
-        for i in order..p.len() {
+        for i in start..p.len() {
             let window = &p[i - order..i];
             let mut sum = 0i32;
             for j in 0..order {
@@ -952,7 +973,7 @@ fn restore_lpc<const N: usize>(p: &mut [i32], coeff: &[i32], shift: i32, bits: u
             p[i] = v as i32;
         }
     } else {
-        for i in order..p.len() {
+        for i in start..p.len() {
             let window = &p[i - order..i];
             let mut sum = 0i64;
             for j in 0..order {
@@ -972,6 +993,46 @@ fn restore_lpc<const N: usize>(p: &mut [i32], coeff: &[i32], shift: i32, bits: u
         return invalid("FLAC reconstructed sample range");
     }
     Ok(())
+}
+
+/// Fixed-order LPC restoration of `p[N..]`, whose length must be a multiple
+/// of N, with the last N samples in a register ring and the loop unrolled N
+/// times so that no sample moves between registers. All arithmetic is exact
+/// in i64 while the samples are in range (|sum| < 2^51), and
+/// (sum + r * 2^shift) >> shift == (sum >> shift) + r, so the residual is
+/// added before the shift and the newest product last: the loop-carried path
+/// is one multiply, two adds and the shift. Once a sample is out of range the
+/// subframe fails, whatever is computed after it (wrapping operations keep
+/// that well defined). Returns whether any sample was out of range.
+#[inline(always)]
+fn lpc_unrolled<const N: usize>(
+    p: &mut [i32],
+    coeff: &[i32],
+    shift: u32,
+    low: i64,
+    span: u64,
+) -> bool {
+    let c: [i64; N] = std::array::from_fn(|j| coeff[j] as i64);
+    // With head h, sample i - 1 - j is w[(h + j) % N]; h starts at 0.
+    let mut w: [i64; N] = std::array::from_fn(|j| p[N - 1 - j] as i64);
+    let mut seen = 0u64;
+    let (blocks, _) = p[N..].as_chunks_mut::<N>();
+    for block in blocks {
+        for (u, v) in block.iter_mut().enumerate() {
+            let h = (N - u) % N;
+            let mut sum = (*v as i64) << shift;
+            for j in (1..N).rev() {
+                sum = sum.wrapping_add(c[j].wrapping_mul(w[(h + j) % N]));
+            }
+            let x = sum.wrapping_add(c[0].wrapping_mul(w[h])) >> shift;
+            seen |= x.wrapping_sub(low) as u64;
+            *v = x as i32;
+            // The oldest sample's slot becomes the newest.
+            w[(h + N - 1) % N] = x;
+        }
+    }
+    // span is 2^bits - 1, so one OR collects every out-of-range sample.
+    seen > span
 }
 
 #[cfg(test)]

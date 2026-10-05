@@ -194,69 +194,31 @@ impl BeWriter {
     }
 }
 
-const fn crc_tables() -> ([u8; 256], [u16; 256]) {
-    let mut c8 = [0; 256];
-    let mut c16 = [0; 256];
+const fn crc8_table() -> [u8; 256] {
+    let mut t = [0; 256];
     let mut i = 0;
     while i < 256 {
         let mut a = i as u8;
-        let mut b = (i as u16) << 8;
         let mut j = 0;
         while j < 8 {
             a = (a << 1) ^ if a & 0x80 != 0 { 7 } else { 0 };
-            b = (b << 1) ^ if b & 0x8000 != 0 { 0x8005 } else { 0 };
             j += 1;
         }
-        c8[i] = a;
-        c16[i] = b;
+        t[i] = a;
         i += 1;
     }
-    (c8, c16)
+    t
 }
-const CRC: ([u8; 256], [u16; 256]) = crc_tables();
-
-const fn crc16_slices() -> [[u16; 256]; 8] {
-    let mut tables = [[0; 256]; 8];
-    tables[0] = CRC.1;
-    let mut slice = 1;
-    while slice < 8 {
-        let mut i = 0;
-        while i < 256 {
-            let previous = tables[slice - 1][i];
-            tables[slice][i] = (previous << 8) ^ CRC.1[(previous >> 8) as usize];
-            i += 1;
-        }
-        slice += 1;
-    }
-    tables
-}
-const CRC16: [[u16; 256]; 8] = crc16_slices();
+const CRC8: [u8; 256] = crc8_table();
 
 pub fn crc8(data: &[u8]) -> u8 {
     let mut crc = 0u8;
     for b in data {
-        crc = CRC.0[(crc ^ b) as usize];
+        crc = CRC8[(crc ^ b) as usize];
     }
     crc
 }
-pub fn crc16(data: &[u8]) -> u16 {
-    let mut crc = 0u16;
-    let (blocks, tail) = data.as_chunks::<8>();
-    for b in blocks {
-        crc = CRC16[7][((crc >> 8) as u8 ^ b[0]) as usize]
-            ^ CRC16[6][(crc as u8 ^ b[1]) as usize]
-            ^ CRC16[5][b[2] as usize]
-            ^ CRC16[4][b[3] as usize]
-            ^ CRC16[3][b[4] as usize]
-            ^ CRC16[2][b[5] as usize]
-            ^ CRC16[1][b[6] as usize]
-            ^ CRC16[0][b[7] as usize];
-    }
-    for b in tail {
-        crc = (crc << 8) ^ CRC.1[((crc >> 8) as u8 ^ b) as usize];
-    }
-    crc
-}
+pub use crate::crc16::crc16;
 pub use crate::crc32::crc32;
 
 #[cfg(test)]

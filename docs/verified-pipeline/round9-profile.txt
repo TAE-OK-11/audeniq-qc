@@ -1,0 +1,70 @@
+Round 9: profiling of the in-repository components and fixes
+Host: 4 vCPU x86-64 container (Intel Xeon @ 2.10GHz, AVX-512, PCLMULQDQ); no
+hardware counters in this VM, so time is sampled with perf cpu-clock (20 kHz).
+Previous = round-8 binary (e17c79d); new = this commit.
+
+Whole-command profiles, previous binary (share of samples, real music)
+  analyze album44.wav            meter 47%, SHA-256 (SHA-NI) 35%, true peak 6%, read() copy 5%
+  analyze album44.flac           MD5+SHA fused 27%, meter 22%, FLAC Rice 18%, LPC restore 22%, CRC-16 3%
+  analyze album44.m4a            ALAC predictor 57%, ALAC Rice 22%, meter 12%, SHA 6%
+  analyze album44.flac --fp      meter 25%, hash 21%, Rice 14%, LPC 15%, fingerprint tap 8.5%, dot 3%
+  convert album44.wav            encoder spread (write_block 22%, Rice writer 8%, choose_rice 7%, LPC sums 10%), hash 16%, verify Rice 11%
+  convert album44.flac           hash 34%, Rice 24%, LPC restore 25%, CRC-16 3.6%
+  pcm-hash album44.flac          hash 37%, Rice 26%, LPC restore 26%, CRC-16 4.3%
+
+LPC restore: album44.flac has 9.70M order-8 subframe samples (of 18.1M); the
+old per-sample loop took ~8.7 cycles each, about its one-multiply-per-tap
+throughput floor plus a store-to-load round trip per sample.
+
+Function-level, pcm-hash album44.flac (median of 7 sampled runs, ms of samples)
+                         previous   new
+  md5_1_sha_2             151.7    147.4
+  FLAC Rice               101.8    101.0
+  LPC restore order 8      67.7     41.8
+  LPC restore order 7      25.4     16.2
+  LPC restore order 6      14.0      8.8
+  CRC-16                   17.1      1.6 (crc16::x86::crc16)
+
+Function-level, fingerprint album44.wav
+                         previous   new
+  FingerprintTap::push     67.6     23.0 (emit; push is inlined)
+  fingerprint() mixing     43.5     11.3
+  dot_avx2                 25.1     18.3
+  roundf                    9.7      0   (removed)
+
+Paired CPU (user+sys), median ratio new/old, bootstrap 95% CI
+pcm-hash               album44.flac   A=0.299 B=0.253 -14.2% CI[-16.8,-11.1]
+pcm-hash               album96.flac   A=0.148 B=0.118 -19.8% CI[-22.2,-18.3]
+pcm-hash               album192.flac  A=0.110 B=0.089 -18.5% CI[-20.2,+3.2]
+analyze                album44.flac   A=0.376 B=0.326 -12.0% CI[-18.4,-9.1]
+analyze                album44.wav    A=0.148 B=0.147 -0.7% CI[-2.7,+1.2]
+analyze                album44.m4a    A=0.759 B=0.765 -0.0% CI[-5.4,+5.5]
+analyze                album96.flac   A=0.179 B=0.175 -13.5% CI[-15.9,+3.4]
+analyze --fingerprint  album44.flac   A=0.509 B=0.421 -18.7% CI[-22.5,-9.4]
+analyze --fingerprint  album44.wav    A=0.268 B=0.222 -13.0% CI[-20.0,-6.0]
+fingerprint            album44.flac   A=0.351 B=0.265 -23.5% CI[-28.8,-18.4]
+fingerprint            album44.wav    A=0.130 B=0.062 -46.7% CI[-53.5,-39.6]
+convert                album44.wav    A=0.672 B=0.657 -2.0% CI[-6.7,+4.0]
+convert                album44.flac   A=0.298 B=0.266 -11.3% CI[-17.6,-8.7]
+convert                album44.m4a    A=1.222 B=1.150 -6.6% CI[-9.2,+0.3]
+convert --analyze      album44.flac   A=0.435 B=0.386 -8.4% CI[-27.3,+3.3]
+convert --analyze      album44.wav    A=0.713 B=0.732 -7.5% CI[-10.9,+16.3]
+
+Peak RSS (KiB, 6 runs, pcm-hash album44.flac): previous 3248-3320, new 3284-3340
+(binary +3.9 KB); other commands within the same run-to-run spread.
+
+Rejected in this round (measured, not kept)
+  LPC restore with a register window but no unrolling      order 8: 70 -> 80 ms (more moves)
+  Fingerprint: four outputs' dot products per call (ring 256)   +10..+13% (slower)
+  Fingerprint: branchy round() replacement                 +13..+16% (mispredicts)
+  JSON: fixed 8-byte integer copy with ilog10 length       write_integer 9.8 -> 14.8 ms
+
+Not changed (at their floor or rare)
+  MD5+SHA-256 fused, SHA-NI, QC meter, FLAC Rice, ALAC predictor/Rice: see earlier rounds.
+  inflate literal loop (~7 cycles per literal: table-load latency); only the
+  near-incompressible PNG case shows it.
+
+Identity: 2931 corpus command outputs identical to the previous binary; analyze
+--fingerprint / pcm-hash / fingerprint identical on x86 (previous, new) and
+AArch64 (new, QEMU); qualify, codec-stress, standards reports identical;
+mutation_fuzz --cases 1600 counts identical (588/1012, 417/1183).

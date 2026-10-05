@@ -15,7 +15,7 @@ claim of measured speedup from dependency removal. Backend integration is deferr
 | WAV / AIFF / M4A / FLAC containers and metadata | `audio.rs`, `m4a.rs`, `mp4.rs`, `probe.rs`, native FLAC decoder | No |
 | LUFS / true peak / peak / clipping / silence | `meter.rs`, `resample.rs`, `kernels.rs` | No |
 | Fingerprint mono downmix / sinc resampling | `resample.rs`, `kernels.rs` | No |
-| FLAC CRC8 / CRC16 | `bits.rs`: native tables, CRC16 slicing-by-eight | No |
+| FLAC CRC8 / CRC16 | `bits.rs` (CRC8 table), `crc16.rs` (PCLMULQDQ/PMULL folding since round nine, slicing-by-eight for short input) | No |
 | SHA-256, MD5, IEEE CRC32 | `sha256.rs`, `md5.rs`, `crc32.rs` (in-repository since round four) | No |
 | JPEG / PNG cover decode | `jpeg.rs`, `png.rs`, `inflate.rs` (in-repository since round seven; image 0.24.9 kept as test oracle) | No |
 | JSON reports | `json.rs` (in-repository since round eight; serde_json 1.0.140 kept as test oracle) | No |

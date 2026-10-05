@@ -35,13 +35,28 @@ pub fn fingerprint(
     ))?;
     let mut tap = FingerprintTap::new(spec.sample_rate, count, backend);
     let mut samples = Vec::new();
+    let channels = spec.channels as usize;
     while reader.next(&mut samples, backend)? {
-        for row in samples.chunks_exact(spec.channels as usize) {
-            let mono = row
-                .iter()
-                .map(|x| (*x as f64 / 2147483648.0) as f32 / spec.channels as f32)
-                .sum();
-            tap.push(mono);
+        let rows = samples.len() / channels;
+        let mut i = 0;
+        while i < rows {
+            // Rows that no retained window reads are counted, not mixed.
+            let skip = tap.skippable().min((rows - i) as u64) as usize;
+            if skip != 0 {
+                tap.skip(skip as u64);
+                i += skip;
+                continue;
+            }
+            // Pushing is always exact; check again after a stretch.
+            let end = rows.min(i + 4096);
+            for row in samples[i * channels..end * channels].chunks_exact(channels) {
+                let mono = row
+                    .iter()
+                    .map(|x| (*x as f64 / 2147483648.0) as f32 / spec.channels as f32)
+                    .sum();
+                tap.push(mono);
+            }
+            i = end;
         }
     }
     let frames = reader.decoded_frames();
@@ -219,11 +234,27 @@ crate::json_struct!(Window {
 });
 /// 64-tap lowpass, 1024 phases; only the <=90 seconds needed for fingerprints
 /// are convolved/stored, while input state remains continuous across the file.
+/// `(value * 32768.0).round().clamp(-32768.0, 32767.0) as i16` without the
+/// libm call for `round` (half away from zero): below 2^23 the truncation
+/// and the fraction are exact; at and above it every f32 is an integer, so
+/// the fraction is 0; saturation, infinities and NaN clamp or map as there.
+#[inline]
+fn quantize(value: f32) -> i16 {
+    let x = value * 32768.0;
+    let t = x as i32;
+    let fraction = x - t as f32;
+    // Branch-free: the rounding direction is unpredictable.
+    let r = t as i64 + (fraction >= 0.5) as i64 - (fraction <= -0.5) as i64;
+    r.clamp(-32768, 32767) as i16
+}
+
 pub struct FingerprintTap {
     ring: [f32; 128],
     pos: usize,
     input: u64,
     output: u64,
+    /// Input count at which `output` is emitted: its center + 33.
+    due: u64,
     rate: u32,
     kernels: Vec<[f32; 64]>,
     ranges: Vec<(u64, u64)>,
@@ -266,6 +297,7 @@ impl FingerprintTap {
             pos: 0,
             input: 0,
             output: 0,
+            due: 33,
             rate,
             kernels: (0..1024)
                 .map(|p| sinc_kernel(p as f64 / 1024.0, 11025.0 / rate as f64 * 0.94))
@@ -275,15 +307,23 @@ impl FingerprintTap {
             dot: DotKernel::new(backend),
         }
     }
+    #[inline]
     pub fn push(&mut self, mono: f32) {
         self.ring[self.pos] = mono;
         self.ring[self.pos + 64] = mono;
         self.pos = (self.pos + 1) % 64;
         self.input += 1;
+        // About one input in rate / 11025 completes an output.
+        if self.input >= self.due {
+            self.emit();
+        }
+    }
+    fn emit(&mut self) {
         loop {
             let numerator = self.output * self.rate as u64;
             let center = numerator / 11025;
             if center + 33 > self.input {
+                self.due = center + 33;
                 break;
             }
             let phase = ((numerator % 11025) * 1024 / 11025) as usize;
@@ -294,12 +334,42 @@ impl FingerprintTap {
                     let value = self
                         .dot
                         .apply(&self.ring[self.pos..self.pos + 64], &self.kernels[phase]);
-                    self.windows[i]
-                        .samples
-                        .push((value * 32768.0).round().clamp(-32768.0, 32767.0) as i16);
+                    self.windows[i].samples.push(quantize(value));
                 }
             }
             self.output += 1;
+        }
+    }
+    /// How many of the next inputs no retained output reads: the ring of
+    /// the first retained output at or after `output` (center c) holds
+    /// inputs c - 30 ..= c + 33 (counted from 1), and every output before it
+    /// is discarded.
+    pub fn skippable(&self) -> u64 {
+        let Some(first) = self
+            .ranges
+            .iter()
+            .filter(|(_, end)| self.output < *end)
+            .map(|(start, _)| (*start).max(self.output))
+            .min()
+        else {
+            return u64::MAX;
+        };
+        let center = first * self.rate as u64 / 11025;
+        // Inputs up to count center - 31 are never read; keep a margin of
+        // one ring length.
+        center.saturating_sub(31 + 64).saturating_sub(self.input)
+    }
+    /// Advance over `n` inputs that [`Self::skippable`] allows, as if each
+    /// had been pushed: the discarded outputs they complete are counted.
+    pub fn skip(&mut self, n: u64) {
+        self.input += n;
+        self.pos = ((self.pos as u64 + n) % 64) as usize;
+        if self.input >= self.due {
+            // The first output whose center + 33 exceeds the input count.
+            let first = (self.input - 32) * 11025;
+            let rate = self.rate as u64;
+            self.output = self.output.max(first.div_ceil(rate));
+            self.due = self.output * rate / 11025 + 33;
         }
     }
     pub fn finish(mut self, frames: u64) -> Vec<Window> {
@@ -317,6 +387,99 @@ impl FingerprintTap {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn quantize_matches_round_and_clamp() {
+        let reference = |v: f32| (v * 32768.0).round().clamp(-32768.0, 32767.0) as i16;
+        let mut seed = 0x0bad_5eedu32;
+        let specials = [
+            0.0f32,
+            -0.0,
+            0.5,
+            -0.5,
+            1.0,
+            -1.0,
+            1.5 / 32768.0,
+            -1.5 / 32768.0,
+            2.5 / 32768.0,
+            -2.5 / 32768.0,
+            32767.5 / 32768.0,
+            -32768.5 / 32768.0,
+            f32::MAX,
+            f32::MIN,
+            f32::INFINITY,
+            f32::NEG_INFINITY,
+            f32::NAN,
+            f32::MIN_POSITIVE,
+            65536.0,
+            -65536.0,
+            8388608.5 / 32768.0,
+        ];
+        for &v in &specials {
+            assert_eq!(quantize(v), reference(v), "{v}");
+        }
+        for _ in 0..2_000_000 {
+            seed ^= seed << 13;
+            seed ^= seed >> 17;
+            seed ^= seed << 5;
+            // Random bit patterns and values near the output range, where
+            // halves are common.
+            let bits = f32::from_bits(seed);
+            assert_eq!(quantize(bits), reference(bits), "{bits}");
+            let near = (seed as i32 as f32 / 2147483648.0) * 1.2;
+            assert_eq!(quantize(near), reference(near), "{near}");
+            let half = ((seed % 70000) as f32 - 35000.0 + 0.5) / 32768.0;
+            assert_eq!(quantize(half), reference(half), "{half}");
+        }
+    }
+
+    /// Skipping inputs that no retained window reads gives the same windows
+    /// as pushing every input, for several rates, lengths around the
+    /// three-window threshold and skip/push stretches of any size.
+    #[test]
+    fn skipped_inputs_leave_windows_unchanged() {
+        let mut seed = 0x1357_9bdfu32;
+        for (rate, seconds) in [
+            (8000u32, 95.0),
+            (11025, 90.5),
+            (22050, 120.0),
+            (44100, 91.0),
+            (48000, 60.0),
+        ] {
+            let frames = (rate as f64 * seconds) as u64;
+            let signal: Vec<f32> = (0..frames)
+                .map(|_| {
+                    seed ^= seed << 13;
+                    seed ^= seed >> 17;
+                    seed ^= seed << 5;
+                    seed as i32 as f32 / 2147483648.0
+                })
+                .collect();
+            let mut full = FingerprintTap::new(rate, frames, Backend::Scalar);
+            for &x in &signal {
+                full.push(x);
+            }
+            let expected = full.finish(frames);
+            for stretch in [1usize, 7, 4096] {
+                let mut tap = FingerprintTap::new(rate, frames, Backend::Scalar);
+                let mut i = 0;
+                while i < signal.len() {
+                    let skip = tap.skippable().min((signal.len() - i) as u64) as usize;
+                    tap.skip(skip as u64);
+                    i += skip;
+                    for &x in &signal[i..signal.len().min(i + stretch)] {
+                        tap.push(x);
+                    }
+                    i = signal.len().min(i + stretch);
+                }
+                let actual = tap.finish(frames);
+                assert_eq!(actual.len(), expected.len());
+                for (a, e) in actual.iter().zip(&expected) {
+                    assert_eq!(a.samples, e.samples, "rate {rate} stretch {stretch}");
+                }
+            }
+        }
+    }
 
     #[test]
     fn l1_bound_covers_every_phase() {

@@ -259,27 +259,12 @@ pub(crate) fn decode(
         // i32 even before validation. Accumulate range failures and check once
         // so SIMD/vectorization is possible without weakening integrity.
         let bound = 1i32 << (spec.bits_per_sample - 1);
-        let mut bad = false;
-        for ((dst, &a), &d) in out
-            .as_chunks_mut::<2>()
-            .0
-            .iter_mut()
-            .zip(&planes[0])
-            .zip(&planes[1])
-        {
-            let (left, right) = match h.mode {
-                8 => (a, a - d),
-                9 => (a + d, d),
-                10 => {
-                    let mid = (a << 1) | (d & 1);
-                    ((mid + d) >> 1, (mid - d) >> 1)
-                }
-                _ => (a, d),
-            };
-            bad |= left < -bound || left >= bound || right < -bound || right >= bound;
-            dst[0] = left.wrapping_shl(shift as u32);
-            dst[1] = right.wrapping_shl(shift as u32);
-        }
+        let (a, d) = (&planes[0][..], &planes[1][..]);
+        let bad = match h.mode {
+            8 => decorrelate::<8>(a, d, out, bound, shift as u32),
+            9 => decorrelate::<9>(a, d, out, bound, shift as u32),
+            _ => decorrelate::<10>(a, d, out, bound, shift as u32),
+        };
         if bad {
             return invalid("FLAC reconstructed stereo range");
         }
@@ -618,6 +603,40 @@ fn check_lpc_wide(x: &[i32], r: &[i32], coeff: &[i32], shift: i32) -> bool {
         bad |= prediction.wrapping_add(residual as i64) != w[order] as i64;
     }
     !bad
+}
+
+/// Undo left/side (8), side/right (9) or mid/side (10) decorrelation and
+/// left-align. The mode is a constant so each loop is branch-free and
+/// vectorizable however the caller is inlined; range failures are
+/// accumulated. Returns true when any sample is out of range.
+#[inline(always)]
+fn decorrelate<const MODE: u32>(
+    a: &[i32],
+    d: &[i32],
+    out: &mut [i32],
+    bound: i32,
+    shift: u32,
+) -> bool {
+    // -bound <= v < bound exactly when (v + bound) as u32 < 2 * bound, a
+    // power of two (bound <= 2^24; v + bound wraps only for v >= 2^31 - bound,
+    // which is out of range too). So OR-accumulating those values and testing
+    // the high bits once keeps every lane 32-bit.
+    let span = 2 * bound as u32;
+    let mut bits = 0u32;
+    for ((dst, &a), &d) in out.as_chunks_mut::<2>().0.iter_mut().zip(a).zip(d) {
+        let (left, right) = match MODE {
+            8 => (a, a - d),
+            9 => (a + d, d),
+            _ => {
+                let mid = (a << 1) | (d & 1);
+                ((mid + d) >> 1, (mid - d) >> 1)
+            }
+        };
+        bits |= left.wrapping_add(bound) as u32 | right.wrapping_add(bound) as u32;
+        dst[0] = left.wrapping_shl(shift);
+        dst[1] = right.wrapping_shl(shift);
+    }
+    bits >= span
 }
 
 impl Decoder {
@@ -962,6 +981,67 @@ mod tests {
         }
         run::<4>();
         run::<8>();
+    }
+    #[test]
+    fn decorrelation_matches_reference_values_and_range_verdicts() {
+        let mut seed = 7u32;
+        for bits in [16u32, 24] {
+            let bound = 1i32 << (bits - 1);
+            let edges = [
+                -bound - 1,
+                -bound,
+                -1,
+                0,
+                1,
+                bound - 1,
+                bound,
+                2 * bound,
+                i32::MIN / 4,
+                i32::MAX / 4,
+            ];
+            for mode in [8u32, 9, 10] {
+                for case in 0..400 {
+                    let n = 1 + case % 37;
+                    let mut pick = || {
+                        seed = seed.wrapping_mul(1664525).wrapping_add(1013904223);
+                        if case % 3 == 0 {
+                            edges[(seed >> 8) as usize % edges.len()]
+                        } else {
+                            (seed as i32) >> (32 - bits - 1)
+                        }
+                    };
+                    let a: Vec<i32> = (0..n).map(|_| pick()).collect();
+                    let d: Vec<i32> = (0..n).map(|_| pick()).collect();
+                    let shift = 32 - bits;
+                    let mut expected = vec![0; 2 * n];
+                    let mut expected_bad = false;
+                    for i in 0..n {
+                        let (left, right) = match mode {
+                            8 => (a[i], a[i].wrapping_sub(d[i])),
+                            9 => (a[i].wrapping_add(d[i]), d[i]),
+                            _ => {
+                                let mid = (a[i] << 1) | (d[i] & 1);
+                                (mid.wrapping_add(d[i]) >> 1, mid.wrapping_sub(d[i]) >> 1)
+                            }
+                        };
+                        expected_bad |=
+                            left < -bound || left >= bound || right < -bound || right >= bound;
+                        expected[2 * i] = left.wrapping_shl(shift);
+                        expected[2 * i + 1] = right.wrapping_shl(shift);
+                    }
+                    let mut out = vec![0; 2 * n];
+                    let bad = match mode {
+                        8 => decorrelate::<8>(&a, &d, &mut out, bound, shift),
+                        9 => decorrelate::<9>(&a, &d, &mut out, bound, shift),
+                        _ => decorrelate::<10>(&a, &d, &mut out, bound, shift),
+                    };
+                    assert_eq!(bad, expected_bad, "mode={mode} bits={bits} a={a:?} d={d:?}");
+                    if !bad {
+                        assert_eq!(out, expected);
+                    }
+                }
+            }
+        }
     }
     #[test]
     fn all_predictor_orders_escape_residuals_and_truncations() {

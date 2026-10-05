@@ -52,9 +52,17 @@ impl Compressed {
             retain_frame: false,
         })
     }
-    pub fn next(&mut self, out: &mut Vec<i32>, limits: &Limits) -> Result<()> {
+    /// With `sha`, FLAC input also hashes `out` into it (fused with the
+    /// STREAMINFO MD5 check); returns whether it did. ALAC never does.
+    pub fn next(
+        &mut self,
+        out: &mut Vec<i32>,
+        limits: &Limits,
+        sha: Option<&mut crate::sha256::Sha256>,
+    ) -> Result<bool> {
+        let hashed = sha.is_some() && matches!(self.input, Input::Flac(_));
         match &mut self.input {
-            Input::Flac(d) => d.next(out, limits, self.retain_frame)?,
+            Input::Flac(d) => d.next(out, limits, self.retain_frame, sha)?,
             Input::Alac {
                 file,
                 position,
@@ -78,7 +86,18 @@ impl Compressed {
                 }
             }
         }
-        Ok(())
+        Ok(hashed)
+    }
+    /// Whether FLAC input checks a STREAMINFO MD5.
+    pub fn flac_md5_active(&self) -> bool {
+        matches!(&self.input, Input::Flac(d) if d.md5_active())
+    }
+    /// The STREAMINFO MD5 of FLAC input once verified at the end.
+    pub fn verified_md5(&self) -> Option<[u8; 16]> {
+        match &self.input {
+            Input::Flac(d) => d.verified_md5(),
+            Input::Alac { .. } => None,
+        }
     }
     pub fn flac_frame(&self) -> Option<&[u8]> {
         match &self.input {

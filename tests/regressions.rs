@@ -423,3 +423,49 @@ fn encoder_models_stereo_modes_and_wasted_bits_round_trip() {
         }
     }
 }
+
+/// FLAC re-encoding reuses the verified source STREAMINFO MD5 when there is
+/// one and computes it otherwise; both must equal the MD5 of the compact
+/// PCM, and a tampered source MD5 must still fail before publication.
+#[test]
+fn reencoded_flac_streaminfo_md5_is_correct_for_known_unknown_and_bad_source_md5() {
+    let d = Dir::new();
+    for codec in ["pcm_s16le", "pcm_s24le"] {
+        let wav = d.0.join(format!("{codec}.wav"));
+        let flac = d.0.join(format!("{codec}.flac"));
+        ffmpeg(None, &wav, codec);
+        ffmpeg(Some(&wav), &flac, "flac");
+        let md5 = Command::new("ffmpeg")
+            .args(["-v", "error", "-i"])
+            .arg(&wav)
+            .args(["-c:a", codec, "-f", "md5", "-"])
+            .output()
+            .unwrap();
+        assert!(md5.status.success());
+        let expected = String::from_utf8(md5.stdout).unwrap();
+        let expected = expected.trim().strip_prefix("MD5=").unwrap().to_owned();
+        let original = std::fs::read(&flac).unwrap();
+        for variant in ["known", "unknown", "bad"] {
+            let mut bytes = original.clone();
+            match variant {
+                "unknown" => bytes[26..42].fill(0),
+                "bad" => bytes[30] ^= 4,
+                _ => (),
+            }
+            let src = d.0.join(format!("{codec}-{variant}.flac"));
+            std::fs::write(&src, bytes).unwrap();
+            let dst = d.0.join(format!("{codec}-{variant}.out.flac"));
+            let result =
+                flac::convert_with_level(&src, &dst, Limits::default(), Backend::detect(), Some(5));
+            if variant == "bad" {
+                assert!(matches!(result, Err(Error::Invalid("FLAC MD5 mismatch"))));
+                assert!(!dst.exists());
+                continue;
+            }
+            result.unwrap();
+            let out = std::fs::read(&dst).unwrap();
+            let written: String = out[26..42].iter().map(|b| format!("{b:02x}")).collect();
+            assert_eq!(written, expected, "{codec} {variant}");
+        }
+    }
+}

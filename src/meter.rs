@@ -10,7 +10,6 @@ use crate::{
     AudioSpec, Error, Limits, Result,
 };
 use serde::Serialize;
-use sha2::{Digest, Sha256};
 use std::{f64::consts::PI, path::Path};
 
 #[derive(Debug, Serialize)]
@@ -152,12 +151,11 @@ pub fn analyze(
     let mut reader = AudioReader::open(path, limits)?;
     let mut analyzer = Analyzer::new(reader.spec.clone(), backend, want_fingerprint)?;
     let mut samples = Vec::new();
-    let mut hash = Sha256::new();
-    while reader.next(&mut samples, backend)? {
-        hash.update(crate::audio::pcm_bytes(&samples));
+    let mut hash = crate::pcm_hash::PcmHash::new(reader.spec.bits_per_sample, false);
+    while reader.next_hashed(&mut samples, backend, &mut hash)? {
         analyzer.push(&samples);
     }
-    Ok(analyzer.finish(reader.decoded_frames(), crate::hex(&hash.finalize())))
+    Ok(analyzer.finish(reader.decoded_frames(), crate::hex(&hash.finish().0)))
 }
 
 /// Shared streaming meters for standalone analysis and verified FLAC conversion.

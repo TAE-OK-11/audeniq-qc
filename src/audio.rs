@@ -1,8 +1,8 @@
 #[cfg(not(feature = "reference-codecs"))]
 use crate::compressed::Compressed;
-use crate::{kernels::Backend, AudioSpec, Error, Limits, Result};
 #[cfg(feature = "reference-codecs")]
-use md5::{Digest as _, Md5};
+use crate::md5::Md5;
+use crate::{kernels::Backend, AudioSpec, Error, Limits, Result};
 use std::{
     fs::File,
     io::{Read, Seek, SeekFrom},
@@ -79,13 +79,62 @@ impl AudioReader {
     /// Interleaved signed left-aligned s32, matching FFmpeg pcm_s32le hashing.
     /// Reuses caller storage; empty means EOF. Never returns partial PASS.
     pub fn next(&mut self, samples: &mut Vec<i32>, backend: Backend) -> Result<bool> {
-        self.limits.check()?;
-        match &mut self.source {
-            Source::Pcm(p) => p.next(samples, backend)?,
-            Source::Compressed(p) => p.next(samples, &self.limits)?,
-            Source::Tta(p) => p.next(samples, &self.limits)?,
-            Source::Wavpack(p) => p.next(samples, &self.limits)?,
+        Ok(self.next_impl(samples, backend, None)?.0)
+    }
+    /// [`Self::next`] that also adds the samples to `hash`. Native FLAC input
+    /// computes the SHA-256 inside the decoder, interleaved with its
+    /// STREAMINFO MD5 check; when `hash` also wants that MD5 and the source
+    /// carries one, the verified source MD5 is used instead of recomputing it
+    /// (see [`Self::verified_md5`] and `PcmHash::finish_with`).
+    pub(crate) fn next_hashed(
+        &mut self,
+        samples: &mut Vec<i32>,
+        backend: Backend,
+        hash: &mut crate::pcm_hash::PcmHash,
+    ) -> Result<bool> {
+        #[cfg(not(feature = "reference-codecs"))]
+        let source_md5 = matches!(&self.source, Source::Compressed(p) if p.flac_md5_active());
+        #[cfg(feature = "reference-codecs")]
+        let source_md5 = false;
+        let (more, hashed) = self.next_impl(samples, backend, Some(hash.sha_mut()))?;
+        if !hashed {
+            hash.update(samples);
+        } else if hash.wants_md5() {
+            if source_md5 {
+                hash.adopt_source_md5();
+            } else {
+                hash.update_md5_only(samples);
+            }
         }
+        Ok(more)
+    }
+    /// The source FLAC STREAMINFO MD5 once decoding verified it at the end.
+    pub(crate) fn verified_md5(&self) -> Option<[u8; 16]> {
+        #[cfg(not(feature = "reference-codecs"))]
+        if let Source::Compressed(p) = &self.source {
+            return p.verified_md5();
+        }
+        None
+    }
+    fn next_impl(
+        &mut self,
+        samples: &mut Vec<i32>,
+        backend: Backend,
+        sha: Option<&mut crate::sha256::Sha256>,
+    ) -> Result<(bool, bool)> {
+        self.limits.check()?;
+        let hashed = match &mut self.source {
+            Source::Pcm(p) => p.next(samples, backend).map(|()| false)?,
+            #[cfg(not(feature = "reference-codecs"))]
+            Source::Compressed(p) => p.next(samples, &self.limits, sha)?,
+            #[cfg(feature = "reference-codecs")]
+            Source::Compressed(p) => {
+                let _ = sha;
+                p.next(samples, &self.limits).map(|()| false)?
+            }
+            Source::Tta(p) => p.next(samples, &self.limits).map(|()| false)?,
+            Source::Wavpack(p) => p.next(samples, &self.limits).map(|()| false)?,
+        };
         if !samples.len().is_multiple_of(self.spec.channels as usize) {
             return Err(Error::Invalid("partial sample frame"));
         }
@@ -101,7 +150,7 @@ impl AudioReader {
         if samples.is_empty() && self.decoded == 0 {
             return Err(Error::Invalid("empty audio"));
         }
-        Ok(!samples.is_empty())
+        Ok((!samples.is_empty(), hashed))
     }
     pub fn decoded_frames(&self) -> u64 {
         self.decoded
@@ -573,7 +622,7 @@ impl Compressed {
                     return Err(Error::Invalid("FLAC MD5 mismatch"));
                 }
                 if let Some((md5, expected)) = self.pcm_md5.take() {
-                    let actual: [u8; 16] = md5.finalize().into();
+                    let actual: [u8; 16] = md5.finalize();
                     if actual != expected {
                         return Err(Error::Invalid("FLAC MD5 mismatch"));
                     }
@@ -637,15 +686,12 @@ pub fn pcm_sha256(
     limits: Limits,
     backend: Backend,
 ) -> Result<(AudioSpec, String, u64)> {
-    use sha2::{Digest, Sha256};
     let mut r = AudioReader::open(path, limits)?;
     let mut s = Vec::new();
-    let mut h = Sha256::new();
-    while r.next(&mut s, backend)? {
-        h.update(pcm_bytes(&s));
-    }
+    let mut h = crate::pcm_hash::PcmHash::new(r.spec.bits_per_sample, false);
+    while r.next_hashed(&mut s, backend, &mut h)? {}
     let n = r.decoded_frames();
-    Ok((r.spec, crate::hex(&h.finalize()), n))
+    Ok((r.spec, crate::hex(&h.finish().0), n))
 }
 
 /// Canonical s32le hash input without a second PCM buffer on little-endian CPUs.

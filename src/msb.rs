@@ -174,7 +174,7 @@ impl<'a> Bits<'a> {
             self.available += bytes * 8;
         }
     }
-    #[inline]
+    #[inline(always)]
     pub fn alac_scalar(&mut self, k: u32, bits: u32) -> Result<u32> {
         if k == 0 || k > 31 || bits > 32 {
             return Err(Error::Invalid("ALAC Rice width"));

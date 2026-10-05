@@ -1,14 +1,15 @@
 use crate::{Error, Result};
 
-/// Bounds-checked LSB-first bit reader for FFmpeg-derived TTA/WavPack paths.
-pub struct LeBits<'a> {
+/// LSB-first bit reader (TTA, WavPack): a 64-bit cache refilled with one unaligned 8-byte
+/// load while eight bytes remain, byte by byte near the end.
+pub(crate) struct Lsb<'a> {
     data: &'a [u8],
     next: usize,
-    cache: u64,
-    available: u32,
+    pub(crate) cache: u64,
+    pub(crate) available: u32,
 }
-impl<'a> LeBits<'a> {
-    pub fn new(data: &'a [u8]) -> Self {
+impl<'a> Lsb<'a> {
+    pub(crate) fn new(data: &'a [u8]) -> Self {
         Self {
             data,
             next: 0,
@@ -16,48 +17,55 @@ impl<'a> LeBits<'a> {
             available: 0,
         }
     }
-    fn refill(&mut self, required: u32) -> Result<()> {
-        if self.available < required {
-            let bytes = ((64 - self.available) / 8) as usize;
-            let n = bytes.min(self.data.len() - self.next);
-            let mut word = [0u8; 8];
-            word[..n].copy_from_slice(&self.data[self.next..self.next + n]);
-            self.cache |= u64::from_le_bytes(word) << self.available;
-            self.available += n as u32 * 8;
-            self.next += n;
+    #[inline(always)]
+    pub(crate) fn refill(&mut self) {
+        if let Some(word) = self.data.get(self.next..self.next + 8) {
+            self.cache |= u64::from_le_bytes(word.try_into().unwrap()) << self.available;
+            let bytes = (63 - self.available) >> 3;
+            self.next += bytes as usize;
+            self.available += bytes * 8;
+        } else {
+            while self.available <= 56 && self.next < self.data.len() {
+                self.cache |= (self.data[self.next] as u64) << self.available;
+                self.next += 1;
+                self.available += 8;
+            }
         }
-        if self.available < required {
-            return Err(Error::Invalid("truncated bitstream"));
-        }
-        Ok(())
     }
-    pub fn read(&mut self, n: u32) -> Result<u32> {
-        if n > 32 {
-            return Err(Error::Invalid("truncated bitstream"));
+    /// `n` (at most 32) bits.
+    #[inline(always)]
+    pub(crate) fn read(&mut self, n: u32) -> Result<u32> {
+        if self.available < n {
+            self.refill();
+            if self.available < n {
+                return Err(Error::Invalid("truncated bitstream"));
+            }
         }
-        self.refill(n)?;
         let value = (self.cache & ((1u64 << n) - 1)) as u32;
         self.cache >>= n;
         self.available -= n;
         Ok(value)
     }
-    pub fn unary_ones(&mut self, max: u32) -> Result<u32> {
+    /// A run of one bits ended by a zero (consumed); fewer than `max` ones.
+    #[inline(always)]
+    pub(crate) fn ones(&mut self, max: u32) -> Result<u32> {
         let mut n = 0;
         loop {
-            self.refill(1)?;
+            if self.available < 57 {
+                self.refill();
+                if self.available == 0 {
+                    return Err(Error::Invalid("truncated bitstream"));
+                }
+            }
             let ones = self.cache.trailing_ones().min(self.available);
             if ones != 0 && ones >= max.saturating_sub(n) {
                 return Err(Error::Invalid("unbounded unary code"));
             }
             n += ones;
             if ones < self.available {
-                let consumed = ones + 1;
-                self.cache = if consumed == 64 {
-                    0
-                } else {
-                    self.cache >> consumed
-                };
-                self.available -= consumed;
+                // The byte-wise refill can fill all 64 bits.
+                self.cache = self.cache.checked_shr(ones + 1).unwrap_or(0);
+                self.available -= ones + 1;
                 return Ok(n);
             }
             self.cache = 0;
@@ -300,7 +308,7 @@ mod tests {
     fn cached_reader_matches_bit_reference_and_bounds() {
         for length in 0..=97 {
             let data: Vec<u8> = (0..length).map(|i| (i * 131 + 197) as u8).collect();
-            let mut reader = LeBits::new(&data);
+            let mut reader = Lsb::new(&data);
             let mut position = 0;
             for n in (0..=32).cycle().take(150) {
                 let expected = if position + n as usize <= length * 8 {
@@ -328,15 +336,12 @@ mod tests {
             for i in 0..ones {
                 data[i / 8] |= 1 << (i % 8);
             }
-            assert_eq!(
-                LeBits::new(&data).unary_ones(ones as u32 + 1).unwrap(),
-                ones as u32
-            );
+            assert_eq!(Lsb::new(&data).ones(ones as u32 + 1).unwrap(), ones as u32);
             if ones > 0 {
-                assert!(LeBits::new(&data).unary_ones(ones as u32).is_err());
+                assert!(Lsb::new(&data).ones(ones as u32).is_err());
             }
         }
-        assert!(LeBits::new(&[255; 8]).unary_ones(256).is_err());
+        assert!(Lsb::new(&[255; 8]).ones(256).is_err());
     }
     #[test]
     fn word_writer_matches_bit_reference() {

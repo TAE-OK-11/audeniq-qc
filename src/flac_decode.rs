@@ -1029,14 +1029,27 @@ fn restore_fixed(p: &mut [i32], order: usize, bits: u32) -> Result<()> {
     for &v in &p[..order] {
         bad |= (v as i64).wrapping_sub(low) as u64 > span;
     }
+    // The last `order` samples ride in locals (h1 newest) instead of being
+    // stored and loaded back; the prediction is the format's wrapping i32
+    // expression and the residual is added in i64, as before.
     macro_rules! run {
-        ($predict:expr) => {
-            for i in order..p.len() {
-                let v = $predict(&*p, i) as i64 + p[i] as i64;
-                bad |= v.wrapping_sub(low) as u64 > span;
-                p[i] = v as i32;
+        ($n:literal, |$h1:ident, $h2:ident, $h3:ident, $h4:ident| $predict:expr) => {{
+            let mut h = [0i32; 4];
+            for k in 0..$n {
+                h[k] = p[$n - 1 - k];
             }
-        };
+            let [mut $h1, mut $h2, mut $h3, mut $h4] = h;
+            let mut seen = 0u64;
+            for v in &mut p[$n..] {
+                let x = ($predict) as i64 + *v as i64;
+                seen |= x.wrapping_sub(low) as u64;
+                *v = x as i32;
+                ($h4, $h3, $h2, $h1) = ($h3, $h2, $h1, x as i32);
+            }
+            let _ = ($h1, $h2, $h3, $h4);
+            // span is 2^bits - 1, so one OR collects every out-of-range value.
+            bad |= seen > span;
+        }};
     }
     match order {
         0 => {
@@ -1044,17 +1057,17 @@ fn restore_fixed(p: &mut [i32], order: usize, bits: u32) -> Result<()> {
                 bad |= (v as i64).wrapping_sub(low) as u64 > span;
             }
         }
-        1 => run!(|p: &[i32], i: usize| p[i - 1]),
-        2 => run!(|p: &[i32], i: usize| p[i - 1].wrapping_mul(2).wrapping_sub(p[i - 2])),
-        3 => run!(|p: &[i32], i: usize| p[i - 1]
-            .wrapping_sub(p[i - 2])
+        1 => run!(1, |a, b, c, d| a),
+        2 => run!(2, |a, b, c, d| a.wrapping_mul(2).wrapping_sub(b)),
+        3 => run!(3, |a, b, c, d| a
+            .wrapping_sub(b)
             .wrapping_mul(3)
-            .wrapping_add(p[i - 3])),
-        4 => run!(|p: &[i32], i: usize| p[i - 1]
-            .wrapping_add(p[i - 3])
+            .wrapping_add(c)),
+        4 => run!(4, |a, b, c, d| a
+            .wrapping_add(c)
             .wrapping_mul(4)
-            .wrapping_sub(p[i - 2].wrapping_mul(6))
-            .wrapping_sub(p[i - 4])),
+            .wrapping_sub(b.wrapping_mul(6))
+            .wrapping_sub(d)),
         _ => unreachable!(),
     }
     if bad {

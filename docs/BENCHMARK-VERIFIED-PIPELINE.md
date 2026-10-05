@@ -409,7 +409,60 @@ rather than CRC throughput. No CPU shows a slowdown attributable
 to CRC-32; the replacement is kept. crc32fast stays in the build as a
 transitive dependency of the PNG stack and as a test oracle.
 
-## Remaining hotspots (after round 4), ranked by expected ROI
+## Round 6: QC meter (`04e2731`)
+
+**Profiling (real music, `perf` cpu-clock).** With QC on, the meter was the
+largest single function in every workload: `meter::Analyzer::push` 56% of
+`analyze` on WAV and 34% on FLAC, 21% of `convert --analyze` on WAV and 33%
+on FLAC. The true-peak FIR (`peak_avx2`) added 11-18%. Without QC,
+conversion is spread over the encoder, hashing (at its floor since round 4)
+and frame verification, with no dominant line.
+
+**Stage breakdown of the meter.** The loop-carried values (filter state,
+block peak, channel peaks) went through memory every frame, so
+store-forwarding sat on their chains; `f64::max` ran NaN-handling sequences
+per sample; the filter coefficients were spilled to the stack; and
+true peak ran its 48 multiply-adds per sample on every sample.
+
+| Change | Effect (album44.wav `analyze` CPU) |
+| --- | --- |
+| Frames processed per 50 ms block segment with state and sums in locals; peak, clip and zero-crossing tests on integers (thresholds equal to the f64 tests on `s / 2^31`, an exact scaling) | 0.297 -> 0.243 s |
+| Sample peak as an integer max over f32 bit patterns; channels split in one pass | 0.234 -> 0.212 s |
+| True-peak span bound: \|output\| <= max\|x\| x 2.0228 (largest phase L1 norm, with f32 rounding margin); 256-output spans that cannot exceed the running maximum are skipped (75-95% on real music) | -21% on real music; synthetic noise unchanged |
+| Stereo K-weighting with both channels in one SSE2/NEON register inlined in the loop (x86 previously scalar per lane; AArch64 previously an indirect call per frame) | -13..-19% |
+| Rejected: AVX-512 true-peak kernel | +7..+11% (slower) |
+
+Every change preserves each floating-point operation and its order, or
+replaces a comparison with an exactly equivalent one, so all outputs are
+bit-identical: 450 corpus comparisons (`analyze`, `--fingerprint`,
+`convert --analyze` JSON and FLAC bytes) on x86, AArch64 under QEMU against
+its previous build, and both GitHub runners. New tests pin the integer
+thresholds, the f32 conversion, the SSE2/NEON filter against scalar bits,
+the L1 bound against the coefficients, and skipped against unskipped true
+peak (a deliberately wrong bound fails it).
+
+Results vs main `ba0155b` (raw:
+[round6-qc-meter.txt](verified-pipeline/round6-qc-meter.txt)):
+
+| Workload | Local Xeon (real music) | GitHub x86 | GitHub Neoverse N2 |
+| --- | ---: | ---: | ---: |
+| `analyze` WAV 44.1/16 | -50.9% | -49.4% | -34.6% |
+| `analyze` WAV 96/24 | -49.4% | -47.4% | -33.9% |
+| `analyze` FLAC | -30.2% | -35.2% | -23.5% |
+| `analyze` ALAC | -23.7% | | |
+| `convert --analyze` WAV | -19.0% | -24.2% | -16.4% |
+| `convert --analyze` FLAC | -35.0% | -33.6% | -22.8% |
+| `convert --analyze` ALAC | -15.5% | | |
+| `convert` (no QC) | +2.6% / +0.1% (CIs include 0) | | |
+| 44 real tracks x 3 formats, `analyze` total | -24.5% | | |
+| 44 real tracks x 3 formats, `convert --analyze` total | -15.7% | | |
+
+After this round `analyze` on WAV is about 46% meter and 37% SHA-256. The
+meter runs at about 7 ns per stereo frame, close to its floor: the
+K-weighting recursion is 1 multiply and 4 dependent subtractions per
+frame (about 20 cycles), and its order is fixed by bit-identical output.
+
+## Remaining hotspots (after round 6), ranked by expected ROI
 
 1. **MD5 and SHA-256** (round 4): in-repository, fused into one pass, and
    near the per-step latency floor (MD5 about 4.5 cycles per step; SHA-NI
@@ -422,7 +475,9 @@ transitive dependency of the PNG stack and as a test oracle.
    slower; winning-residual reuse accepted in round 3.
 4. **ALAC adaptive predictor** (~35% of ALAC input): branch-mispredict bound;
    six designs measured and rejected.
-5. **QC K-weighting IIR**: serial f64 chain fixed by bit-exact output.
+5. **QC meter** (round 6): near the K-weighting recursion's latency floor
+   (about 20 cycles per frame); shortening it would change the operation
+   order and therefore the reported bits. True peak is mostly skipped.
 
 Repository hygiene: `reference-target/` (1,784 build artifacts) is tracked in git.
 

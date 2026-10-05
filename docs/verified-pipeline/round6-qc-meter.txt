@@ -1,0 +1,48 @@
+# Round 6: QC meter measurements (main ba0155b vs 04e2731)
+
+Paired CPU time (user+sys), alternating order, median of per-pair ratios, 95% bootstrap CI.
+
+## Local Xeon (x86-64, AVX2 backend), real-music albums, 9 pairs
+```
+analyze                album44.wav    A=0.315 B=0.155 -50.9% CI[-57.7,-37.6]
+analyze                album44.m4a    A=0.938 B=0.720 -23.7% CI[-28.6,-13.6]
+analyze                album44.flac   A=0.528 B=0.371 -30.2% CI[-34.6,-28.4]
+analyze                album48.wav    A=0.167 B=0.088 -49.2% CI[-52.2,-43.0]
+analyze                album96.wav    A=0.122 B=0.063 -49.4% CI[-53.1,-47.5]
+analyze                album96.flac   A=0.258 B=0.181 -30.4% CI[-34.6,-16.5]
+analyze                album192.wav   A=0.086 B=0.048 -40.4% CI[-47.7,-18.5]
+analyze                syn_pink.wav   A=0.450 B=0.283 -35.4% CI[-46.9,-29.7]
+analyze --fingerprint  album44.wav    A=0.401 B=0.271 -38.4% CI[-41.5,-25.8]
+analyze --fingerprint  album96.flac   A=0.276 B=0.223 -18.1% CI[-22.8,-14.6]
+convert --analyze      album44.wav    A=0.837 B=0.704 -19.0% CI[-20.9,-15.1]
+convert --analyze      album44.m4a    A=1.453 B=1.195 -15.5% CI[-20.6,-13.6]
+convert --analyze      album44.flac   A=0.548 B=0.357 -35.0% CI[-35.5,-29.5]
+convert --analyze      album96.wav    A=0.409 B=0.322 -19.5% CI[-30.0,-10.4]
+convert --analyze      album96.m4a    A=0.600 B=0.532 -11.9% CI[-24.9,-9.5]
+convert                album44.wav    A=0.547 B=0.555 +2.6% CI[-2.8,+9.2]
+convert                album44.flac   A=0.278 B=0.279 +0.1% CI[-1.2,+1.9]
+```
+
+## Local Xeon, 44 CC0 real-music tracks x 3 formats, median of 5 per file
+```
+analyze            132 tracks: A=4.044s B=3.054s -24.5%
+convert --analyze  132 tracks: A=6.504s B=5.484s -15.7%
+```
+
+## GitHub runners (run 37278623805), pink noise with a 9 s amplitude envelope
+
+Outputs of old and new were byte-compared on both runners (analyze, analyze --fingerprint): identical.
+```
+ubuntu-24.04 (x86-64)
+analyze                s44.wav        A=0.296 B=0.150 -49.4% CI[-49.5,-49.2]
+analyze                s96.wav        A=0.244 B=0.128 -47.4% CI[-47.7,-47.2]
+analyze                s44.flac       A=0.420 B=0.272 -35.2% CI[-35.4,-34.9]
+convert --analyze      s44.wav        A=0.609 B=0.462 -24.2% CI[-24.3,-24.1]
+convert --analyze      s44.flac       A=0.441 B=0.294 -33.6% CI[-33.9,-33.3]
+ubuntu-24.04-arm (Neoverse N2)
+analyze                s44.wav        A=0.291 B=0.191 -34.6% CI[-34.7,-34.6]
+analyze                s96.wav        A=0.241 B=0.160 -33.9% CI[-33.9,-33.8]
+analyze                s44.flac       A=0.427 B=0.326 -23.5% CI[-23.5,-23.5]
+convert --analyze      s44.wav        A=0.613 B=0.513 -16.4% CI[-16.5,-16.4]
+convert --analyze      s44.flac       A=0.441 B=0.340 -22.8% CI[-22.9,-22.7]
+```

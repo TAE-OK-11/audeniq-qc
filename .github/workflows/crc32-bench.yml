@@ -1,4 +1,4 @@
-name: Temporary CRC-32 engine measurement
+name: Temporary engine measurement
 on:
   push:
     branches: [bench/crc32-ci]
@@ -11,30 +11,29 @@ jobs:
       matrix:
         runner: [ubuntu-24.04, ubuntu-24.04-arm]
     runs-on: ${{ matrix.runner }}
-    timeout-minutes: 40
+    timeout-minutes: 50
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
         with:
           fetch-depth: 0
       - name: CPU
-        run: |
-          lscpu | grep -E "Model name|Flags" | cut -c1-400
-          grep -o -w 'pclmulqdq\|vpclmulqdq\|avx512f\|avx2\|pmull\|crc32\|sha3' /proc/cpuinfo | sort | uniq -c
-      - name: Microbenchmark
-        run: cargo run --release --manifest-path tools/crcbench/Cargo.toml
+        run: lscpu | grep -E "Model name"
       - name: Build both engines
         run: |
           sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg
           cargo build --release --locked
           cp target/release/audeniq-qc /tmp/new
-          git checkout -q f360746b3e0e7043e46472ef6ba84b64d8bfaefe
+          git checkout -q ba0155b6a97d09c57ee6abd21705c5eeb41d2695
           cargo build --release --locked
           cp target/release/audeniq-qc /tmp/old
           git checkout -q -
-      - name: Paired frame-copy A/B (old = crc32fast, new = in-repository)
+      - name: Paired A/B (old = main, new = QC meter)
         run: |
           mkdir -p /tmp/b
-          ffmpeg -loglevel error -f lavfi -i "anoisesrc=color=pink:amplitude=0.3:sample_rate=44100:duration=240" -f lavfi -i "sine=frequency=220:sample_rate=44100:duration=240" -filter_complex "[0][1]amerge=inputs=2" -ac 2 -c:a flac -sample_fmt s16 /tmp/b/s44.flac
-          ffmpeg -loglevel error -f lavfi -i "anoisesrc=color=pink:amplitude=0.3:sample_rate=96000:duration=180" -f lavfi -i "sine=frequency=220:sample_rate=96000:duration=180" -filter_complex "[0][1]amerge=inputs=2" -ac 2 -c:a flac -sample_fmt s32 -bits_per_raw_sample 24 /tmp/b/s96.flac
-          ls -la /tmp/b
-          BENCH_TMP=/tmp/b python3 tools/crcbench/paired.py 61 /tmp/old /tmp/new /tmp/b/s44.flac /tmp/b/s96.flac
+          ffmpeg -loglevel error -f lavfi -i "anoisesrc=color=pink:amplitude=0.5:sample_rate=44100:duration=240" -af "volume='0.05+0.95*abs(sin(2*PI*t/9))':eval=frame" -ac 2 -c:a pcm_s16le /tmp/b/s44.wav
+          ffmpeg -loglevel error -f lavfi -i "anoisesrc=color=pink:amplitude=0.5:sample_rate=96000:duration=90" -af "volume='0.05+0.95*abs(sin(2*PI*t/9))':eval=frame" -ac 2 -c:a pcm_s24le /tmp/b/s96.wav
+          ffmpeg -loglevel error -i /tmp/b/s44.wav -c:a flac /tmp/b/s44.flac
+          cmp <(/tmp/old analyze /tmp/b/s44.wav) <(/tmp/new analyze /tmp/b/s44.wav) && echo "analyze output identical"
+          cmp <(/tmp/old analyze /tmp/b/s96.wav --fingerprint) <(/tmp/new analyze /tmp/b/s96.wav --fingerprint) && echo "fingerprint output identical"
+          python3 tools/crcbench/pair.py 31 /tmp/old /tmp/new 'analyze {in}' /tmp/b/s44.wav /tmp/b/s96.wav /tmp/b/s44.flac
+          python3 tools/crcbench/pair.py 21 /tmp/old /tmp/new 'convert {in} {out} --analyze' /tmp/b/s44.wav /tmp/b/s44.flac

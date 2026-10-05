@@ -25,7 +25,7 @@ AUDENIQ 전용 Rust 오디오 엔진. 실제 AUDENIQ 소스의 FFmpeg·FFprobe·
 
 ## 사용
 
-Rust 1.89 이상이 필요합니다. SHA-256은 RustCrypto의 x86 SHA-NI/AArch64 SHA2 감지를 사용하고, IEEE CRC32는 crc32fast의 하드웨어 경로를 사용합니다. 지원 여부를 런타임에 검사하며 미지원 CPU에서는 기준 구현을 선택합니다. `--scalar`는 자체 DSP 커널을 바꾸며 해시 라이브러리의 하드웨어 감지는 유지합니다.
+Rust 1.89 이상이 필요합니다. SHA-256(x86 SHA-NI/AArch64 SHA2), FLAC MD5와 IEEE CRC32(x86 AVX-512/AVX2 VPCLMULQDQ·PCLMULQDQ, AArch64 PMULL)는 저장소 안의 구현을 사용합니다. 지원 여부를 런타임에 검사하며 미지원 CPU에서는 이식 가능한 구현을 선택합니다. `--scalar`는 자체 DSP 커널을 바꾸며 해시/CRC의 하드웨어 감지는 유지합니다.
 
 ```sh
 cargo build --release --locked

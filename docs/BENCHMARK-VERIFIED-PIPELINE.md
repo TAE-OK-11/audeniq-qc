@@ -223,16 +223,80 @@ maps more of it. Those pages are shared through the page cache by concurrent
 jobs; private memory per job did not grow. Heap growth measured with massif
 is +10 KiB.
 
-## Remaining hotspots (after round 2), ranked by expected ROI
+
+## Round 3: hypothesis checks (engine `01973f4`)
+
+Two hypotheses from the round-2 hotspot list were tested before building.
+
+**H2, table-driven multi-code FLAC Rice decoder: refuted by measurement.**
+Instrumented decoding of the corpus gave the code-length distribution the
+design depends on. 16-bit CD material uses k = 5..7 for 68% of codes (mean
+7.5 bits per code, mean unary quotient about 1). 24-bit high-resolution
+material uses k = 14..15 (mean 17 bits). A lookup table of practical size
+(12..16 index bits) would decode about one code per lookup, replacing a
+3-cycle LZCNT with a ~5-cycle dependent load, and small-k codes where
+multi-code lookups pay off are about 6% of codes. It was not built.
+
+An alternative that cuts instructions per code instead was built and
+measured: storing folded codes and undoing the zig-zag in a separate
+vectorized pass, plus a quotient-OR range check (value < 2^32 iff
+q < 2^(32-k)). First run: -1.4..-1.9%. Repeat: -0.3..+0.3% decode,
++2.8..-1.2% conversion. Not reproducible, rejected. The FLAC Rice reader is
+at its practical floor for this design.
+
+**H3, keep the winning LPC residual from costing: confirmed and accepted.**
+Premise: the writer recomputed the winning LPC residual (`lpc_store`, 3.0%
+of WAV-to-FLAC CPU). The first version stored every costed candidate's
+residual. It saved 1.7-2.6% CPU but raised private memory from 660 to 720
+KiB (RssAnon, sampled during a 240 s conversion), which violates the
+memory constraint. Planning and writing each subframe in turn reduced that
+to +16 KiB. The accepted version costs candidates from the highest order
+down, stores only the first (order 8, which wins most real-music
+subframes), and sums the others only. A lower order replaces an equal-cost
+LPC model, which selects exactly the same model. Results:
+
+* Output: byte-identical at levels 4, 5 and 8 on nine inputs.
+* Private memory: RssAnon 660 KiB before and after.
+* CPU: WAV-to-FLAC -2.4..-4.7%; ALAC input -0.3% (decode dominated).
+
+### Cumulative full verified conversion (no QC) — CPU s / wall s / peak RSS MiB
+
+Baseline `f097643`, final `01973f4`, reference column built at `26ff3bc`
+(before the H3 encoder change), FFmpeg n8.1.2 with the workload-matched
+pipeline. Median of 7 interleaved runs. Raw data:
+[round3-convert.json](verified-pipeline/round3-convert.json),
+[round3-tracks.json](verified-pipeline/round3-tracks.json).
+
+| Input | s | Baseline CPU / wall / RSS MiB | **Final** CPU / wall / RSS | Final vs base CPU | Reference CPU / wall / RSS | FFmpeg 8.1.2 CPU / wall / RSS | Final vs FFmpeg CPU | Final vs FFmpeg wall |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| album44.wav | 205 | 0.695 / 0.729 / 3.63 | **0.539 / 0.571 / 3.74** | -22.6% | 0.747 / 0.779 / 5.05 | 1.393 / 0.671 / 18.24 | -61.3% | -15.0% |
+| album44.m4a | 205 | 1.286 / 1.323 / 3.56 | **1.085 / 1.140 / 3.75** | -15.6% | 1.408 / 1.455 / 5.25 | 2.220 / 1.112 / 18.09 | -51.1% | +2.5% |
+| album44.flac | 205 | 0.944 / 0.972 / 3.76 | **0.788 / 0.819 / 3.87** | -16.6% | 0.986 / 1.026 / 5.24 | 1.644 / 0.672 / 18.14 | -52.1% | +21.8% |
+| album48.wav | 109 | 0.401 / 0.417 / 3.54 | **0.316 / 0.333 / 3.70** | -21.1% | 0.440 / 0.460 / 4.36 | 0.880 / 0.421 / 18.55 | -64.0% | -20.9% |
+| album48.m4a | 109 | 0.736 / 0.757 / 3.54 | **0.631 / 0.661 / 3.77** | -14.2% | 0.865 / 0.885 / 4.38 | 1.385 / 0.692 / 17.70 | -54.4% | -4.5% |
+| album96.wav | 41 | 0.382 / 0.411 / 3.57 | **0.302 / 0.330 / 3.70** | -20.9% | 0.410 / 0.448 / 6.10 | 0.679 / 0.360 / 21.05 | -55.5% | -8.2% |
+| album96.m4a | 41 | 0.600 / 0.632 / 3.82 | **0.503 / 0.534 / 3.96** | -16.2% | 0.714 / 0.746 / 6.23 | 0.929 / 0.449 / 18.90 | -45.8% | +18.9% |
+| album192.wav | 16 | 0.293 / 0.315 / 3.57 | **0.234 / 0.256 / 3.72** | -20.1% | 0.325 / 0.348 / 5.44 | 0.469 / 0.257 / 24.93 | -50.2% | -0.4% |
+| syn_tone.wav | 240 | 0.931 / 0.975 / 3.41 | **0.817 / 0.853 / 3.55** | -12.3% | 1.101 / 1.146 / 5.13 | 2.053 / 0.956 / 19.07 | -60.2% | -10.8% |
+| syn_pink.wav | 240 | 1.089 / 1.171 / 3.58 | **0.922 / 0.999 / 3.70** | -15.3% | 1.208 / 1.282 / 4.39 | 2.173 / 1.049 / 19.06 | -57.6% | -4.8% |
+
+Totals over 88 files (780 s audio): baseline 5.58 s CPU, final 4.76 s (-14.8%), FFmpeg 12.78 s (final -62.8%).
+
+Gates on `01973f4`: fmt, clippy (native and reference), debug and release
+tests (28 + 10), qualification 596/596, codec stress 288/288, standards
+pass. The 1,600-case mutation fuzz found no crashes and its outcome counts
+are identical to the baseline's.
+
+## Remaining hotspots (after round 3), ranked by expected ROI
 
 1. **MD5 (~11%) and SHA-256 (~8%)**: required by STREAMINFO and the PCM-hash
    contract; the md-5 `asm` backend is only ~15% faster (rejected for a C/asm
    build dependency). A faster pure-Rust MD5 is the only remaining lever.
-2. **FLAC Rice parsing** (~10% of conversion after LZCNT/BMI2): bound by the
-   lzcnt -> shift chain per code; a table-driven multi-code decoder is the
-   remaining untested design.
-3. **Exact LPC costing** (~10%): fused pair costing measured slower; storing the
-   winning residual during costing (avoid the ~2% recompute) is untested.
+2. **FLAC Rice parsing** (~10% of conversion after LZCNT/BMI2): table decoding
+   refuted by the k distribution and instruction-count reduction not
+   reproducible (round 3); no remaining design with measured headroom.
+3. **Exact LPC costing** (~8% after round 3): fused pair costing measured
+   slower; winning-residual reuse accepted in round 3.
 4. **ALAC adaptive predictor** (~35% of ALAC input): branch-mispredict bound;
    six designs measured and rejected.
 5. **QC K-weighting IIR**: serial f64 chain fixed by bit-exact output.

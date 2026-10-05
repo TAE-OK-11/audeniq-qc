@@ -60,32 +60,24 @@ fn rice_body(
     limit: u32,
 ) -> Result<()> {
     let _profile = crate::profile::scope(crate::profile::Stage::AlacRice);
-    let mut history = initial;
+    let mut state = Adaptive {
+        history: initial,
+        mult,
+        limit,
+    };
+    // One added to the value after a zero run of at most 65535.
     let mut modifier = 0;
     let mut i = 0;
     while i < out.len() {
-        let k = (31 - ((history >> 9) + 3).leading_zeros()).min(limit);
-        let x = scalar(b, k, bits)?
+        let x = scalar(b, state.parameter(), bits)?
             .checked_add(modifier)
             .ok_or(Error::Invalid("ALAC residual overflow"))?;
         modifier = 0;
         out[i] = ((x >> 1) as i32) ^ -((x & 1) as i32);
-        if x > 0xffff {
-            history = 0xffff;
-        } else {
-            history = history
-                .wrapping_add(x.wrapping_mul(mult))
-                .wrapping_sub((history.wrapping_mul(mult)) >> 9);
-        }
+        state.adapt(x);
         i += 1;
-        if history < 128 && i < out.len() {
-            let log = if history == 0 {
-                0
-            } else {
-                31 - history.leading_zeros()
-            };
-            let k = (7 - log + ((history + 16) >> 6)).min(limit);
-            let n = scalar(b, k, 16)? as usize;
+        if state.history < 128 && i < out.len() {
+            let n = scalar(b, state.run_parameter(), 16)? as usize;
             if n > out.len() - i {
                 return Err(Error::Invalid("ALAC zero-run length"));
             }
@@ -94,10 +86,42 @@ fn rice_body(
             if n <= 0xffff {
                 modifier = 1;
             }
-            history = 0;
+            state.history = 0;
         }
     }
     Ok(())
+}
+
+/// ALAC's adaptive Golomb state: a running mean of recent values scaled by
+/// 2^9 (`history`), its adaptation rate and the parameter limit.
+struct Adaptive {
+    history: u32,
+    mult: u32,
+    limit: u32,
+}
+impl Adaptive {
+    /// The value parameter: floor(log2(history / 2^9 + 3)), limited.
+    #[inline(always)]
+    fn parameter(&self) -> u32 {
+        (31 - ((self.history >> 9) + 3).leading_zeros()).min(self.limit)
+    }
+    /// The zero-run count parameter, used when history fell below 128.
+    #[inline(always)]
+    fn run_parameter(&self) -> u32 {
+        let log = 31u32.saturating_sub(self.history.leading_zeros());
+        (7 - log + ((self.history + 16) >> 6)).min(self.limit)
+    }
+    /// Move the mean towards x (a value above 65535 saturates it).
+    #[inline(always)]
+    fn adapt(&mut self, x: u32) {
+        self.history = if x > 0xffff {
+            0xffff
+        } else {
+            self.history
+                .wrapping_add(x.wrapping_mul(self.mult))
+                .wrapping_sub(self.history.wrapping_mul(self.mult) >> 9)
+        };
+    }
 }
 fn predict(p: &mut [i32], bits: u32, coeff: &mut [i16], quant: u32) {
     let _profile = crate::profile::scope(crate::profile::Stage::AlacPredict);
@@ -305,9 +329,16 @@ fn finish_stereo(
     }
 }
 
+/// ALAC's adaptive predictor for sample i: with base = x[i - order - 1],
+/// the prediction is sum c_j (x[i - order + j] - base), rounded and shifted
+/// by `quant`, plus base. Then the coefficients move to reduce the residual
+/// e: coefficient j steps against the sign of base - x[...] (times sign e)
+/// while the part of e not yet explained keeps e's sign, each step
+/// explaining (|delta| >> quant) * (j + 1) of it.
 #[inline]
 fn predict_order<const N: usize>(p: &mut [i32], bits: u32, coeff: &mut [i16], quant: u32) {
     let order = if N == 0 { coeff.len() } else { N };
+    let round = 1i64 << (quant - 1);
     for i in order + 1..p.len() {
         let start = i - order - 1;
         let base = p[start];
@@ -316,35 +347,42 @@ fn predict_order<const N: usize>(p: &mut [i32], bits: u32, coeff: &mut [i16], qu
         for (j, &sample) in p[start + 1..i].iter().enumerate() {
             sum = sum.wrapping_add(sample.wrapping_sub(base).wrapping_mul(coeff[j] as i32));
         }
-        let pred = ((sum as i64 + (1i64 << (quant - 1))) >> quant) as i32;
+        let pred = ((sum as i64 + round) >> quant) as i32;
         p[i] = extend(pred.wrapping_add(base).wrapping_add(error), bits);
-        let sign = error.signum();
-        let mut remaining = error;
-        if sign > 0 {
-            for j in 0..order {
-                if remaining <= 0 {
-                    break;
-                }
-                let delta = base.wrapping_sub(p[start + 1 + j]);
-                let direction = delta.signum();
-                coeff[j] = coeff[j].wrapping_sub(direction as i16);
-                remaining = remaining.wrapping_sub(
-                    (delta.wrapping_mul(direction) >> quant).wrapping_mul((j + 1) as i32),
-                );
-            }
-        } else if sign < 0 {
-            for j in 0..order {
-                if remaining >= 0 {
-                    break;
-                }
-                let delta = base.wrapping_sub(p[start + 1 + j]);
-                let direction = -delta.signum();
-                coeff[j] = coeff[j].wrapping_sub(direction as i16);
-                remaining = remaining.wrapping_sub(
-                    (delta.wrapping_mul(direction) >> quant).wrapping_mul((j + 1) as i32),
-                );
-            }
+        // The residual's sign is unpredictable; each sign keeps its own
+        // loop (one branch per sample), whose early exit is the format's.
+        if error > 0 {
+            adapt::<true>(&mut coeff[..order], &p[start + 1..i], base, error, quant);
+        } else if error < 0 {
+            adapt::<false>(&mut coeff[..order], &p[start + 1..i], base, error, quant);
         }
+    }
+}
+
+/// The coefficient steps for a residual of sign `POSITIVE` (see
+/// [`predict_order`]).
+#[inline(always)]
+fn adapt<const POSITIVE: bool>(
+    coeff: &mut [i16],
+    window: &[i32],
+    base: i32,
+    error: i32,
+    quant: u32,
+) {
+    let mut remaining = error;
+    for (j, (c, &x)) in coeff.iter_mut().zip(window).enumerate() {
+        if (POSITIVE && remaining <= 0) || (!POSITIVE && remaining >= 0) {
+            break;
+        }
+        let delta = base.wrapping_sub(x);
+        let direction = if POSITIVE {
+            delta.signum()
+        } else {
+            -delta.signum()
+        };
+        *c = c.wrapping_sub(direction as i16);
+        remaining = remaining
+            .wrapping_sub((delta.wrapping_mul(direction) >> quant).wrapping_mul((j + 1) as i32));
     }
 }
 

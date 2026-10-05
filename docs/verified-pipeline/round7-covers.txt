@@ -1,0 +1,18 @@
+# Round 7: cover validation differential runs (previous engine with image 0.24.9 vs in-repository)
+# Each case compares the image-probe stdout JSON and exit status. err-DIFF entries are files on
+# which the previous engine panicked (exit 134, abort); all 75 PNG and 301 lossless-JPEG ones.
+
+flip/truncate/insert, all 250 fixtures x40:
+{'ok': 2505, 'err': 7745}
+non-panic diffs: 0
+lossless 254 x12:
+{'ok': 172, 'err': 2829, 'err-DIFF': 301}
+non-panic diffs: 0
+PNG structure-aware x60:
+{'ok': 2758, 'err': 2927, 'err-DIFF': 75}
+JPEG structure-aware x60:
+{'ok': 2771, 'err': 2629}
+non-panic diffs: 0
+JPEG flips x120:
+{'ok': 5393, 'err': 5497}
+non-panic diffs: 0

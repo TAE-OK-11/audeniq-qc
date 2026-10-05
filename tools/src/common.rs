@@ -1,5 +1,5 @@
-use serde_json::Value;
-use sha2::{Digest, Sha256};
+use audeniq_qc::json::Value;
+use audeniq_qc::Sha256;
 use std::{
     io::{Read, Write},
     path::{Path, PathBuf},
@@ -111,14 +111,14 @@ pub fn native(binary: &Path, command: &str, paths: &[&Path], flags: &[&str]) -> 
     let mut args = strings(&[path(binary), command]);
     args.extend(paths.iter().map(|p| path(p).to_owned()));
     args.extend(strings(flags));
-    Ok(serde_json::from_slice(&run(&args)?.stdout)?)
+    Ok(audeniq_qc::json::from_slice(&run(&args)?.stdout)?)
 }
 pub fn rejected(binary: &Path, command: &str, paths: &[&Path]) -> Result<()> {
     let mut args = strings(&[path(binary), command]);
     args.extend(paths.iter().map(|p| path(p).to_owned()));
     let out = capture(&args)?;
     check(out.status.code() == Some(2), "rejection must exit 2")?;
-    let error: Value = serde_json::from_slice(&out.stderr)?;
+    let error: Value = audeniq_qc::json::from_slice(&out.stderr)?;
     check(
         matches!(
             error["error"].as_str(),
@@ -161,11 +161,34 @@ pub fn oracle_command(input: &Path) -> Vec<String> {
 pub fn oracle_hash(input: &Path) -> Result<String> {
     hash_output(&run(&oracle_command(input))?.stdout)
 }
+/// FFmpeg's SHA-256 of a raw s32le file, independent of the engine's hash.
+pub fn raw_oracle_hash(input: &Path, rate: u32, channels: u16) -> Result<String> {
+    let mut args = strings(&[
+        "ffmpeg", "-nostdin", "-v", "error", "-xerror", "-f", "s32le",
+    ]);
+    args.extend([
+        "-ar".to_owned(),
+        rate.to_string(),
+        "-ac".to_owned(),
+        channels.to_string(),
+    ]);
+    args.extend(strings(&[
+        "-i",
+        path(input),
+        "-c:a",
+        "pcm_s32le",
+        "-f",
+        "hash",
+        "-hash",
+        "sha256",
+        "-",
+    ]));
+    hash_output(&run(&args)?.stdout)
+}
 pub fn sha(bytes: &[u8]) -> String {
-    Sha256::digest(bytes)
-        .iter()
-        .map(|b| format!("{b:02x}"))
-        .collect()
+    let mut hash = Sha256::new();
+    hash.update(bytes);
+    hash.finalize().iter().map(|b| format!("{b:02x}")).collect()
 }
 pub fn file_sha(input: &Path) -> Result<String> {
     let mut file = std::fs::File::open(input)?;

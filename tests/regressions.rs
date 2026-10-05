@@ -84,6 +84,65 @@ fn codec_hashes_and_verified_conversion_match_ffmpeg() {
             .contains(&expected));
     }
 }
+/// TTA and WavPack in their encoder modes (WavPack's higher modes use more
+/// and other decorrelation terms, including the cross-channel ones), mono
+/// and stereo, 16 and 24 bits, on tone and noise: every decode equals the
+/// source PCM.
+#[test]
+fn tta_and_wavpack_modes_decode_to_the_source() {
+    let d = Dir::new();
+    for (name, filter, format) in [
+        (
+            "tone16",
+            "aevalsrc=0.7*sin(2*PI*997*t)|0.3*sin(2*PI*441*t):s=44100:d=0.9",
+            "pcm_s16le",
+        ),
+        (
+            "noise16",
+            "anoisesrc=d=0.9:c=pink:r=44100:a=0.5",
+            "pcm_s16le",
+        ),
+        (
+            "tone24",
+            "aevalsrc=0.6*sin(2*PI*1999*t)|0.6*sin(2*PI*31*t):s=96000:d=0.4",
+            "pcm_s24le",
+        ),
+    ] {
+        for channels in ["1", "2"] {
+            let src = d.0.join(format!("{name}-{channels}.wav"));
+            assert!(Command::new("ffmpeg")
+                .args(["-v", "error", "-nostdin", "-f", "lavfi", "-i", filter, "-ac", channels])
+                .args(["-c:a", format])
+                .arg(&src)
+                .status()
+                .expect("FFmpeg oracle must be installed for tests")
+                .success());
+            let (_, expected, frames) =
+                pcm_sha256(&src, Limits::default(), Backend::Scalar).unwrap();
+            let mut variants: Vec<(&str, Vec<&str>)> = vec![("tta", vec!["-c:a", "tta"])];
+            for level in ["0", "1", "2", "3"] {
+                variants.push(("wv", vec!["-c:a", "wavpack", "-compression_level", level]));
+            }
+            for (i, (ext, args)) in variants.iter().enumerate() {
+                let p = d.0.join(format!("{name}-{channels}-{i}.{ext}"));
+                let mut c = Command::new("ffmpeg");
+                c.args(["-v", "error", "-nostdin", "-i"])
+                    .arg(&src)
+                    .args(args);
+                if *ext == "wv" && format == "pcm_s24le" {
+                    c.args(["-bits_per_raw_sample", "24"]);
+                }
+                assert!(c.arg(&p).status().unwrap().success());
+                for backend in [Backend::Scalar, Backend::detect()] {
+                    let (_, hash, count) = pcm_sha256(&p, Limits::default(), backend)
+                        .unwrap_or_else(|e| panic!("{name}-{channels}-{i}.{ext}: {e}"));
+                    assert_eq!(hash, expected, "{name}-{channels}-{i}.{ext}");
+                    assert_eq!(count, frames);
+                }
+            }
+        }
+    }
+}
 #[test]
 fn truncation_never_publishes_output() {
     let d = Dir::new();
@@ -274,8 +333,8 @@ fn standalone_fingerprint_matches_fused_tap() {
     let fallback =
         audeniq_qc::resample::fingerprint(&src, Limits::default(), Backend::detect()).unwrap();
     assert_eq!(
-        serde_json::to_value(fused.fingerprint_windows.unwrap()).unwrap(),
-        serde_json::to_value(fallback.fingerprint_windows).unwrap()
+        audeniq_qc::json::to_value(&fused.fingerprint_windows.unwrap()),
+        audeniq_qc::json::to_value(&fallback.fingerprint_windows)
     );
 }
 
@@ -303,8 +362,8 @@ fn fused_conversion_qc_and_fingerprint_match_separate_analysis() {
             )
             .unwrap();
             assert_eq!(
-                serde_json::to_value(&analysis).unwrap(),
-                serde_json::to_value(conversion.analysis.unwrap()).unwrap()
+                audeniq_qc::json::to_value(&analysis),
+                audeniq_qc::json::to_value(&conversion.analysis.unwrap())
             );
             assert_eq!(conversion.pcm_sha256, analysis.pcm_sha256);
             assert_eq!(

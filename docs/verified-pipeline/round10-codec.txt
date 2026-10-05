@@ -1,0 +1,60 @@
+Round 10: FLAC encoder, frame verification and ALAC decoder (own designs)
+Host: 4 vCPU x86-64 container (Intel Xeon @ 2.10GHz). Previous = round-9 binary
+(7362737); new = this commit. Stage times: profile-native build, min of 5 runs
+(inclusive wall time, stages overlap); convert album44.wav (9.06M stereo frames).
+
+Encoder stages, previous -> new (ms)
+  encoder (all)            511 -> 277
+  planning                 264 -> 131
+    fixed predictors        96 ->  31   u32-lane partition sums (bounded), partition orders <= 6 at level 5
+    LPC exact costing       96 ->  45   whole-block residual kernels, i32 lanes when the bound holds
+    Levinson + sampled      43 ->  25   division-free sample stepping, const-order sample kernels
+    autocorrelation         32 ->  26   (unchanged; mul+add throughput of its fixed order)
+  stereo estimate           28 ->  12   one bounded u32 pass for the four second-order sums
+  Rice k choice             22 ->   6   u32 lanes when the partition sum fits
+  Rice writing              58 ->  34   pre-sized buffer, unconditional 8-byte stores, two codes per store, BMI2
+  frame verification       109 ->  68   positional code comparison (residual part 75 -> 35)
+
+Encoder decisions examined (bytes over 50 WAV + 5 M4A corpus files, 300,072,400 before)
+  partition order cap 7 at level 5                 identical output (order 8 never chosen)
+  partition order cap 6 at level 5 (adopted)       +292 bytes in total (1 ppm); levels 3-4 -44 bytes on t54
+  fixed order chosen by whole-block estimate       +36,485 bytes, up to +2.0% on single tracks -> rejected
+  LPC lower orders ranked by Levinson error        +6,090,023 bytes (+2.0%) -> rejected
+  skip exact cost of lower order if sampled worse  +7,541 bytes, no clear CPU gain -> rejected
+
+ALAC decoder (pcm-hash album44.m4a, profile build): predictor 394 ms, Rice 158 ms
+  predictor order histogram: 4: 2.24M samples, 5: 3.98M, 6: 11.90M
+  coefficients updated per sample (order 6): 1: 0.92M, 2: 2.21M, 3: 2.22M, 4: 1.82M,
+    5: 1.28M, 6: 3.22M, residual zero: 0.20M -> the loop exit is unpredictable
+  order 5 previously used the generic loop; constant-order loop adopted: 394 -> 355 ms
+  rejected (identical output, slower): branch-free sequential mask 566 ms; register-held
+    window and coefficients 439 ms; independent steps + prefix remainders + bit mask 552 ms
+  Rice: adaptive parameter chain (history -> k -> code -> history) ~17 cycles per sample,
+    at its latency floor; unchanged.
+
+Equivalence
+  2931 corpus command outputs compared with the previous binary: 31 differ, all
+  `convert` outputs of album44/t54/t56/t58 whose FLAC bytes changed through the
+  partition order cap; their JSON is identical except output_bytes and their decoded
+  PCM SHA-256 is identical. All decode, analyze, fingerprint and pcm-hash outputs are
+  identical. qualify / codec-stress / standards reports identical; mutation fuzz
+  counts identical (588/1012, 417/1183, 417 cross-decoded).
+  The frame-verification differential test (CRC-repaired bit flips, >10,000 frames)
+  accepts exactly what decoding reproduces with the new positional check.
+
+Paired CPU (user+sys), median ratio new/old, bootstrap 95% CI
+convert                album44.wav    A=0.604 B=0.434 -27.3% CI[-33.1,-24.0]
+convert                album48.wav    A=0.325 B=0.284 -23.0% CI[-27.1,-18.7]
+convert                album96.wav    A=0.316 B=0.264 -15.6% CI[-28.4,+2.4]
+convert                album192.wav   A=0.226 B=0.199 -15.8% CI[-26.3,-5.7]
+convert                album44.m4a    A=1.179 B=1.012 -18.2% CI[-23.4,-6.3]
+convert                album96.m4a    A=0.565 B=0.566 -4.3% CI[-17.0,+14.3]
+convert                t05.wav        A=0.028 B=0.016 -28.3% CI[-43.8,-25.0]
+convert --analyze      album44.wav    A=0.806 B=0.576 -24.4% CI[-37.0,-21.2]
+convert --analyze      album44.m4a    A=1.401 B=1.139 -15.4% CI[-21.8,-12.1]
+convert --compression-level album44.flac   A=0.807 B=0.672 -22.0% CI[-26.4,-21.0]
+pcm-hash               album44.m4a    A=0.629 B=0.624 -1.3% CI[-6.2,+8.0]
+pcm-hash               album44.flac   A=0.261 B=0.255 -2.6% CI[-5.7,+8.5]
+
+Peak RSS: unchanged within run-to-run spread (the non-kept LPC candidate is costed
+in 64-sample stack pieces, so no residual buffer is added).

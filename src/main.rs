@@ -5,12 +5,12 @@ use std::{
     path::Path,
     time::{Duration, Instant},
 };
-fn write_json(value: &impl serde::Serialize) -> audeniq_qc::Result<()> {
+fn write_json(value: &impl audeniq_qc::json::ToJson) -> audeniq_qc::Result<()> {
     // Serialize retained i16 windows directly. An intermediate JSON Value
     // expands each two-byte sample into a much larger boxed JSON number.
     let stdout = std::io::stdout();
     let mut writer = BufWriter::with_capacity(65536, stdout.lock());
-    serde_json::to_writer(&mut writer, value).map_err(std::io::Error::other)?;
+    audeniq_qc::json::to_writer(&mut writer, value)?;
     writer.write_all(b"\n")?;
     writer.flush()?;
     Ok(())
@@ -91,12 +91,12 @@ fn run() -> audeniq_qc::Result<()> {
     }
     match (command, args.len()) {
         ("capabilities", 1) => write_json(
-            &serde_json::json!({"engine":audeniq_qc::ENGINE_VERSION,"backend":backend,"cpu_features":audeniq_qc::kernels::cpu_features(),"conversion_qc":true,"audio":["WAV/RF64/BW64 PCM16/24","AIFF/AIFC integer PCM","FLAC","M4A ALAC","TTA1","WavPack integer lossless single-block"],"images":["JPEG","PNG"],"pcm_outputs":["wav","s32le"],"compression_levels":{"min":0,"max":8,"default":5},"metric_version":audeniq_qc::METRIC_VERSION,"resampler_version":audeniq_qc::RESAMPLER_VERSION,"true_peak_certified":false,"media_codecs":if cfg!(feature="reference-codecs") {"symphonia-reference"} else {"audeniq-native"},"ffmpeg_runtime":false}),
+            &audeniq_qc::json!({"engine":audeniq_qc::ENGINE_VERSION,"backend":backend,"cpu_features":audeniq_qc::kernels::cpu_features(),"conversion_qc":true,"audio":["WAV/RF64/BW64 PCM16/24","AIFF/AIFC integer PCM","FLAC","M4A ALAC","TTA1","WavPack integer lossless single-block"],"images":["JPEG","PNG"],"pcm_outputs":["wav","s32le"],"compression_levels":{"min":0,"max":8,"default":5},"metric_version":audeniq_qc::METRIC_VERSION,"resampler_version":audeniq_qc::RESAMPLER_VERSION,"true_peak_certified":false,"media_codecs":if cfg!(feature="reference-codecs") {"symphonia-reference"} else {"audeniq-native"},"ffmpeg_runtime":false}),
         ),
         ("probe", 2) => write_json(&audeniq_qc::probe::media(Path::new(&args[1]), limits)?),
         ("image-probe", 2) => write_json(&audeniq_qc::probe::cover(Path::new(&args[1]), limits)?),
         ("tags", 2) => write_json(
-            &serde_json::json!({"format":{"tags":audeniq_qc::probe::tags(Path::new(&args[1]),&limits)?}}),
+            &audeniq_qc::json!({"format":{"tags":audeniq_qc::probe::tags(Path::new(&args[1]),&limits)?}}),
         ),
         ("analyze", 2) => write_json(&audeniq_qc::meter::analyze(
             Path::new(&args[1]),
@@ -112,7 +112,7 @@ fn run() -> audeniq_qc::Result<()> {
         ("pcm-hash", 2) => {
             let (spec, hash, frames) =
                 audeniq_qc::audio::pcm_sha256(Path::new(&args[1]), limits, backend)?;
-            write_json(&serde_json::json!({"spec":spec,"pcm_sha256":hash,"frames":frames}))
+            write_json(&audeniq_qc::json!({"spec":spec,"pcm_sha256":hash,"frames":frames}))
         }
         ("decode", 3) => write_json(&audeniq_qc::pcm::decode(
             Path::new(&args[1]),
@@ -133,7 +133,7 @@ fn run() -> audeniq_qc::Result<()> {
             },
         )?),
         ("help" | "--help" | "-h", _) => write_json(
-            &serde_json::json!({"usage":"audeniq-qc <probe|analyze|fingerprint|pcm-hash|image-probe|tags> FILE | convert INPUT OUTPUT.flac [--compression-level 0..8] [--analyze [--fingerprint]] | decode INPUT OUTPUT [--format wav|s32le] | capabilities; options: --scalar --fingerprint --timeout-secs N"}),
+            &audeniq_qc::json!({"usage":"audeniq-qc <probe|analyze|fingerprint|pcm-hash|image-probe|tags> FILE | convert INPUT OUTPUT.flac [--compression-level 0..8] [--analyze [--fingerprint]] | decode INPUT OUTPUT [--format wav|s32le] | capabilities; options: --scalar --fingerprint --timeout-secs N"}),
         ),
         _ => Err(Error::Invalid("command/arguments; use --help")),
     }
@@ -143,7 +143,7 @@ fn main() {
     #[cfg(feature = "profile-native")]
     eprintln!(
         "{}",
-        serde_json::json!({"native_profile":audeniq_qc::native_profile(),"success":outcome.is_ok()})
+        audeniq_qc::json!({"native_profile":audeniq_qc::native_profile(),"success":outcome.is_ok()})
     );
     match outcome {
         Ok(()) => (),
@@ -157,7 +157,7 @@ fn main() {
             };
             eprintln!(
                 "{}",
-                serde_json::json!({"error":code,"detail":e.to_string()})
+                audeniq_qc::json!({"error":code,"detail":e.to_string()})
             );
             std::process::exit(2);
         }

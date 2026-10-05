@@ -18,6 +18,22 @@ impl<'a> Bits<'a> {
             loaded: 0,
         }
     }
+    /// The whole input.
+    pub fn data(&self) -> &'a [u8] {
+        self.data
+    }
+    /// Continue reading at bit `pos` (at most the input length).
+    pub fn seek(&mut self, pos: usize) -> Result<()> {
+        if pos > self.data.len() * 8 {
+            return Err(std::io::Error::from(std::io::ErrorKind::UnexpectedEof).into());
+        }
+        self.cache = 0;
+        self.available = 0;
+        self.loaded = pos / 8;
+        self.pos = pos & !7;
+        self.get((pos & 7) as u32)?;
+        Ok(())
+    }
     pub fn left(&self) -> usize {
         self.data.len() * 8 - self.pos
     }

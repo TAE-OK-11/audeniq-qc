@@ -21,7 +21,7 @@ AUDENIQ 전용 Rust 오디오 엔진. 실제 AUDENIQ 소스의 FFmpeg·FFprobe·
 
 1~2채널, 16/24-bit 정수, 44100~192000Hz가 경계입니다. 비디오, 네트워크, 손실 코덱, float/32-bit PCM, hybrid/DSD/float WavPack, fragmented MP4는 지원하지 않습니다. RF64 확장 ds64 테이블과 샘플 수가 선언되지 않은 FLAC도 지원하지 않습니다. 지원 불가나 손상은 오류이며 부분 성공으로 처리하지 않습니다.
 
-기본 빌드의 FLAC/ALAC/TTA/WavPack 디코더와 FLAC 인코더는 고정한 FFmpeg 소스를 참고/포팅한 자체 Rust 경로입니다. WAV/AIFF 및 제한된 단일 ALAC 트랙 M4A 컨테이너도 자체 처리합니다. 기존 Symphonia 코덱은 `--features reference-codecs` 비교 빌드에만 남깁니다. JSON·해시·CRC·JPEG/PNG 등 일반 라이브러리는 유지합니다. [출처와 라이선스](THIRD_PARTY.md)를 유지합니다.
+기본 빌드의 FLAC/ALAC/TTA/WavPack 디코더와 FLAC 인코더는 고정한 FFmpeg 소스를 참고/포팅한 자체 Rust 경로입니다. WAV/AIFF 및 제한된 단일 ALAC 트랙 M4A 컨테이너도 자체 처리합니다. 기존 Symphonia 코덱은 `--features reference-codecs` 비교 빌드에만 남깁니다. JSON·SHA-256·MD5·CRC32·JPEG/PNG 검증도 자체 구현이며 기본 빌드에는 외부 크레이트가 없습니다(기존 라이브러리는 테스트 비교용 dev-dependency로만 남김). [출처와 라이선스](THIRD_PARTY.md)를 유지합니다.
 
 ## 사용
 
@@ -71,7 +71,7 @@ target/release/audeniq-qc tags master.wv
 
 ## 정확도와 측정
 
-[인코더·외부 의존성 자체화 조사](docs/DEPENDENCY-AUDIT.md)에 이미 자체 구현한 부분, 남은 MD5/SHA-256/CRC32/JPEG/PNG/JSON 의존성과 다음 최적화 후보를 정리했습니다. 후보의 성능 개선은 아직 측정된 결과가 아닙니다.
+[인코더·외부 의존성 자체화 조사](docs/DEPENDENCY-AUDIT.md)에 이미 자체 구현한 부분, MD5/SHA-256/CRC32/JPEG/PNG/JSON 자체화 경과와 측정 결과([검증 파이프라인 벤치마크](docs/BENCHMARK-VERIFIED-PIPELINE.md) 라운드 4~8)를 정리했습니다.
 
 [FFmpeg·자체·일부 외부 코덱 3개 재측정](docs/BENCHMARK-THREEWAY-RERUN.md)을 N2와 EPYC 9V74에서 완료했습니다. WAV/ALAC 변환, QC, 변환+QC의 CPU·처리 시간·RAM·파일 크기와 반복 원시값을 공개합니다. 이번 x86 결과는 이전 EPYC 7763 Zen3 측정과 구분합니다.
 

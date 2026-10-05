@@ -5,11 +5,15 @@ pub mod audio;
 mod bits;
 #[cfg(not(feature = "reference-codecs"))]
 mod compressed;
+mod crc16;
 mod crc32;
 pub mod flac;
 #[cfg(not(feature = "reference-codecs"))]
 mod flac_decode;
 mod hash_fused;
+mod inflate;
+mod jpeg;
+pub mod json;
 pub mod kernels;
 mod m4a;
 mod md5;
@@ -19,16 +23,18 @@ mod mp4;
 mod msb;
 pub mod pcm;
 mod pcm_hash;
+mod png;
 pub mod probe;
 mod profile;
 mod sha256;
 #[cfg(feature = "profile-native")]
 pub use profile::report as native_profile;
+/// The canonical PCM SHA-256 implementation, shared with the tools crate.
+pub use sha256::Sha256;
 pub mod resample;
 mod tta;
 mod wavpack;
 
-use serde::Serialize;
 use std::{
     fmt, io,
     time::{Duration, Instant},
@@ -94,7 +100,7 @@ impl Limits {
     }
 }
 
-#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AudioSpec {
     pub container: String,
     pub codec: String,
@@ -103,6 +109,14 @@ pub struct AudioSpec {
     pub bits_per_sample: u16,
     pub frames: Option<u64>,
 }
+crate::json_struct!(AudioSpec {
+    container,
+    codec,
+    sample_rate,
+    channels,
+    bits_per_sample,
+    frames,
+});
 impl AudioSpec {
     pub fn validate(&self) -> Result<()> {
         if !(44_100..=192_000).contains(&self.sample_rate)

@@ -1,5 +1,5 @@
 use crate::common::*;
-use serde_json::{json, Value};
+use audeniq_qc::{json, json::Value};
 use std::{fs, path::Path};
 
 fn loudness(input: &Path) -> Result<(f64, f64)> {
@@ -136,7 +136,7 @@ pub fn execute(options: &Options) -> Result<Value> {
                 let actual = if format == "wav" {
                     oracle_hash(&output)?
                 } else {
-                    file_sha(&output)?
+                    raw_oracle_hash(&output, rate, channels)?
                 };
                 verify!(actual == expected, "independent PCM export hash");
             }

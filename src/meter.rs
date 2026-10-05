@@ -9,10 +9,9 @@ use crate::{
     resample::{FingerprintTap, TruePeak, Window},
     AudioSpec, Error, Limits, Result,
 };
-use serde::Serialize;
 use std::{f64::consts::PI, path::Path};
 
-#[derive(Debug, Serialize)]
+#[derive(Debug)]
 pub struct Analysis {
     pub engine: &'static str,
     pub metric_version: &'static str,
@@ -33,15 +32,38 @@ pub struct Analysis {
     pub block_db: Vec<f32>,
     pub pcm_sha256: String,
     pub resampler_version: Option<&'static str>,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub fingerprint_windows: Option<Vec<Window>>,
 }
+crate::json_struct!(Analysis {
+    engine,
+    metric_version,
+    backend,
+    spec,
+    samples_per_channel,
+    duration_secs,
+    peak,
+    channel_peaks,
+    integrated_lufs,
+    true_peak_dbtp,
+    clip_events,
+    clipped_samples,
+    blocks,
+    silent_blocks,
+    longest_silent_run,
+    zero_crossing_rate,
+    block_db,
+    pcm_sha256,
+    resampler_version,
+    fingerprint_windows: skip_none,
+});
 
 struct KWeight {
     b: [f64; 5],
     a: [f64; 5],
     state: [[f64; 2]; 4],
     kernel: crate::kernels::WeightKernel,
+    /// Stereo filtering may use `kernels::StereoWeight` (not `--scalar`).
+    vector: bool,
 }
 impl KWeight {
     fn new(rate: u32, channels: usize, backend: Backend) -> Self {
@@ -74,9 +96,10 @@ impl KWeight {
             a,
             state: [[0.0; 2]; 4],
             kernel: crate::kernels::WeightKernel::new(backend, channels),
+            vector: backend != Backend::Scalar,
         }
     }
-    #[inline]
+    #[cfg(test)]
     fn push(&mut self, x: [f64; 2]) -> [f64; 2] {
         self.kernel.apply(&self.b, &self.a, &mut self.state, x)
     }
@@ -138,6 +161,11 @@ impl Loudness {
         }
     }
 }
+/// Smallest `s` with `s as f64 / 2^31 > 1e-6` (zero-crossing sign).
+const SIGN_THRESHOLD: i32 = 2148;
+/// Smallest `|s|` with `|s| as f64 / 2^31 >= 0.999` (clipping).
+const CLIP_THRESHOLD: u32 = 2_145_336_165;
+
 fn lufs(e: f64) -> f64 {
     -0.691 + 10.0 * e.log10()
 }
@@ -233,70 +261,38 @@ impl Analyzer {
     pub(crate) fn push(&mut self, samples: &[i32]) {
         let channels = self.a.spec.channels as usize;
         let block_frames = self.a.spec.sample_rate as usize / 20;
-        for (ch, plane) in self.planar.iter_mut().enumerate().take(channels) {
-            plane.clear();
-            plane.extend(
-                samples
-                    .iter()
-                    .skip(ch)
-                    .step_by(channels)
-                    .map(|&s| (s as f64 / 2147483648.0) as f32),
-            );
-            self.tp.push_channel(ch, plane);
+        // `s as f32 * 2^-31` equals `(s as f64 / 2^31) as f32`: scaling by a
+        // power of two commutes with rounding to f32.
+        let scale = |s: i32| s as f32 * (1.0 / 2147483648.0);
+        let [left, right] = &mut self.planar;
+        left.clear();
+        right.clear();
+        if channels == 2 {
+            let (frames, _) = samples.as_chunks::<2>();
+            left.extend(frames.iter().map(|f| scale(f[0])));
+            right.extend(frames.iter().map(|f| scale(f[1])));
+        } else {
+            left.extend(samples.iter().map(|&s| scale(s)));
         }
-        for row in samples.chunks_exact(channels) {
-            let weighted = self.k.push([
-                row[0] as f64 / 2147483648.0,
-                if channels == 2 {
-                    row[1] as f64 / 2147483648.0
-                } else {
-                    0.0
-                },
-            ]);
-            let mut f = [0f32; 2];
-            for (ch, &s) in row.iter().enumerate() {
-                let v = s as f64 / 2147483648.0;
-                let x = v.abs();
-                f[ch] = v as f32;
-                self.a.channel_peaks[ch] = self.a.channel_peaks[ch].max(x);
-                self.block_peak = self.block_peak.max(x);
-                self.squares += v * v;
-                let sign = if v > 1e-6 {
-                    1
-                } else if v < -1e-6 {
-                    -1
-                } else {
-                    0
-                };
-                if sign != 0 {
-                    if self.signs[ch] != 0 && self.signs[ch] != sign {
-                        self.crossings += 1;
-                    }
-                    self.signs[ch] = sign;
-                }
-                if x >= 0.999 {
-                    self.runs[ch] += 1;
-                    match self.runs[ch].cmp(&3) {
-                        std::cmp::Ordering::Equal => {
-                            self.a.clip_events += 1;
-                            self.a.clipped_samples += 3;
-                        }
-                        std::cmp::Ordering::Greater => self.a.clipped_samples += 1,
-                        std::cmp::Ordering::Less => (),
-                    }
-                } else {
-                    self.runs[ch] = 0;
-                }
-                let y = weighted[ch];
-                self.weighted += y * y;
+        self.tp.push_channel(0, left);
+        if channels == 2 {
+            self.tp.push_channel(1, right);
+        }
+        let mut rest = samples;
+        loop {
+            let frames = (block_frames - self.block_count).min(rest.len() / channels);
+            if frames == 0 {
+                break;
             }
-            if let Some(t) = &mut self.tap {
-                let mono = f[..channels]
-                    .iter()
-                    .fold(0.0, |sum, &v| sum + v / channels as f32);
-                t.push(mono);
+            let (segment, tail) = rest.split_at(frames * channels);
+            rest = tail;
+            match (channels, self.tap.is_some()) {
+                (2, false) => self.segment::<2, false>(segment),
+                (2, true) => self.segment::<2, true>(segment),
+                (_, false) => self.segment::<1, false>(segment),
+                (_, true) => self.segment::<1, true>(segment),
             }
-            self.block_count += 1;
+            self.block_count += frames;
             if self.block_count == block_frames {
                 close_block(
                     &mut self.a,
@@ -312,6 +308,99 @@ impl Analyzer {
                 self.squares = 0.0;
                 self.weighted = 0.0;
             }
+        }
+    }
+
+    /// Frames within one 50 ms block. Running values stay in locals: the
+    /// K-weighting, squares and weighted sums keep their per-sample f64
+    /// operation order, and the peak, clip and sign tests use integer
+    /// thresholds equal to the f64 comparisons on `s / 2^31` (an exact
+    /// scaling), so every result is bit-identical to per-sample f64 code.
+    #[inline(always)]
+    fn segment<const C: usize, const TAP: bool>(&mut self, segment: &[i32]) {
+        let (b, a) = (self.k.b, self.k.a);
+        #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+        if C == 2 && self.k.vector {
+            let mut weight = crate::kernels::StereoWeight::new(&b, &a, &self.k.state);
+            self.frames::<C, TAP>(segment, |x| weight.step(x));
+            self.k.state = weight.state();
+            return;
+        }
+        let kernel = self.k.kernel;
+        let mut state = self.k.state;
+        self.frames::<C, TAP>(segment, |x| kernel.apply(&b, &a, &mut state, x));
+        self.k.state = state;
+    }
+
+    #[inline(always)]
+    fn frames<const C: usize, const TAP: bool>(
+        &mut self,
+        segment: &[i32],
+        mut weight: impl FnMut([f64; 2]) -> [f64; 2],
+    ) {
+        let (frames, _) = segment.as_chunks::<C>();
+        let mut squares = self.squares;
+        let mut weighted = self.weighted;
+        let mut peak = [0u32; C];
+        let mut runs: [u64; C] = std::array::from_fn(|ch| self.runs[ch]);
+        let mut signs: [i8; C] = std::array::from_fn(|ch| self.signs[ch]);
+        let mut crossings = self.crossings;
+        for frame in frames {
+            let x = std::array::from_fn(|ch| {
+                if ch < C {
+                    frame[ch] as f64 / 2147483648.0
+                } else {
+                    0.0
+                }
+            });
+            let y = weight(x);
+            let mut mono = 0f32;
+            for ch in 0..C {
+                let s = frame[ch];
+                let v = x[ch];
+                squares += v * v;
+                weighted += y[ch] * y[ch];
+                let m = s.unsigned_abs();
+                peak[ch] = peak[ch].max(m);
+                // v > 1e-6 and v < -1e-6.
+                let sign = (s >= SIGN_THRESHOLD) as i8 - (s <= -SIGN_THRESHOLD) as i8;
+                crossings += (sign != 0 && signs[ch] != 0 && signs[ch] != sign) as u64;
+                if sign != 0 {
+                    signs[ch] = sign;
+                }
+                // |v| >= 0.999.
+                if m >= CLIP_THRESHOLD {
+                    runs[ch] += 1;
+                    match runs[ch].cmp(&3) {
+                        std::cmp::Ordering::Equal => {
+                            self.a.clip_events += 1;
+                            self.a.clipped_samples += 3;
+                        }
+                        std::cmp::Ordering::Greater => self.a.clipped_samples += 1,
+                        std::cmp::Ordering::Less => (),
+                    }
+                } else {
+                    runs[ch] = 0;
+                }
+                if TAP {
+                    mono += v as f32 / C as f32;
+                }
+            }
+            if TAP {
+                if let Some(t) = &mut self.tap {
+                    t.push(mono);
+                }
+            }
+        }
+        self.squares = squares;
+        self.weighted = weighted;
+        self.crossings = crossings;
+        for ch in 0..C {
+            self.runs[ch] = runs[ch];
+            self.signs[ch] = signs[ch];
+            let p = peak[ch] as f64 / 2147483648.0;
+            self.a.channel_peaks[ch] = self.a.channel_peaks[ch].max(p);
+            self.block_peak = self.block_peak.max(p);
         }
     }
     pub(crate) fn finish(mut self, frames: u64, pcm_sha256: String) -> Analysis {
@@ -368,6 +457,75 @@ fn close_block(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Both channels in one SSE2/NEON register give the scalar filter's bits,
+    /// including the decay to zero after the input stops.
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+    #[test]
+    fn vector_stereo_weighting_matches_scalar() {
+        for rate in [44100, 48000, 96000, 192000] {
+            let mut scalar = KWeight::new(rate, 2, Backend::Scalar);
+            let mut vector = crate::kernels::StereoWeight::new(&scalar.b, &scalar.a, &scalar.state);
+            let mut seed = 7u32;
+            for frame in 0..60000 {
+                let x = std::array::from_fn(|ch| {
+                    seed = seed.wrapping_mul(1664525).wrapping_add(1013904223);
+                    if frame > 10000 {
+                        0.0
+                    } else if frame % 23 == ch {
+                        -1.0
+                    } else {
+                        seed as i32 as f64 / 2147483648.0
+                    }
+                });
+                let expected = scalar.push(x);
+                let actual = vector.step(x);
+                for ch in 0..2 {
+                    assert_eq!(
+                        actual[ch].to_bits(),
+                        expected[ch].to_bits(),
+                        "{rate} {frame}"
+                    );
+                }
+            }
+            for (a, b) in vector.state().iter().zip(&scalar.state) {
+                assert_eq!(a.map(f64::to_bits), b.map(f64::to_bits));
+            }
+        }
+    }
+
+    /// The integer thresholds and the f32 conversion equal the per-sample
+    /// f64 expressions they replace.
+    #[test]
+    fn integer_tests_equal_f64_comparisons() {
+        let v = |s: i32| s as f64 / 2147483648.0;
+        let mut values: Vec<i32> = vec![i32::MIN, i32::MIN + 1, -1, 0, 1, i32::MAX];
+        for t in [SIGN_THRESHOLD, CLIP_THRESHOLD as i32] {
+            values.extend((t - 3..=t + 3).flat_map(|s| [s, -s]));
+        }
+        let mut seed = 0x1234_5678u32;
+        values.extend((0..1_000_000).map(|_| {
+            seed ^= seed << 13;
+            seed ^= seed >> 17;
+            seed ^= seed << 5;
+            seed as i32 >> (seed % 31)
+        }));
+        for s in values {
+            assert_eq!(s >= SIGN_THRESHOLD, v(s) > 1e-6, "{s}");
+            assert_eq!(s <= -SIGN_THRESHOLD, v(s) < -1e-6, "{s}");
+            assert_eq!(
+                s.unsigned_abs() >= CLIP_THRESHOLD,
+                v(s).abs() >= 0.999,
+                "{s}"
+            );
+            assert_eq!(s.unsigned_abs() as f64 / 2147483648.0, v(s).abs(), "{s}");
+            assert_eq!(
+                (s as f32 * (1.0 / 2147483648.0)).to_bits(),
+                (v(s) as f32).to_bits(),
+                "{s}"
+            );
+        }
+    }
     #[test]
     fn stereo_weighting_matches_independent_scalar_history() {
         for rate in [44100, 48000, 96000, 192000] {

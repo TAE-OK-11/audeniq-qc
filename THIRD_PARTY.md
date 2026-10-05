@@ -4,8 +4,8 @@
 
 Pinned FFmpeg commit: `12c589a37d093cc55618f8377b092dc21416806f`.
 
-* `src/tta.rs`: `libavcodec/tta.c`, `ttadata.c`, `ttadsp.c`; Alex Beregszaszi (2006), FFmpeg contributors.
-* `src/wavpack.rs`, `src/wavpack_table.rs`: `libavcodec/wavpack.c`, `wavpack.h`, `wavpackdata.c`; Konstantin Shishkov (2006, 2011), David Bryant (2020). Only integer lossless paths.
+* `src/tta.rs`: `libavcodec/tta.c`, `ttadata.c`, `ttadsp.c`; Alex Beregszaszi (2006), FFmpeg contributors. Restructured in round 11 (separate entropy/filter/output passes, register-resident filter state, own bit reader); the format arithmetic and the attribution remain.
+* `src/wavpack.rs`, `src/wavpack_table.rs`: `libavcodec/wavpack.c`, `wavpack.h`, `wavpackdata.c`; Konstantin Shishkov (2006, 2011), David Bryant (2020). Only integer lossless paths. Restructured in round 11 (register-resident entropy state, pass structure, branch-free weight steps, own bit reader); the format arithmetic and the attribution remain.
 * `src/flac.rs`: FLAC fixed/LPC residual prediction, Rice mapping, frame/subframe structure from `libavcodec/flacenc.c` and Welch/Levinson approach from `lpc.c`; Justin Ruggles (2006). Reworked selection, buffers, verification and commit logic.
 * `src/alac.rs`: Rice/zero-run, adaptive LPC and stereo reconstruction from `libavcodec/alac.c`, `alacdsp.c`; David Hammerton (2005). Reworked bounded bit access, in-place reusable buffers and specialized predictor orders.
 * `src/flac_decode.rs`: frame/header, partitioned Rice, fixed/LPC and channel reconstruction from `libavcodec/flac.c`, `flacdec.c`, `flacdsp.c`; Alex Beregszaszi (2003), Mans Rullgard (2012). Reworked streaming input, strict CRC/count/MD5 checks and specialized LPC orders.
@@ -16,14 +16,14 @@ Rust translations change storage, bounds handling, error propagation, work limit
 ## Rust dependencies
 
 * Symphonia (MPL-2.0): **optional `reference-codecs` comparison build only**, FLAC/ALAC decoding and FLAC/M4A demuxing. Default builds do not link it. Reference implementations are existing Rust code, not claimed as our ports.
-* image (MIT): JPEG/PNG decoding only; default features disabled.
-* serde/serde_json (MIT OR Apache-2.0): typed reports.
-* SHA-256 (canonical PCM hash; x86 SHA extensions, ARMv8 SHA2 or portable) and the required FLAC PCM MD5 (a format integrity field, not a security authenticator) are implemented in this repository (`src/sha256.rs`, FIPS 180-4; `src/md5.rs`, RFC 1321). RustCrypto sha2 and md-5 (MIT OR Apache-2.0) remain only as dev-dependency test oracles and in the development tools crate.
-* IEEE CRC-32 (TTA header/frame checks and the frame-copy round-trip check) is implemented in this repository (`src/crc32.rs`; carry-less-multiply folding after Gopal et al., Intel 2009, with AVX-512/AVX2 VPCLMULQDQ, PCLMULQDQ, AArch64 PMULL and slicing-by-8 paths). crc32fast (MIT OR Apache-2.0) remains a dev-dependency test oracle and a transitive dependency of the PNG stack.
+* JPEG/PNG cover validation is implemented in this repository (`src/jpeg.rs`, `src/png.rs`, `src/inflate.rs`). It accepts and rejects the same files as image 0.24.9 (MIT, with jpeg-decoder 0.3.2 and png 0.17.16), which remains only as a dev-dependency test oracle.
+* JSON reports and the tools' JSON reading use `src/json.rs`, implemented in this repository. Its output is byte-for-byte what serde 1.0.219 / serde_json 1.0.140 (MIT OR Apache-2.0) wrote, including ryu's shortest float digits (computed from Rust's own shortest `{:e}` formatting with ties resolved to even); serde_json remains only as a dev-dependency test oracle.
+* SHA-256 (canonical PCM hash; x86 SHA extensions, ARMv8 SHA2 or portable) and the required FLAC PCM MD5 (a format integrity field, not a security authenticator) are implemented in this repository (`src/sha256.rs`, FIPS 180-4; `src/md5.rs`, RFC 1321). RustCrypto sha2 and md-5 (MIT OR Apache-2.0) remain only as dev-dependency test oracles; the development tools crate uses the in-repository SHA-256, with FFmpeg as its independent hash oracle.
+* IEEE CRC-32 (TTA header/frame checks and the frame-copy round-trip check) is implemented in this repository (`src/crc32.rs`; carry-less-multiply folding after Gopal et al., Intel 2009, with AVX-512/AVX2 VPCLMULQDQ, PCLMULQDQ, AArch64 PMULL and slicing-by-8 paths). crc32fast (MIT OR Apache-2.0) remains only as a dev-dependency test oracle.
 
 Cargo.lock pins transitive dependencies. Dependency sources/license notices remain available through crates.io. Linking into other applications requires complying with each applicable license; no claim is made that optimization removes copyleft obligations.
 
-`src/m4a.rs` and `src/msb.rs` are AUDENIQ-specific Rust implementations of the container tables and cached bounded bit reader, rather than copied Symphonia source. General JSON, cryptographic hash, CRC and image libraries remain in both builds; "native media codecs" does not mean zero third-party dependencies.
+`src/m4a.rs` and `src/msb.rs` are AUDENIQ-specific Rust implementations of the container tables and cached bounded bit reader, rather than copied Symphonia source. The default build has no third-party crates; the `reference-codecs` build adds Symphonia, and the Rust standard library still applies.
 
 ## libebur128 MIT notice
 

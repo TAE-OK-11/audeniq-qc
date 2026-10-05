@@ -1,13 +1,13 @@
 //! Feature detection selects only kernels safe on the current machine.
 //! Zen3 uses AVX2 (not AVX512); AArch64 uses NEON. No global target-cpu flag.
-use serde::Serialize;
 
-#[derive(Clone, Copy, Debug, Serialize, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Backend {
     Scalar,
     Avx2,
     Neon,
 }
+crate::json_enum!(Backend { Scalar => "Scalar", Avx2 => "Avx2", Neon => "Neon" });
 impl Backend {
     pub fn detect() -> Self {
         #[cfg(target_arch = "x86_64")]
@@ -180,7 +180,8 @@ impl RiceKernel {
     }
     pub(crate) fn choose(&self, residual: &[u32], overhead: u64) -> (u64, u32) {
         assert!(!residual.is_empty());
-        let mean = residual.iter().map(|&r| r as u64).sum::<u64>() / residual.len() as u64;
+        let sum = residual.iter().map(|&r| r as u64).sum::<u64>();
+        let mean = sum / residual.len() as u64;
         let estimate = if mean == 0 {
             0
         } else {
@@ -188,7 +189,13 @@ impl RiceKernel {
         };
         let first = estimate.saturating_sub(1);
         let count = ((estimate + 1).min(30) - first + 1) as usize;
-        let quotients = (self.0)(residual, first, count);
+        // Every shifted sum is at most the plain sum, so it fits u32 lanes
+        // when that does.
+        let quotients = if sum <= u32::MAX as u64 {
+            rice_narrow(residual, first, count)
+        } else {
+            (self.0)(residual, first, count)
+        };
         (0..count)
             .map(|i| {
                 let k = first + i as u32;
@@ -200,6 +207,30 @@ impl RiceKernel {
             .min_by_key(|&(cost, _)| cost)
             .unwrap()
     }
+}
+/// [`rice_scalar`] for blocks whose plain sum fits u32: the shifted sums
+/// accumulate in u32 lanes (eight per AVX2 vector, four per NEON vector).
+fn rice_narrow(residual: &[u32], first: u32, count: usize) -> [u64; 3] {
+    #[cfg(target_arch = "x86_64")]
+    if std::is_x86_feature_detected!("avx2") {
+        // SAFETY: AVX2 was detected; the body is safe Rust.
+        return unsafe { rice_narrow_avx2(residual, first, count) };
+    }
+    rice_narrow_body(residual, first, count)
+}
+#[cfg(target_arch = "x86_64")]
+#[target_feature(enable = "avx2")]
+unsafe fn rice_narrow_avx2(residual: &[u32], first: u32, count: usize) -> [u64; 3] {
+    rice_narrow_body(residual, first, count)
+}
+#[inline(always)]
+fn rice_narrow_body(residual: &[u32], first: u32, count: usize) -> [u64; 3] {
+    let mut out = [0; 3];
+    for (i, sum) in out[..count].iter_mut().enumerate() {
+        let shift = first + i as u32;
+        *sum = residual.iter().fold(0u32, |a, &r| a + (r >> shift)) as u64;
+    }
+    out
 }
 fn rice_scalar(residual: &[u32], first: u32, count: usize) -> [u64; 3] {
     let mut out = [0; 3];
@@ -233,33 +264,15 @@ unsafe fn rice_neon(residual: &[u32], first: u32, count: usize) -> [u64; 3] {
     out
 }
 
-#[cfg(target_arch = "aarch64")]
-type WeightFn = fn(&[f64; 5], &[f64; 5], &mut [[f64; 2]; 4], [f64; 2]) -> [f64; 2];
+/// Scalar K-weighting for mono and `--scalar`; stereo meters otherwise use
+/// `StereoWeight`, which gives the same bits.
+#[derive(Clone, Copy)]
 pub(crate) struct WeightKernel {
-    #[cfg(target_arch = "aarch64")]
-    apply: WeightFn,
-    #[cfg(not(target_arch = "aarch64"))]
     channels: usize,
 }
 impl WeightKernel {
     pub(crate) fn new(backend: Backend, channels: usize) -> Self {
         assert!(backend.available());
-        #[cfg(target_arch = "aarch64")]
-        {
-            if channels == 2 && backend == Backend::Neon {
-                return Self {
-                    apply: |b, a, s, x| unsafe { weight_neon(b, a, s, x) },
-                };
-            }
-            Self {
-                apply: if channels == 2 {
-                    weight_scalar::<2>
-                } else {
-                    weight_scalar::<1>
-                },
-            }
-        }
-        #[cfg(not(target_arch = "aarch64"))]
         Self { channels }
     }
     #[inline]
@@ -270,19 +283,10 @@ impl WeightKernel {
         state: &mut [[f64; 2]; 4],
         x: [f64; 2],
     ) -> [f64; 2] {
-        #[cfg(target_arch = "aarch64")]
-        {
-            (self.apply)(b, a, state, x)
-        }
-        #[cfg(not(target_arch = "aarch64"))]
-        {
-            // x86's existing scalar arithmetic benefits from inlining into the
-            // fused meter loop. An extra per-frame SIMD call regressed that CPU.
-            if self.channels == 2 {
-                weight_scalar::<2>(b, a, state, x)
-            } else {
-                weight_scalar::<1>(b, a, state, x)
-            }
+        if self.channels == 2 {
+            weight_scalar::<2>(b, a, state, x)
+        } else {
+            weight_scalar::<1>(b, a, state, x)
         }
     }
 }
@@ -318,38 +322,125 @@ fn weight_scalar<const CHANNELS: usize>(
 fn flush_denormal() -> f64 {
     0.0
 }
-// Independent channels share coefficients. Separate multiply/add preserves
-// the scalar filter's per-channel rounding; no FMA/fast-math approximation.
+
+/// The AArch64 form of the x86 `StereoWeight` below: both channels in one
+/// NEON register, `fmul`/`fsub`/`fadd` per lane in `weight_scalar`'s order.
 #[cfg(target_arch = "aarch64")]
-#[target_feature(enable = "neon")]
-unsafe fn weight_neon(
-    b: &[f64; 5],
-    a: &[f64; 5],
-    state: &mut [[f64; 2]; 4],
-    x: [f64; 2],
-) -> [f64; 2] {
-    use std::arch::aarch64::*;
-    let history = state.map(|v| vld1q_f64(v.as_ptr()));
-    let mut n = vld1q_f64(x.as_ptr());
-    for i in 0..4 {
-        n = vsubq_f64(n, vmulq_n_f64(history[i], a[i + 1]));
+pub(crate) struct StereoWeight {
+    b: [std::arch::aarch64::float64x2_t; 5],
+    a: [std::arch::aarch64::float64x2_t; 4],
+    state: [std::arch::aarch64::float64x2_t; 4],
+}
+#[cfg(target_arch = "aarch64")]
+impl StereoWeight {
+    #[inline(always)]
+    pub(crate) fn new(b: &[f64; 5], a: &[f64; 5], state: &[[f64; 2]; 4]) -> Self {
+        use std::arch::aarch64::*;
+        // SAFETY (all NEON intrinsics here): NEON is part of the AArch64
+        // baseline; loads read two f64 from arrays of two.
+        unsafe {
+            Self {
+                b: b.map(|v| vdupq_n_f64(v)),
+                a: std::array::from_fn(|i| vdupq_n_f64(a[i + 1])),
+                state: state.map(|v| vld1q_f64(v.as_ptr())),
+            }
+        }
     }
-    let mut y = vmulq_n_f64(n, b[0]);
-    for i in 0..4 {
-        y = vaddq_f64(y, vmulq_n_f64(history[i], b[i + 1]));
+    #[inline(always)]
+    pub(crate) fn step(&mut self, x: [f64; 2]) -> [f64; 2] {
+        use std::arch::aarch64::*;
+        let s = self.state;
+        // SAFETY: NEON is part of the AArch64 baseline; `x` and `out` hold
+        // two f64.
+        unsafe {
+            let mut n = vld1q_f64(x.as_ptr());
+            for (&a, &h) in self.a.iter().zip(&s) {
+                n = vsubq_f64(n, vmulq_f64(a, h));
+            }
+            let mut y = vmulq_f64(self.b[0], n);
+            for (&b, &h) in self.b[1..].iter().zip(&s) {
+                y = vaddq_f64(y, vmulq_f64(b, h));
+            }
+            let tiny = vcltq_f64(vabsq_f64(n), vdupq_n_f64(1e-30));
+            // Rare; a branch keeps the select off the loop-carried chain.
+            if vmaxvq_u32(vreinterpretq_u32_u64(tiny)) != 0 {
+                n = vbslq_f64(tiny, vdupq_n_f64(0.0), n);
+            }
+            self.state = [n, s[0], s[1], s[2]];
+            let mut out = [0.0; 2];
+            vst1q_f64(out.as_mut_ptr(), y);
+            out
+        }
     }
-    let n = vbslq_f64(
-        vcltq_f64(vabsq_f64(n), vdupq_n_f64(1e-30)),
-        vdupq_n_f64(0.0),
-        n,
-    );
-    for i in (1..4).rev() {
-        vst1q_f64(state[i].as_mut_ptr(), history[i - 1]);
+    pub(crate) fn state(&self) -> [[f64; 2]; 4] {
+        self.state.map(|v| {
+            let mut out = [0.0; 2];
+            // SAFETY: `out` holds two f64.
+            unsafe { std::arch::aarch64::vst1q_f64(out.as_mut_ptr(), v) };
+            out
+        })
     }
-    vst1q_f64(state[0].as_mut_ptr(), n);
-    let mut out = [0.0; 2];
-    vst1q_f64(out.as_mut_ptr(), y);
-    out
+}
+
+/// Stereo K-weighting with the two channels in the lanes of one SSE2
+/// register, for loops that keep the filter in registers. `mulpd`, `subpd`
+/// and `addpd` are per-lane IEEE operations, done in `weight_scalar`'s
+/// order, so each channel's output and history are bit-identical to it.
+#[cfg(target_arch = "x86_64")]
+pub(crate) struct StereoWeight {
+    b: [std::arch::x86_64::__m128d; 5],
+    a: [std::arch::x86_64::__m128d; 4],
+    state: [std::arch::x86_64::__m128d; 4],
+}
+#[cfg(target_arch = "x86_64")]
+impl StereoWeight {
+    #[inline(always)]
+    pub(crate) fn new(b: &[f64; 5], a: &[f64; 5], state: &[[f64; 2]; 4]) -> Self {
+        use std::arch::x86_64::*;
+        // SAFETY (all SSE2 intrinsics here): SSE2 is part of the x86-64
+        // baseline.
+        unsafe {
+            Self {
+                b: b.map(|v| _mm_set1_pd(v)),
+                a: std::array::from_fn(|i| _mm_set1_pd(a[i + 1])),
+                state: state.map(|v| _mm_set_pd(v[1], v[0])),
+            }
+        }
+    }
+    #[inline(always)]
+    pub(crate) fn step(&mut self, x: [f64; 2]) -> [f64; 2] {
+        use std::arch::x86_64::*;
+        let s = self.state;
+        // SAFETY: SSE2 is part of the x86-64 baseline; `out` holds two f64.
+        unsafe {
+            let mut n = _mm_set_pd(x[1], x[0]);
+            for (&a, &h) in self.a.iter().zip(&s) {
+                n = _mm_sub_pd(n, _mm_mul_pd(a, h));
+            }
+            let mut y = _mm_mul_pd(self.b[0], n);
+            for (&b, &h) in self.b[1..].iter().zip(&s) {
+                y = _mm_add_pd(y, _mm_mul_pd(b, h));
+            }
+            let magnitude = _mm_andnot_pd(_mm_set1_pd(-0.0), n);
+            let tiny = _mm_cmplt_pd(magnitude, _mm_set1_pd(1e-30));
+            // Rare; a branch keeps the select off the loop-carried chain.
+            if _mm_movemask_pd(tiny) != 0 {
+                n = _mm_andnot_pd(tiny, n);
+            }
+            self.state = [n, s[0], s[1], s[2]];
+            let mut out = [0.0; 2];
+            _mm_storeu_pd(out.as_mut_ptr(), y);
+            out
+        }
+    }
+    pub(crate) fn state(&self) -> [[f64; 2]; 4] {
+        self.state.map(|v| {
+            let mut out = [0.0; 2];
+            // SAFETY: `out` holds two f64.
+            unsafe { std::arch::x86_64::_mm_storeu_pd(out.as_mut_ptr(), v) };
+            out
+        })
+    }
 }
 #[cfg(target_arch = "aarch64")]
 #[target_feature(enable = "neon")]
@@ -490,12 +581,78 @@ impl LpcKernel {
         out: &mut Vec<u32>,
     ) -> Option<()> {
         out.resize(samples.len() - N, 0);
+        let narrow = fits_i32(samples, coefficients);
         #[cfg(target_arch = "x86_64")]
         if self.0 == Backend::Avx2 {
-            // SAFETY: AVX2 selected at construction; the body is safe Rust.
-            return unsafe { lpc_store_avx2::<N>(samples, coefficients, shift, out) }.then_some(());
+            // SAFETY: AVX2 selected at construction; the bodies are safe Rust.
+            return unsafe {
+                if narrow {
+                    lpc_store_narrow_avx2::<N>(samples, coefficients, shift, out);
+                    true
+                } else {
+                    lpc_store_avx2::<N>(samples, coefficients, shift, out)
+                }
+            }
+            .then_some(());
+        }
+        if narrow {
+            lpc_store_narrow::<N>(samples, coefficients, shift, out);
+            return Some(());
         }
         lpc_store::<N>(samples, coefficients, shift, out).then_some(())
+    }
+}
+
+/// Whether every LPC prediction sum over `samples` is below 2^30 in
+/// magnitude: sum |c| times the largest |x|. Then the sums are exact in i32
+/// and every residual x - (sum >> shift) is too (|x| < 2^30 as well), so
+/// none can be out of range.
+fn fits_i32(samples: &[i32], coefficients: &[i32]) -> bool {
+    let total: u64 = coefficients.iter().map(|&c| c.unsigned_abs() as u64).sum();
+    let largest = samples.iter().fold(0u32, |m, &x| m.max(x.unsigned_abs())) as u64;
+    total * largest < 1 << 30 && largest < 1 << 30
+}
+
+/// [`lpc_store`] with i32 arithmetic, for blocks where [`fits_i32`] holds:
+/// the same residuals, eight lanes per AVX2 multiply instead of four.
+#[inline(always)]
+fn lpc_store_narrow<const N: usize>(
+    samples: &[i32],
+    coefficients: &[i32],
+    shift: u32,
+    out: &mut [u32],
+) {
+    let mut c = [0i32; N];
+    c.copy_from_slice(&coefficients[..N]);
+    for ((window, &x), o) in samples.windows(N).zip(&samples[N..]).zip(out.iter_mut()) {
+        let window: &[i32; N] = window.try_into().unwrap();
+        let mut prediction = 0i32;
+        for j in 0..N {
+            prediction = prediction.wrapping_add(c[j].wrapping_mul(window[N - 1 - j]));
+        }
+        let r = x.wrapping_sub(prediction >> shift);
+        *o = ((r << 1) ^ (r >> 31)) as u32;
+    }
+}
+
+#[cfg(target_arch = "x86_64")]
+#[target_feature(enable = "avx2")]
+unsafe fn lpc_store_narrow_avx2<const N: usize>(
+    samples: &[i32],
+    coefficients: &[i32],
+    shift: u32,
+    out: &mut [u32],
+) {
+    lpc_store_narrow::<N>(samples, coefficients, shift, out)
+}
+
+/// Per-partition sums of stored folded residuals (`residual[i]` belongs to
+/// sample `order + i`), excluding the warm-up samples.
+fn sums_from_residual(residual: &[u32], order: usize, size: usize, sums: &mut [u64]) {
+    for (p, sum) in sums.iter_mut().enumerate() {
+        let start = (p * size).max(order) - order;
+        let end = (p + 1) * size - order;
+        *sum = residual[start..end].iter().map(|&v| v as u64).sum();
     }
 }
 
@@ -539,10 +696,8 @@ unsafe fn lpc_store_avx2<const N: usize>(
 }
 
 impl LpcKernel {
-    /// Per-partition sums of folded LPC residuals without storing them, for
-    /// ranking models. `sums[p]` covers samples `p * size..(p + 1) * size`,
-    /// excluding the first `order` warm-up samples. Returns false when any
-    /// residual is outside i32 (FLAC cannot code that model).
+    /// [`Self::partition_sums_into`] without keeping the residuals: they are
+    /// formed in 64-sample pieces on the stack, with the same arithmetic.
     pub(crate) fn partition_sums(
         &self,
         samples: &[i32],
@@ -552,29 +707,72 @@ impl LpcKernel {
         sums: &mut [u64],
     ) -> bool {
         assert!(shift <= 15 && size > coefficients.len());
-        assert!(sums.len() * size <= samples.len());
+        assert!(sums.len() * size == samples.len());
         assert!(coefficients.iter().all(|&c| (-16384..=16383).contains(&c)));
+        let narrow = fits_i32(samples, coefficients);
         macro_rules! dispatch {
             ($($n:literal)*) => {
                 match coefficients.len() {
-                    $($n => {
-                        #[cfg(target_arch = "x86_64")]
-                        if self.0 == Backend::Avx2 {
-                            // SAFETY: AVX2 selected at construction; the generic
-                            // body is bounds-checked safe Rust.
-                            return unsafe { lpc_sums_avx2::<$n>(samples, coefficients, shift, size, sums) };
-                        }
-                        lpc_sums::<$n>(samples, coefficients, shift, size, sums)
-                    })*
+                    $($n => self.chunked_sums::<$n>(narrow, samples, coefficients, shift, size, sums),)*
                     _ => unreachable!("unsupported LPC order"),
                 }
             };
         }
         dispatch!(1 2 3 4 5 6 7 8)
     }
-    /// [`Self::partition_sums`] that also stores the folded residuals for
-    /// samples `order..` in `out`, exactly as [`Self::residual_into`] would,
-    /// so the winning model need not be recomputed when it is written.
+    fn chunked_sums<const N: usize>(
+        &self,
+        narrow: bool,
+        samples: &[i32],
+        coefficients: &[i32],
+        shift: u32,
+        size: usize,
+        sums: &mut [u64],
+    ) -> bool {
+        let mut piece = [0u32; 64];
+        let mut ok = true;
+        for (p, sum) in sums.iter_mut().enumerate() {
+            let end = (p + 1) * size;
+            let mut i = (p * size).max(N);
+            let mut total = 0u64;
+            while i < end {
+                let stop = end.min(i + piece.len());
+                let window = &samples[i - N..stop];
+                let out = &mut piece[..stop - i];
+                #[cfg(target_arch = "x86_64")]
+                if self.0 == Backend::Avx2 {
+                    // SAFETY: AVX2 selected at construction; the bodies are
+                    // safe Rust.
+                    unsafe {
+                        if narrow {
+                            lpc_store_narrow_avx2::<N>(window, coefficients, shift, out);
+                        } else {
+                            ok &= lpc_store_avx2::<N>(window, coefficients, shift, out);
+                        }
+                    }
+                    total += out.iter().map(|&v| v as u64).sum::<u64>();
+                    i = stop;
+                    continue;
+                }
+                if narrow {
+                    lpc_store_narrow::<N>(window, coefficients, shift, out);
+                } else {
+                    ok &= lpc_store::<N>(window, coefficients, shift, out);
+                }
+                total += out.iter().map(|&v| v as u64).sum::<u64>();
+                i = stop;
+            }
+            *sum = total;
+        }
+        ok
+    }
+    /// Per-partition sums of folded LPC residuals, for ranking models.
+    /// `sums[p]` covers samples `p * size..(p + 1) * size`, excluding the
+    /// first `order` warm-up samples; the folded residuals of samples
+    /// `order..` are left in `out`, exactly as [`Self::residual_into`] stores
+    /// them, so the winning model need not be recomputed when it is written.
+    /// Returns false when any residual is outside i32 (FLAC cannot code that
+    /// model).
     pub(crate) fn partition_sums_into(
         &self,
         samples: &[i32],
@@ -586,122 +784,15 @@ impl LpcKernel {
     ) -> bool {
         assert!(shift <= 15 && size > coefficients.len());
         assert!(sums.len() * size == samples.len());
-        assert!(coefficients.iter().all(|&c| (-16384..=16383).contains(&c)));
-        out.resize(samples.len() - coefficients.len(), 0);
-        macro_rules! dispatch {
-            ($($n:literal)*) => {
-                match coefficients.len() {
-                    $($n => {
-                        #[cfg(target_arch = "x86_64")]
-                        if self.0 == Backend::Avx2 {
-                            // SAFETY: AVX2 selected at construction; the generic
-                            // body is bounds-checked safe Rust.
-                            return unsafe { lpc_sums_into_avx2::<$n>(samples, coefficients, shift, size, sums, out) };
-                        }
-                        lpc_sums_into::<$n>(samples, coefficients, shift, size, sums, out)
-                    })*
-                    _ => unreachable!("unsupported LPC order"),
-                }
-            };
-        }
-        dispatch!(1 2 3 4 5 6 7 8)
-    }
-}
-
-#[inline(always)]
-fn lpc_sums_into<const N: usize>(
-    samples: &[i32],
-    coefficients: &[i32],
-    shift: u32,
-    size: usize,
-    sums: &mut [u64],
-    out: &mut [u32],
-) -> bool {
-    let mut c = [0i64; N];
-    for (c, &x) in c.iter_mut().zip(coefficients) {
-        *c = x as i64;
-    }
-    let mut bad = 0u64;
-    for (p, sum) in sums.iter_mut().enumerate() {
-        let start = (p * size).max(N);
-        let end = (p + 1) * size;
-        let mut total = 0u64;
-        for ((window, &x), o) in samples[start - N..end - 1]
-            .windows(N)
-            .zip(&samples[start..end])
-            .zip(&mut out[start - N..end - N])
+        if self
+            .residual_into(samples, coefficients, shift, out)
+            .is_none()
         {
-            let window: &[i32; N] = window.try_into().unwrap();
-            let mut prediction = 0i64;
-            for j in 0..N {
-                prediction += c[j] * window[N - 1 - j] as i64;
-            }
-            let r = x as i64 - (prediction >> shift);
-            bad |= (r.wrapping_add(1 << 31) as u64) >> 32;
-            let folded = ((r << 1) ^ (r >> 63)) as u64;
-            total += folded;
-            *o = folded as u32;
+            return false;
         }
-        *sum = total;
+        sums_from_residual(out, coefficients.len(), size, sums);
+        true
     }
-    bad == 0
-}
-
-#[cfg(target_arch = "x86_64")]
-#[target_feature(enable = "avx2")]
-unsafe fn lpc_sums_into_avx2<const N: usize>(
-    samples: &[i32],
-    coefficients: &[i32],
-    shift: u32,
-    size: usize,
-    sums: &mut [u64],
-    out: &mut [u32],
-) -> bool {
-    lpc_sums_into::<N>(samples, coefficients, shift, size, sums, out)
-}
-
-#[inline(always)]
-fn lpc_sums<const N: usize>(
-    samples: &[i32],
-    coefficients: &[i32],
-    shift: u32,
-    size: usize,
-    sums: &mut [u64],
-) -> bool {
-    let mut c = [0i64; N];
-    for (c, &x) in c.iter_mut().zip(coefficients) {
-        *c = x as i64;
-    }
-    let mut bad = 0u64;
-    for (p, sum) in sums.iter_mut().enumerate() {
-        let start = (p * size).max(N);
-        let end = (p + 1) * size;
-        let mut total = 0u64;
-        for i in start..end {
-            let window: &[i32; N] = samples[i - N..i].try_into().unwrap();
-            let mut prediction = 0i64;
-            for j in 0..N {
-                prediction += c[j] * window[N - 1 - j] as i64;
-            }
-            let r = samples[i] as i64 - (prediction >> shift);
-            bad |= (r.wrapping_add(1 << 31) as u64) >> 32;
-            total += ((r << 1) ^ (r >> 63)) as u64;
-        }
-        *sum = total;
-    }
-    bad == 0
-}
-
-#[cfg(target_arch = "x86_64")]
-#[target_feature(enable = "avx2")]
-unsafe fn lpc_sums_avx2<const N: usize>(
-    samples: &[i32],
-    coefficients: &[i32],
-    shift: u32,
-    size: usize,
-    sums: &mut [u64],
-) -> bool {
-    lpc_sums::<N>(samples, coefficients, shift, size, sums)
 }
 
 impl Dot64Kernel {
@@ -1057,53 +1148,123 @@ mod tests {
     #[test]
     fn lpc_partition_sums_match_stored_residuals() {
         let mut seed = 1729u32;
-        let samples: Vec<i32> = (0..4608)
+        let base: Vec<i32> = (0..4608)
             .map(|i| {
                 seed = seed.wrapping_mul(1664525).wrapping_add(1013904223);
                 let tone = ((i as f64 * 0.02).sin() * 8_000_000.0) as i32;
                 tone + ((seed as i32) >> 12)
             })
             .collect();
-        for order in 1..=8 {
-            for shift in [0, 5, 15] {
-                for size in [18, 72, 4608] {
-                    let coefficients: Vec<i32> = (0..order)
-                        .map(|j| [16383, -16384, 9000, -1, 0, 77, -5000, 3][j])
-                        .collect();
-                    for backend in [Backend::Scalar, Backend::detect()] {
-                        let kernel = LpcKernel::new(backend);
-                        let mut residual = Vec::new();
-                        let stored = kernel
-                            .residual_into(&samples, &coefficients, shift, &mut residual)
-                            .is_some();
-                        let mut sums = vec![u64::MAX; samples.len() / size];
-                        let ok =
-                            kernel.partition_sums(&samples, &coefficients, shift, size, &mut sums);
-                        assert_eq!(ok, stored, "order {order} shift {shift}");
-                        // The storing variant agrees on the verdict, the sums
-                        // and, when valid, every stored residual.
-                        let mut into_sums = vec![u64::MAX; samples.len() / size];
-                        let mut into = vec![7u32; 3];
-                        let into_ok = kernel.partition_sums_into(
-                            &samples,
-                            &coefficients,
-                            shift,
-                            size,
-                            &mut into_sums,
-                            &mut into,
-                        );
-                        assert_eq!(into_ok, ok, "into order {order} shift {shift}");
-                        if ok {
-                            assert_eq!(into_sums, sums);
-                            assert_eq!(into, residual);
+        // Large samples take the i64 path; scaled down, the i32 one.
+        for divisor in [1, 4096] {
+            let samples: Vec<i32> = base.iter().map(|&x| x / divisor).collect();
+            for order in 1..=8 {
+                for shift in [0, 5, 15] {
+                    for size in [18, 72, 4608] {
+                        let coefficients: Vec<i32> = (0..order)
+                            .map(|j| [16383, -16384, 9000, -1, 0, 77, -5000, 3][j])
+                            .collect();
+                        for backend in [Backend::Scalar, Backend::detect()] {
+                            let kernel = LpcKernel::new(backend);
+                            let mut residual = Vec::new();
+                            let stored = kernel
+                                .residual_into(&samples, &coefficients, shift, &mut residual)
+                                .is_some();
+                            // The partition variant agrees on the verdict and,
+                            // when valid, every stored residual and every sum.
+                            let mut sums = vec![u64::MAX; samples.len() / size];
+                            let mut into = vec![7u32; 3];
+                            let into_ok = kernel.partition_sums_into(
+                                &samples,
+                                &coefficients,
+                                shift,
+                                size,
+                                &mut sums,
+                                &mut into,
+                            );
+                            let ok = into_ok;
+                            assert_eq!(ok, stored, "order {order} shift {shift}");
+                            if ok {
+                                assert_eq!(into, residual);
+                            }
+                            // The chunked variant gives the same verdict and sums.
+                            let mut chunked = vec![u64::MAX; samples.len() / size];
+                            let chunked_ok = kernel.partition_sums(
+                                &samples,
+                                &coefficients,
+                                shift,
+                                size,
+                                &mut chunked,
+                            );
+                            assert_eq!(chunked_ok, ok, "chunked order {order} shift {shift}");
+                            if ok {
+                                assert_eq!(chunked, sums);
+                            }
+                            if ok {
+                                for (p, &sum) in sums.iter().enumerate() {
+                                    let start = (p * size).max(order) - order;
+                                    let end = (p + 1) * size - order;
+                                    let expected: u64 =
+                                        residual[start..end].iter().map(|&r| r as u64).sum();
+                                    assert_eq!(sum, expected);
+                                }
+                            }
                         }
-                        if ok {
-                            for (p, &sum) in sums.iter().enumerate() {
-                                let start = (p * size).max(order) - order;
-                                let end = (p + 1) * size - order;
-                                let expected: u64 =
-                                    residual[start..end].iter().map(|&r| r as u64).sum();
-                                assert_eq!(sum, expected);
+                    }
+                }
+            }
+        }
+    }
+    /// Blocks within the i32 bound (small amplitudes, every order, shift
+    /// and coefficient extreme) give the residuals of the i64 definition.
+    #[test]
+    fn narrow_lpc_residuals_match_wide_definition() {
+        let mut seed = 99u32;
+        for amplitude in [1i32, 3, 255, 2047, 32767] {
+            let samples: Vec<i32> = (0..700)
+                .map(|_| {
+                    seed = seed.wrapping_mul(1664525).wrapping_add(1013904223);
+                    (seed as i32) % (amplitude + 1)
+                })
+                .collect();
+            for order in 1..=8usize {
+                for shift in [0u32, 3, 9, 15] {
+                    for set in 0..3 {
+                        let coefficients: Vec<i32> = (0..order)
+                            .map(|j| match set {
+                                0 => [16383, -16384, 1, -1, 0, 2, -2, 3][j],
+                                1 => j as i32 * 37 - 100,
+                                _ => -16384,
+                            })
+                            .collect();
+                        let total: i64 = coefficients.iter().map(|&c| (c as i64).abs()).sum();
+                        let expected: Option<Vec<u32>> = (order..samples.len())
+                            .map(|i| {
+                                let p: i64 = (0..order)
+                                    .map(|j| coefficients[j] as i64 * samples[i - j - 1] as i64)
+                                    .sum();
+                                let r = samples[i] as i64 - (p >> shift);
+                                i32::try_from(r).ok()?;
+                                Some(((r << 1) ^ (r >> 63)) as u32)
+                            })
+                            .collect();
+                        for backend in [Backend::Scalar, Backend::detect()] {
+                            let mut out = Vec::new();
+                            let ok = LpcKernel::new(backend).residual_into(
+                                &samples,
+                                &coefficients,
+                                shift,
+                                &mut out,
+                            );
+                            if total * (amplitude as i64) < 1 << 30 {
+                                assert!(fits_i32(&samples, &coefficients));
+                            }
+                            assert_eq!(ok.is_some(), expected.is_some());
+                            if let Some(expected) = &expected {
+                                assert_eq!(
+                                    &out, expected,
+                                    "amp {amplitude} order {order} shift {shift}"
+                                );
                             }
                         }
                     }

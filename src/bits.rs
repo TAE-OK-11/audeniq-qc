@@ -1,14 +1,15 @@
 use crate::{Error, Result};
 
-/// Bounds-checked LSB-first bit reader for FFmpeg-derived TTA/WavPack paths.
-pub struct LeBits<'a> {
+/// LSB-first bit reader (TTA, WavPack): a 64-bit cache refilled with one unaligned 8-byte
+/// load while eight bytes remain, byte by byte near the end.
+pub(crate) struct Lsb<'a> {
     data: &'a [u8],
     next: usize,
-    cache: u64,
-    available: u32,
+    pub(crate) cache: u64,
+    pub(crate) available: u32,
 }
-impl<'a> LeBits<'a> {
-    pub fn new(data: &'a [u8]) -> Self {
+impl<'a> Lsb<'a> {
+    pub(crate) fn new(data: &'a [u8]) -> Self {
         Self {
             data,
             next: 0,
@@ -16,48 +17,55 @@ impl<'a> LeBits<'a> {
             available: 0,
         }
     }
-    fn refill(&mut self, required: u32) -> Result<()> {
-        if self.available < required {
-            let bytes = ((64 - self.available) / 8) as usize;
-            let n = bytes.min(self.data.len() - self.next);
-            let mut word = [0u8; 8];
-            word[..n].copy_from_slice(&self.data[self.next..self.next + n]);
-            self.cache |= u64::from_le_bytes(word) << self.available;
-            self.available += n as u32 * 8;
-            self.next += n;
+    #[inline(always)]
+    pub(crate) fn refill(&mut self) {
+        if let Some(word) = self.data.get(self.next..self.next + 8) {
+            self.cache |= u64::from_le_bytes(word.try_into().unwrap()) << self.available;
+            let bytes = (63 - self.available) >> 3;
+            self.next += bytes as usize;
+            self.available += bytes * 8;
+        } else {
+            while self.available <= 56 && self.next < self.data.len() {
+                self.cache |= (self.data[self.next] as u64) << self.available;
+                self.next += 1;
+                self.available += 8;
+            }
         }
-        if self.available < required {
-            return Err(Error::Invalid("truncated bitstream"));
-        }
-        Ok(())
     }
-    pub fn read(&mut self, n: u32) -> Result<u32> {
-        if n > 32 {
-            return Err(Error::Invalid("truncated bitstream"));
+    /// `n` (at most 32) bits.
+    #[inline(always)]
+    pub(crate) fn read(&mut self, n: u32) -> Result<u32> {
+        if self.available < n {
+            self.refill();
+            if self.available < n {
+                return Err(Error::Invalid("truncated bitstream"));
+            }
         }
-        self.refill(n)?;
         let value = (self.cache & ((1u64 << n) - 1)) as u32;
         self.cache >>= n;
         self.available -= n;
         Ok(value)
     }
-    pub fn unary_ones(&mut self, max: u32) -> Result<u32> {
+    /// A run of one bits ended by a zero (consumed); fewer than `max` ones.
+    #[inline(always)]
+    pub(crate) fn ones(&mut self, max: u32) -> Result<u32> {
         let mut n = 0;
         loop {
-            self.refill(1)?;
+            if self.available < 57 {
+                self.refill();
+                if self.available == 0 {
+                    return Err(Error::Invalid("truncated bitstream"));
+                }
+            }
             let ones = self.cache.trailing_ones().min(self.available);
             if ones != 0 && ones >= max.saturating_sub(n) {
                 return Err(Error::Invalid("unbounded unary code"));
             }
             n += ones;
             if ones < self.available {
-                let consumed = ones + 1;
-                self.cache = if consumed == 64 {
-                    0
-                } else {
-                    self.cache >> consumed
-                };
-                self.available -= consumed;
+                // The byte-wise refill can fill all 64 bits.
+                self.cache = self.cache.checked_shr(ones + 1).unwrap_or(0);
+                self.available -= ones + 1;
                 return Ok(n);
             }
             self.cache = 0;
@@ -114,6 +122,8 @@ impl BeWriter {
             left -= take;
         }
     }
+    /// One Rice code; the reference for [`Self::rice_block`] in tests.
+    #[cfg(test)]
     pub fn rice(&mut self, value: u32, k: u32) {
         let zeros = value >> k;
         let n = zeros as u64 + k as u64 + 1;
@@ -126,55 +136,40 @@ impl BeWriter {
             self.put(k, value as u64);
         }
     }
-    /// Keep a whole residual block in a word accumulator. Most Rice codes fit
-    /// in one word, so Vec length/capacity work happens once per eight bytes,
-    /// rather than popping and appending a partial byte for every sample.
+    /// Append the Rice codes of a whole residual block. The exact bit count
+    /// is summed first, so the output is sized (zero-filled) once; then each
+    /// code is ORed into a left-aligned word that is stored as eight bytes
+    /// unconditionally, and the write position advances by whole bytes. No
+    /// branch depends on where codes cross bytes, and the zero quotient bits
+    /// of a long code are already in the buffer, so they are skipped.
     pub fn rice_block(&mut self, residual: &[u32], k: u32) {
         assert!(k <= 30);
-        let mut used = self.used as u32;
-        let mut word = if used == 0 {
+        let quotients: u64 = residual.iter().map(|&u| (u >> k) as u64).sum();
+        let start = self.bytes.len() as u64 * 8 - ((8 - self.used as u64) & 7);
+        let end = start + quotients + residual.len() as u64 * (k as u64 + 1);
+        let length = end.div_ceil(8) as usize;
+        let pos = (start / 8) as usize;
+        let used = (start % 8) as u32;
+        let word = if used == 0 {
             0
         } else {
-            (self.bytes.pop().unwrap() as u64) << 56
+            (self.bytes[pos] as u64) << 56
         };
-        for &value in residual {
-            let n = (value >> k) as u64 + k as u64 + 1;
-            let suffix = (1u64 << k) | (value as u64 & ((1u64 << k) - 1));
-            if n <= 64 {
-                let n = n as u32;
-                let total = used + n;
-                if total < 64 {
-                    word |= suffix << (64 - total);
-                    used = total;
-                } else if total == 64 {
-                    self.bytes.extend_from_slice(&(word | suffix).to_be_bytes());
-                    word = 0;
-                    used = 0;
-                } else {
-                    let remaining = total - 64;
-                    self.bytes
-                        .extend_from_slice(&(word | (suffix >> remaining)).to_be_bytes());
-                    word = suffix << (64 - remaining);
-                    used = remaining;
-                }
-            } else {
-                // A rare large quotient uses the bounded bulk-zero path.
-                self.bytes
-                    .extend_from_slice(&word.to_be_bytes()[..used.div_ceil(8) as usize]);
-                self.used = (used & 7) as u8;
-                self.rice(value, k);
-                used = self.used as u32;
-                word = if used == 0 {
-                    0
-                } else {
-                    (self.bytes.pop().unwrap() as u64) << 56
-                };
-            }
+        self.bytes.resize(length + 8, 0);
+        #[cfg(target_arch = "x86_64")]
+        if crate::kernels::bit_ops() {
+            // SAFETY: LZCNT/BMI1/BMI2 were detected at runtime; the body is
+            // the same safe Rust (variable shifts become SHLX/SHRX).
+            unsafe { rice_codes_bit_ops(&mut self.bytes, residual, k, pos, used, word) };
+        } else {
+            rice_codes(&mut self.bytes, residual, k, pos, used, word);
         }
-        self.bytes
-            .extend_from_slice(&word.to_be_bytes()[..used.div_ceil(8) as usize]);
-        self.used = (used & 7) as u8;
+        #[cfg(not(target_arch = "x86_64"))]
+        rice_codes(&mut self.bytes, residual, k, pos, used, word);
+        self.bytes.truncate(length);
+        self.used = (end % 8) as u8;
     }
+    #[cfg(test)]
     pub fn unary(&mut self, zeros: u32) {
         // Aligned bulk zero fill avoids a loop per residual quotient bit.
         let mut left = zeros;
@@ -194,69 +189,116 @@ impl BeWriter {
     }
 }
 
-const fn crc_tables() -> ([u8; 256], [u16; 256]) {
-    let mut c8 = [0; 256];
-    let mut c16 = [0; 256];
+#[cfg(target_arch = "x86_64")]
+#[target_feature(enable = "lzcnt,bmi1,bmi2")]
+unsafe fn rice_codes_bit_ops(
+    out: &mut [u8],
+    residual: &[u32],
+    k: u32,
+    pos: usize,
+    used: u32,
+    word: u64,
+) {
+    rice_codes(out, residual, k, pos, used, word)
+}
+
+/// The code loop of [`BeWriter::rice_block`]: `word` holds the `used` bits
+/// already written into byte `pos`, left-aligned. Two codes are joined in a
+/// register and stored together when they fit 56 bits (the common case).
+#[inline(always)]
+fn rice_codes(out: &mut [u8], residual: &[u32], k: u32, pos: usize, used: u32, word: u64) {
+    let suffix = 1u64 << k;
+    let mask = suffix - 1;
+    let mut w = Words {
+        out,
+        pos,
+        used,
+        word,
+    };
+    let (pairs, rest) = residual.as_chunks::<2>();
+    for &[a, b] in pairs {
+        let (a, b) = (a as u64, b as u64);
+        let (ca, la) = (suffix | (a & mask), (a >> k) + 1 + k as u64);
+        let (cb, lb) = (suffix | (b & mask), (b >> k) + 1 + k as u64);
+        if la + lb <= 56 {
+            w.put((ca << lb) | cb, la + lb);
+        } else {
+            w.code(a, ca, la, k);
+            w.code(b, cb, lb, k);
+        }
+    }
+    for &u in rest {
+        let u = u as u64;
+        w.code(u, suffix | (u & mask), (u >> k) + 1 + k as u64, k);
+    }
+}
+
+/// Output position of [`rice_codes`]; the buffer is zero-filled with eight
+/// bytes of slack past the last code.
+struct Words<'a> {
+    out: &'a mut [u8],
+    pos: usize,
+    used: u32,
+    word: u64,
+}
+impl Words<'_> {
+    /// Append `len` (at most 56) bits; store the word and advance by the
+    /// whole bytes completed.
+    #[inline(always)]
+    fn put(&mut self, bits: u64, len: u64) {
+        self.word |= bits << (64 - self.used as u64 - len);
+        self.used += len as u32;
+        self.out[self.pos..self.pos + 8].copy_from_slice(&self.word.to_be_bytes());
+        let advance = self.used >> 3;
+        self.pos += advance as usize;
+        self.word <<= advance * 8;
+        self.used &= 7;
+    }
+    /// The Rice code `code` of `len` bits for value `u`.
+    #[inline(always)]
+    fn code(&mut self, u: u64, code: u64, len: u64, k: u32) {
+        if len <= 56 {
+            self.put(code, len);
+            return;
+        }
+        // Store what is pending, skip the zeros (already in the buffer),
+        // then the one and the remainder (at most 31 bits).
+        self.out[self.pos..self.pos + 8].copy_from_slice(&self.word.to_be_bytes());
+        let zeros = self.used as u64 + (u >> k);
+        if zeros >= 8 {
+            self.pos += (zeros / 8) as usize;
+            self.word = 0;
+        }
+        self.used = (zeros % 8) as u32;
+        self.put(code, k as u64 + 1);
+    }
+}
+
+const fn crc8_table() -> [u8; 256] {
+    let mut t = [0; 256];
     let mut i = 0;
     while i < 256 {
         let mut a = i as u8;
-        let mut b = (i as u16) << 8;
         let mut j = 0;
         while j < 8 {
             a = (a << 1) ^ if a & 0x80 != 0 { 7 } else { 0 };
-            b = (b << 1) ^ if b & 0x8000 != 0 { 0x8005 } else { 0 };
             j += 1;
         }
-        c8[i] = a;
-        c16[i] = b;
+        t[i] = a;
         i += 1;
     }
-    (c8, c16)
+    t
 }
-const CRC: ([u8; 256], [u16; 256]) = crc_tables();
-
-const fn crc16_slices() -> [[u16; 256]; 8] {
-    let mut tables = [[0; 256]; 8];
-    tables[0] = CRC.1;
-    let mut slice = 1;
-    while slice < 8 {
-        let mut i = 0;
-        while i < 256 {
-            let previous = tables[slice - 1][i];
-            tables[slice][i] = (previous << 8) ^ CRC.1[(previous >> 8) as usize];
-            i += 1;
-        }
-        slice += 1;
-    }
-    tables
-}
-const CRC16: [[u16; 256]; 8] = crc16_slices();
+const CRC8: [u8; 256] = crc8_table();
 
 pub fn crc8(data: &[u8]) -> u8 {
     let mut crc = 0u8;
     for b in data {
-        crc = CRC.0[(crc ^ b) as usize];
+        crc = CRC8[(crc ^ b) as usize];
     }
     crc
 }
-pub fn crc16(data: &[u8]) -> u16 {
-    let mut crc = 0u16;
-    let (blocks, tail) = data.as_chunks::<8>();
-    for b in blocks {
-        crc = CRC16[7][((crc >> 8) as u8 ^ b[0]) as usize]
-            ^ CRC16[6][(crc as u8 ^ b[1]) as usize]
-            ^ CRC16[5][b[2] as usize]
-            ^ CRC16[4][b[3] as usize]
-            ^ CRC16[3][b[4] as usize]
-            ^ CRC16[2][b[5] as usize]
-            ^ CRC16[1][b[6] as usize]
-            ^ CRC16[0][b[7] as usize];
-    }
-    for b in tail {
-        crc = (crc << 8) ^ CRC.1[((crc >> 8) as u8 ^ b) as usize];
-    }
-    crc
-}
+pub use crate::crc16::crc16;
 pub use crate::crc32::crc32;
 
 #[cfg(test)]
@@ -266,7 +308,7 @@ mod tests {
     fn cached_reader_matches_bit_reference_and_bounds() {
         for length in 0..=97 {
             let data: Vec<u8> = (0..length).map(|i| (i * 131 + 197) as u8).collect();
-            let mut reader = LeBits::new(&data);
+            let mut reader = Lsb::new(&data);
             let mut position = 0;
             for n in (0..=32).cycle().take(150) {
                 let expected = if position + n as usize <= length * 8 {
@@ -294,15 +336,12 @@ mod tests {
             for i in 0..ones {
                 data[i / 8] |= 1 << (i % 8);
             }
-            assert_eq!(
-                LeBits::new(&data).unary_ones(ones as u32 + 1).unwrap(),
-                ones as u32
-            );
+            assert_eq!(Lsb::new(&data).ones(ones as u32 + 1).unwrap(), ones as u32);
             if ones > 0 {
-                assert!(LeBits::new(&data).unary_ones(ones as u32).is_err());
+                assert!(Lsb::new(&data).ones(ones as u32).is_err());
             }
         }
-        assert!(LeBits::new(&[255; 8]).unary_ones(256).is_err());
+        assert!(Lsb::new(&[255; 8]).ones(256).is_err());
     }
     #[test]
     fn word_writer_matches_bit_reference() {

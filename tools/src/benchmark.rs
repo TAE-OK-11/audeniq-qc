@@ -1,5 +1,5 @@
 use crate::common::*;
-use serde_json::{json, Value};
+use audeniq_qc::{json, json::Value};
 use std::{
     collections::BTreeMap,
     fs,
@@ -60,9 +60,9 @@ fn measured(args: &[String], root: &Path, keep: bool) -> Result<(Value, std::pro
     ))
 }
 fn medians(runs: &BTreeMap<&str, Vec<Value>>) -> Value {
-    let mut medians = serde_json::Map::new();
+    let mut medians = audeniq_qc::json::Map::new();
     for (&name, values) in runs {
-        let mut row = serde_json::Map::new();
+        let mut row = audeniq_qc::json::Map::new();
         for key in KEYS {
             let mut ordered: Vec<_> = values.iter().map(|r| r[key].as_f64().unwrap()).collect();
             ordered.sort_by(f64::total_cmp);
@@ -79,7 +79,7 @@ fn medians(runs: &BTreeMap<&str, Vec<Value>>) -> Value {
     Value::Object(medians)
 }
 fn ratios(medians: &Value) -> Value {
-    let mut ratios = serde_json::Map::new();
+    let mut ratios = audeniq_qc::json::Map::new();
     for key in ["wall_s", "cpu_s", "peak_rss_kib"] {
         ratios.insert(
             key.to_owned(),
@@ -259,7 +259,7 @@ fn decoding_cases(options: &Options, fixed_alac_orders: bool) -> Result<Value> {
                         "decode oracle hash",
                     )?;
                 } else {
-                    let report: Value = serde_json::from_slice(&output.stdout)?;
+                    let report: Value = audeniq_qc::json::from_slice(&output.stdout)?;
                     check(report["pcm_sha256"] == expected, "decode PCM hash")?;
                     check(
                         report["frames"] == seconds as u64 * 48000,
@@ -272,7 +272,7 @@ fn decoding_cases(options: &Options, fixed_alac_orders: bool) -> Result<Value> {
             }
         }
         let median = medians(&runs);
-        eprintln!("decode {codec}: {}", serde_json::to_string(&median)?);
+        eprintln!("decode {codec}: {}", audeniq_qc::json::to_string(&median));
         results.push(json!({"codec":codec,"requested_prediction_order":requested_prediction_order,"fixture_sha256":file_sha(&input)?,"pcm_sha256":expected,"commands":commands,"runs":runs,"median":median,"ffmpeg_div_native":ratios(&median)}));
     }
     let mut report = metadata(options, seconds, results)?;
@@ -378,7 +378,7 @@ pub fn analysis(options: &Options) -> Result<Value> {
                     "FFmpeg analysis hash",
                 )?;
             } else if name != "ffmpeg" {
-                let mut report: Value = serde_json::from_slice(&output.stdout)?;
+                let mut report: Value = audeniq_qc::json::from_slice(&output.stdout)?;
                 check(report["pcm_sha256"] == expected, "analysis PCM hash")?;
                 for field in ["spec", "engine", "backend"] {
                     report.as_object_mut().ok_or("analysis JSON")?.remove(field);
@@ -407,7 +407,7 @@ pub fn analysis(options: &Options) -> Result<Value> {
         }
         let median = medians(&runs);
         let ratio = ratios(&median);
-        eprintln!("{codec}: {}", serde_json::to_string(&median)?);
+        eprintln!("{codec}: {}", audeniq_qc::json::to_string(&median));
         results.push(json!({"codec":codec,"file_bytes":fs::metadata(&input)?.len(),"fixture_sha256":file_sha(&input)?,"commands":commands,"runs":runs,"median":median,"ffmpeg_div_native":ratio}));
     }
     let mut report = metadata(options, seconds, results)?;
@@ -561,7 +561,7 @@ pub fn convert(options: &Options) -> Result<Value> {
                 let (mut metrics, out) = measured(&commands[name], root, true)?;
                 sizes.insert(name, fs::metadata(output)?.len());
                 if name != "ffmpeg" {
-                    let report: Value = serde_json::from_slice(&out.stdout)?;
+                    let report: Value = audeniq_qc::json::from_slice(&out.stdout)?;
                     check(report["pcm_sha256"] == expected, "native conversion hash")?;
                     check(
                         oracle_hash(output)? == expected,
@@ -581,7 +581,7 @@ pub fn convert(options: &Options) -> Result<Value> {
                             }
                             let (analysis_metrics, out) = measured(&command, root, true)?;
                             combine_metrics(&mut metrics, &analysis_metrics);
-                            serde_json::from_slice(&out.stdout)?
+                            audeniq_qc::json::from_slice(&out.stdout)?
                         };
                         check(analysis["pcm_sha256"] == expected, "review QC hash")?;
                         let mut comparable = analysis;
@@ -615,7 +615,7 @@ pub fn convert(options: &Options) -> Result<Value> {
         }
         let median = medians(&runs);
         let ratio = ratios(&median);
-        eprintln!("{codec}: {}", serde_json::to_string(&median)?);
+        eprintln!("{codec}: {}", audeniq_qc::json::to_string(&median));
         let baseline_analysis_command = if options.review && !options.reference_codecs {
             options.baseline_binary.as_ref().map(|binary| {
                 let mut command = strings(&[path(binary), "analyze", path(&outputs["baseline"])]);

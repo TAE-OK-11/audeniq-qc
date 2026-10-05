@@ -409,8 +409,311 @@ rather than CRC throughput. No CPU shows a slowdown attributable
 to CRC-32; the replacement is kept. crc32fast stays in the build as a
 transitive dependency of the PNG stack and as a test oracle.
 
-## Remaining hotspots (after round 4), ranked by expected ROI
+## Round 6: QC meter (`04e2731`)
 
+**Profiling (real music, `perf` cpu-clock).** With QC on, the meter was the
+largest single function in every workload: `meter::Analyzer::push` 56% of
+`analyze` on WAV and 34% on FLAC, 21% of `convert --analyze` on WAV and 33%
+on FLAC. The true-peak FIR (`peak_avx2`) added 11-18%. Without QC,
+conversion is spread over the encoder, hashing (at its floor since round 4)
+and frame verification, with no dominant line.
+
+**Stage breakdown of the meter.** The loop-carried values (filter state,
+block peak, channel peaks) went through memory every frame, so
+store-forwarding sat on their chains; `f64::max` ran NaN-handling sequences
+per sample; the filter coefficients were spilled to the stack; and
+true peak ran its 48 multiply-adds per sample on every sample.
+
+| Change | Effect (album44.wav `analyze` CPU) |
+| --- | --- |
+| Frames processed per 50 ms block segment with state and sums in locals; peak, clip and zero-crossing tests on integers (thresholds equal to the f64 tests on `s / 2^31`, an exact scaling) | 0.297 -> 0.243 s |
+| Sample peak as an integer max over f32 bit patterns; channels split in one pass | 0.234 -> 0.212 s |
+| True-peak span bound: \|output\| <= max\|x\| x 2.0228 (largest phase L1 norm, with f32 rounding margin); 256-output spans that cannot exceed the running maximum are skipped (75-95% on real music) | -21% on real music; synthetic noise unchanged |
+| Stereo K-weighting with both channels in one SSE2/NEON register inlined in the loop (x86 previously scalar per lane; AArch64 previously an indirect call per frame) | -13..-19% |
+| Rejected: AVX-512 true-peak kernel | +7..+11% (slower) |
+
+Every change preserves each floating-point operation and its order, or
+replaces a comparison with an exactly equivalent one, so all outputs are
+bit-identical: 450 corpus comparisons (`analyze`, `--fingerprint`,
+`convert --analyze` JSON and FLAC bytes) on x86, AArch64 under QEMU against
+its previous build, and both GitHub runners. New tests pin the integer
+thresholds, the f32 conversion, the SSE2/NEON filter against scalar bits,
+the L1 bound against the coefficients, and skipped against unskipped true
+peak (a deliberately wrong bound fails it).
+
+Results vs main `ba0155b` (raw:
+[round6-qc-meter.txt](verified-pipeline/round6-qc-meter.txt)):
+
+| Workload | Local Xeon (real music) | GitHub x86 | GitHub Neoverse N2 |
+| --- | ---: | ---: | ---: |
+| `analyze` WAV 44.1/16 | -50.9% | -49.4% | -34.6% |
+| `analyze` WAV 96/24 | -49.4% | -47.4% | -33.9% |
+| `analyze` FLAC | -30.2% | -35.2% | -23.5% |
+| `analyze` ALAC | -23.7% | | |
+| `convert --analyze` WAV | -19.0% | -24.2% | -16.4% |
+| `convert --analyze` FLAC | -35.0% | -33.6% | -22.8% |
+| `convert --analyze` ALAC | -15.5% | | |
+| `convert` (no QC) | +2.6% / +0.1% (CIs include 0) | | |
+| 44 real tracks x 3 formats, `analyze` total | -24.5% | | |
+| 44 real tracks x 3 formats, `convert --analyze` total | -15.7% | | |
+
+After this round `analyze` on WAV is about 46% meter and 37% SHA-256. The
+meter runs at about 7 ns per stereo frame, close to its floor: the
+K-weighting recursion is 1 multiply and 4 dependent subtractions per
+frame (about 20 cycles), and its order is fixed by bit-identical output.
+
+## Round 7: in-repository JPEG/PNG cover validation
+
+`probe::cover` (the `image-probe` command and covers found by `probe`) now
+uses `src/jpeg.rs`, `src/png.rs` and `src/inflate.rs` instead of image
+0.24.9; image, png, jpeg-decoder, fdeflate and crc32fast are no longer in
+the default build (binary 1.49 -> 1.14 MB). The goal was the same accept /
+reject decision and reported size as before, not a stricter or looser one:
+
+* PNG: everything png 0.17 checked before the end of the first image-data
+  run (chunk order and CRCs, per-chunk rules, zlib header, complete DEFLATE
+  stream with the Adler-32 present but unchecked, every row's filter type,
+  APNG frame-size rules, its memory budget), and nothing after it, as png
+  0.17 never read further. Empty chunks are not parsed, as there.
+* JPEG: jpeg-decoder 0.3.2's marker and segment rules and a full Huffman
+  decode of every scan with the same 64-bit bit reader, whose look-ahead
+  decides where markers are found and pads zero bits after one; restart
+  markers, EOB runs, progressive refinement (coefficients kept) and the
+  component and colour-transform requirements at EOI. Pixels are not
+  reconstructed (IDCT, upsampling and colour conversion cannot fail).
+* Files on which the previous decoder **panicked** (abort in release
+  builds): indexed PNGs with a PLTE length that is not a multiple of three
+  or over 768, and lossless JPEGs whose precision image mis-sized. These are
+  now rejected with an error instead of crashing the process.
+
+Differential runs against the previous engine binary (stdout JSON and exit
+status) over 250 generated covers (every PNG colour type and bit depth,
+palette and tRNS, interlace; baseline, progressive, grey, CMYK, restart and
+subsampling JPEGs; five sizes), 254 generated lossless JPEGs and 35,602
+mutations (random, PNG chunk-aware with recomputed CRCs and recompressed
+IDAT, JPEG segment-aware): **no difference except the 376 previous panics**
+([raw](verified-pipeline/round7-covers.txt);
+scripts in `tools/scripts/cover_differential/`). `tests/cover_oracle.rs`
+repeats this on committed fixtures and 3,060 deterministic mutations with
+image as a dev-dependency oracle on every CI run.
+
+CPU (median of 15) and peak RSS, previous -> in-repository:
+
+| Cover | CPU ms | RSS MiB |
+| --- | ---: | ---: |
+| PNG 600x600 (0.3 MB) | 6.4 -> 4.9 | 10.1 -> 10.1 |
+| PNG 1400x1400 (1.5 MB) | 26.9 -> 17.8 | 10.3 -> 10.3 |
+| JPEG 600x600 baseline | 9.2 -> 2.5 | 10.3 -> 10.5 |
+| JPEG 1400x1400 baseline | 34.1 -> 7.4 | 14.7 -> 10.5 |
+| JPEG 1400x1400 progressive | 62.6 -> 31.3 | 26.0 -> 14.4 |
+| JPEG 4000x4000 baseline | 278.7 -> 81.3 | 95.2 -> 10.5 |
+| JPEG 4000x4000 progressive | 590.6 -> 353.6 | 186.7 -> 98.9 |
+| PNG 4000x4000 noise (24.7 MB, incompressible) | 146.2 -> 209.6 | 49.3 -> 26.6 |
+
+The one slower case is a near-incompressible PNG at the 64 MiB input limit's
+scale: fdeflate's literal decoding is faster than this decoder's; typical
+covers are faster and no case uses more memory.
+
+## Round 8: in-repository JSON (`src/json.rs`)
+
+Reports are written by `src/json.rs` instead of serde 1.0.219 and
+serde_json 1.0.140; the default build now has **no third-party crates**
+(`cargo tree --locked -e normal` lists only the two workspace crates).
+Report types implement `ToJson` through `json_struct!` / `json_enum!`, which
+write fields in declaration order with the same `skip_serializing_if`
+rules, so no intermediate `Value` tree is built. A `Value` (sorted map, as
+serde_json's default), `json!` and a parser serve the probe output and the
+tools.
+
+The output format is serde_json's, byte for byte: escapes (`\"`, `\\`,
+`\n`-style and lowercase `\u00xx`), integers, `null` for non-finite floats,
+and ryu's float text. Float digits come from Rust's own shortest
+round-trip `{:e}`; where the exact value lies halfway between two shortest
+candidates (Rust rounds up, ryu to even) the tie is detected and resolved
+to even, and ryu's positional/exponent layout (f64 up to 1e16 and down to
+1e-5, f32 up to 1e13 and down to 1e-6) is applied.
+
+* Engine differential: 2,931 command outputs over the corpus, **0
+  differences**; qualify and codec-stress reports identical; mutation
+  fuzzing gives the previous binary's counts.
+* One improvement in the tools: the standards report read back an engine
+  float with serde_json, whose default float parser is not correctly
+  rounded (about 30% of shortest-digit floats come back 1 ULP off;
+  `3.0296717961197754` read as `3.029671796119775`). The new parser is
+  correctly rounded, so that report now shows the engine's exact value.
+* Unit tests compare against serde_json (dev-dependency oracle): 1M random
+  f64 and 1M random f32 plus edge values, strings, integers, `Value` trees
+  and parse round trips.
+
+Paired CPU, previous -> in-repository (median ratio, 95% CI): fingerprint
+(4.6 MB of JSON) -0.8% [-2.6, +1.2], `analyze --fingerprint` +1.0%
+[-6.1, +3.7], `analyze` +0.2% [-1.5, +1.5], `convert --analyze` +0.6%
+[-0.9, +2.7]: no measurable difference. The first version cost +3.9% on
+fingerprint and was fixed with a two-digit integer writer and a cheap
+tie pre-check that skips the exact expansion for almost every float.
+Float formatting alone is still about 3x slower than ryu (bounded by Rust's
+`{:e}`), which no current report has enough floats to show. A clean
+release build of the engine takes 6.2 s instead of 13.3 s (no proc-macro
+derive). [Raw](verified-pipeline/round8-json.txt).
+
+## Round 9: profiling the in-repository components
+
+Every command was profiled again on real music (perf cpu-clock sampling; the
+VM has no hardware counters), first as whole commands and then per function
+and per source line, and each in-repository component was checked against its
+floor. Three were not at it; everything else was (see the list below).
+
+| Change | Where it showed | Effect |
+| --- | --- | --- |
+| FLAC CRC-16 folded with carry-less multiplication (`src/crc16.rs`): the non-reflected form of the CRC-32 folding, PCLMULQDQ / PMULL, four lanes, constants x^n mod P computed at compile time; the 128-bit residue and the tail go through the slicing table | 3-4% of every FLAC decode and of the encoder's frame CRC | 17.1 -> 1.6 ms on album44 (about 10x) |
+| LPC restore with the last N samples in a register ring and the loop unrolled N times; the residual is added before the shift ((s + r*2^k) >> k == (s >> k) + r) and the newest product last, all exact in i64 | 22-26% of FLAC decode; the old loop was at one multiply per tap plus a store-to-load round trip per sample | order 8: 67.7 -> 41.8 ms; order 7: 25.4 -> 16.2 ms |
+| Fingerprint tap: the next output's input count is cached instead of recomputed per input; the dedicated `fingerprint` command counts, without mixing, the inputs that no retained 30 s window reads; `round()` (a libm call) replaced by an exact branch-free equivalent | 8-36% of fingerprint workloads | tap 67.6 -> 23.0 ms, mixing 43.5 -> 11.3 ms, roundf 9.7 -> 0 ms |
+
+Paired CPU, previous -> this round (median ratio, 95% CI):
+
+| Command | Input | Change |
+| --- | --- | --- |
+| `pcm-hash` | album44.flac / album96.flac | -14.2% [-16.8, -11.1] / -19.8% [-22.2, -18.3] |
+| `analyze` | album44.flac / album44.wav / album44.m4a | -12.0% [-18.4, -9.1] / -0.7% (noise) / 0.0% (noise) |
+| `analyze --fingerprint` | album44.flac / album44.wav | -18.7% [-22.5, -9.4] / -13.0% [-20.0, -6.0] |
+| `fingerprint` | album44.flac / album44.wav | -23.5% [-28.8, -18.4] / -46.7% [-53.5, -39.6] |
+| `convert` | album44.flac / album44.m4a / album44.wav | -11.3% [-17.6, -8.7] / -6.6% [-9.2, +0.3] / -2.0% (noise) |
+
+Peak RSS is unchanged within run-to-run variation (binary +3.9 KB). WAV and
+ALAC inputs gain little because their time is in the meter, SHA-256 and the
+ALAC predictor, which earlier rounds left at their floors.
+
+Outputs are unchanged: 2,931 corpus command outputs identical to the previous
+binary; `analyze --fingerprint`, `fingerprint` and `pcm-hash` identical on x86
+and AArch64 (QEMU); qualify, codec-stress and standards reports identical;
+mutation-fuzz counts identical. New tests compare the CRC-16 with a bit-wise
+definition for every length up to 1,200 bytes at four offsets, the
+fingerprint's skipped inputs with pushing every input (several rates, lengths
+around the three-window threshold, any stretch size), and the rounding
+replacement with `round().clamp()` on 6 million values and the special
+cases. The LPC tests already cover every order, width, shift and short tail.
+
+Measured and rejected this round: the register-window LPC without unrolling
+(slower, extra moves), four fingerprint dot products per call (+10..13%), a
+branchy rounding replacement (+13..16%, mispredicts), and a fixed-width JSON
+integer copy (slower). [Raw](verified-pipeline/round9-profile.txt).
+
+## Round 10: FLAC encoder, frame verification and ALAC decoder
+
+Conversion was profiled stage by stage (new `profile-native` encoder stages)
+and per source line. The encoder's planning still had the structure of its
+FFmpeg flacenc origin; it now uses its own kernels and data flow, and the
+frame verification uses a different method:
+
+| Stage (convert album44.wav) | Before | After | Design |
+| --- | ---: | ---: | --- |
+| Fixed predictors | 96 ms | 31 ms | Partition sums of all five orders accumulate in u32 lanes where the residual bound proves they fit; level 5 searches Rice partition orders up to 6 (was 8) |
+| LPC exact costing | 96 ms | 45 ms | Residuals of the whole block per candidate, in i32 lanes when sum\|c\| x max\|x\| < 2^30 (exact), else i64; the non-kept candidate in 64-sample stack pieces |
+| Levinson + sampled costs | 43 ms | 25 ms | Sample positions stepped without divisions; constant-order sample kernels |
+| Stereo estimate | 28 ms | 12 ms | One pass for the four second-order sums, u32 runs where bounded |
+| Rice parameter choice | 22 ms | 6 ms | Shifted sums in u32 lanes when the partition sum fits |
+| Rice writing | 58 ms | 34 ms | Output sized once from the exact bit count; each code ORed into a word that is stored as 8 bytes unconditionally (two codes per store), byte-granular advance, BMI2 shifts; long zero runs are skipped in the zeroed buffer |
+| Frame verification | 109 ms | 68 ms | Instead of decoding each Rice code after the previous one, the expected residuals are derived from the source with the decoder's arithmetic, every code's position follows from them, and the bits at each position are compared (pairs of codes per load). A decoder reading those bits takes the same codes at the same places, so acceptance is unchanged |
+| Encoder total | 511 ms | 277 ms | |
+
+Encoded bytes are unchanged except through the partition order cap: on the
+55-file corpus (300.07 MB of FLAC) it changed 4 files by 292 bytes in
+total; levels 3-4 got slightly smaller. Decision changes that saved more
+CPU but cost compression were measured and rejected: choosing the fixed
+order by a whole-block estimate (+36 KB, up to +2.0% on single tracks),
+ranking LPC orders by the Levinson error (+2.0%), and skipping the exact
+cost of the lower order when sampling ranks it worse (+7.5 KB).
+
+The ALAC decoder was analysed the same way (predictor 394 ms, Rice 158 ms
+for album44.m4a). Order 5, 22% of the samples, ran the generic predictor
+loop; it now has a constant-order loop (predictor 394 -> 355 ms). The
+predictor's coefficient adaptation stops at an unpredictable point
+(coefficients updated per sample spread evenly over 1..6), and three
+branch-free formulations with identical output were measured slower (439 to
+566 ms): the misprediction costs less than evaluating every coefficient.
+ALAC Rice decoding is at the latency of its adaptive parameter chain.
+
+Paired CPU, previous -> this round (median ratio, 95% CI):
+
+| Command | Input | Change |
+| --- | --- | --- |
+| `convert` | album44.wav / album48.wav / album192.wav | -27.3% [-33.1, -24.0] / -23.0% [-27.1, -18.7] / -15.8% [-26.3, -5.7] |
+| `convert` | album44.m4a | -18.2% [-23.4, -6.3] |
+| `convert --analyze` | album44.wav / album44.m4a | -24.4% [-37.0, -21.2] / -15.4% [-21.8, -12.1] |
+| `convert --compression-level 5` | album44.flac | -22.0% [-26.4, -21.0] |
+| `pcm-hash` | album44.m4a / album44.flac | -1.3% / -2.6% (noise) |
+
+All decode, analyze, fingerprint and hash outputs are identical; converted
+files decode to the same PCM; qualify, codec-stress and standards reports and
+the mutation-fuzz counts are identical; peak RSS is unchanged within
+run-to-run variation. New tests cover the i32 LPC residual path against the
+i64 definition, the chunked partition sums, the bounded stereo sums, and the
+branch-free Rice writer against per-code writes (all offsets, k = 0..30,
+long quotients); the existing bit-flip differential test covers the new
+verification. [Raw](verified-pipeline/round10-codec.txt).
+
+## Round 11: FFmpeg-derived decoders redesigned; every codec against FFmpeg
+
+The modules that started as FFmpeg ports were checked part by part. Parts
+already redesigned in earlier rounds stay (FLAC LPC restore, CRC-16, frame
+verification and encoder planning; ALAC output stage and constant-order
+predictors; the QC meter). The TTA and WavPack decoders, untouched ports
+until now, were restructured; the format arithmetic is unchanged (and the
+attribution in THIRD_PARTY.md stays):
+
+* **TTA**: entropy decoding, filtering and output are separate passes over
+  a frame. The adaptive Rice state lives in registers and adapts without
+  branches; the eight-tap filter is rewritten as `C + x * Q` (the delay
+  line's four newest values are affine in the new sample), so the serial
+  path is one multiply, two adds and a shift. A shared LSB reader with
+  unaligned word refills replaces the byte-copying one.
+* **WavPack**: the entropy state is copied into registers per block, the
+  medians update without branches (shifts while no overflow is possible),
+  decorrelation keeps the per-sample term order (overlapping the terms'
+  chains) with branch-free weight steps, and output has a check-free path
+  when there are no extra bits.
+* **FLAC fixed predictors** keep their history in locals.
+
+Errors are reported in the same order as before (an out-of-range or
+extra-bits error before a later decoding error), which 5,400 CRC-repaired
+TTA and 3,000 WavPack mutations confirm against the previous binary.
+
+Single-thread CPU against FFmpeg 8.1.2. Ours decodes with every check and
+hashes (SHA-256 of the canonical PCM); FFmpeg is shown both doing the same
+hash and only decoding:
+
+| Input | Ours | FFmpeg decode + SHA-256 | FFmpeg decode only |
+| --- | ---: | ---: | ---: |
+| FLAC 16/44.1 (album44) | 0.283 s | 0.898 s (-68%) | 0.403 s (-30%) |
+| FLAC 24/96 (album96) | 0.137 s | 0.310 s (-56%) | 0.166 s (-18%) |
+| ALAC 16/44.1 | 0.587 s | 1.312 s (-55%) | 0.916 s (-36%) |
+| ALAC 24/96 | 0.235 s | 0.533 s (-56%) | 0.381 s (-38%) |
+| TTA 16/44.1 | 0.505 s | 0.894 s (-43%) | 0.554 s (-9%) |
+| TTA 24/96 | 0.240 s | 0.425 s (-43%) | 0.269 s (-11%) |
+| WavPack default | 0.682 s | 1.031 s (-34%) | 0.728 s (-6%) |
+| WavPack high | 1.113 s | 1.847 s (-40%) | 1.638 s (-32%) |
+
+Round 10 -> 11: TTA -35%, WavPack -13% (default) and -16% (high).
+
+Conversion to FLAC level 5, ours with SHA-256, STREAMINFO MD5, per-frame
+verification and fsync against FFmpeg encoding only: WAV 16/44.1 -16%,
+ALAC -25%, TTA -18%, WavPack -5%, with 0.06-0.35% smaller files. The one
+row where FFmpeg's encode-only time is lower is WAV 24/96 (+8%): there the
+extra SHA-256 of 32-bit PCM and the verification are a larger share; with
+the same hashing and verification FFmpeg needs a second decode and hash
+pass, which alone takes longer than the difference.
+
+Measured and not kept: an AVX2 TTA filter with the state in vector
+registers (equal: cross-lane latency), WavPack decorrelation as one
+whole-block pass per term (2.3x slower: no overlap between terms), and
+i64 / exact-f64 AVX2 kernels for 24-bit FLAC frame verification (equal).
+[Raw](verified-pipeline/round11-ffmpeg.txt).
+
+## Remaining hotspots (after round 10), ranked by expected ROI
+
+0. **Conversion after round 10**: the fused MD5/SHA-256 pass is now the
+   largest single item of WAV -> FLAC (about a quarter), bound by MD5's
+   serial chain; ALAC input is dominated by the adaptive predictor (below).
 1. **MD5 and SHA-256** (round 4): in-repository, fused into one pass, and
    near the per-step latency floor (MD5 about 4.5 cycles per step; SHA-NI
    bound by its `sha256rnds2` chain). No further lever without changing the
@@ -421,8 +724,15 @@ transitive dependency of the PNG stack and as a test oracle.
 3. **Exact LPC costing** (~8% after round 3): fused pair costing measured
    slower; winning-residual reuse accepted in round 3.
 4. **ALAC adaptive predictor** (~35% of ALAC input): branch-mispredict bound;
-   six designs measured and rejected.
-5. **QC K-weighting IIR**: serial f64 chain fixed by bit-exact output.
+   six designs measured and rejected, three more branch-free ones in round 10.
+5. **QC meter** (round 6): near the K-weighting recursion's latency floor
+   (about 20 cycles per frame); shortening it would change the operation
+   order and therefore the reported bits. True peak is mostly skipped.
+6. **FLAC LPC restore** (round 9): now bound by its loop-carried multiply,
+   add and shift per sample; a SIMD history term would put a vector
+   reduction on that path.
+7. **PNG inflate** (round 7): one table load per literal (~7 cycles); only
+   near-incompressible covers spend noticeable time in it.
 
 Repository hygiene: `reference-target/` (1,784 build artifacts) is tracked in git.
 

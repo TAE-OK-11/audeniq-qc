@@ -21,7 +21,6 @@ dependencies = [
  "crc32fast",
  "image",
  "md-5",
- "serde",
  "serde_json",
  "sha2",
  "symphonia",
@@ -31,8 +30,7 @@ dependencies = [
 name = "audeniq-qc-tools"
 version = "0.1.0"
 dependencies = [
- "serde_json",
- "sha2",
+ "audeniq-qc",
 ]
 
 [[package]]

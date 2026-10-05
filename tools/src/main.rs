@@ -4,11 +4,12 @@ mod qualify;
 mod standards;
 mod stress;
 
+use audeniq_qc::{json, json::Value};
 use common::{Error, Options, Result};
 
 fn main() {
     if let Err(error) = entry() {
-        eprintln!("{}", serde_json::json!({"error": error.to_string()}));
+        eprintln!("{}", json!({"error": error.to_string()}));
         std::process::exit(1);
     }
 }
@@ -18,7 +19,7 @@ fn entry() -> Result<()> {
         .next()
         .ok_or("expected qualify, standards, codec-stress, benchmark, or benchmark-convert")?;
     if command == "ci-report" {
-        let mut reports = serde_json::Map::new();
+        let mut reports = audeniq_qc::json::Map::new();
         for (name, path) in [
             ("analysis", "analysis-benchmark.json"),
             ("decoding", "decoding-benchmark.json"),
@@ -40,13 +41,10 @@ fn entry() -> Result<()> {
             }
             reports.insert(
                 name.to_owned(),
-                serde_json::from_slice(&std::fs::read(path)?)?,
+                audeniq_qc::json::from_slice(&std::fs::read(path)?)?,
             );
         }
-        println!(
-            "AUDENIQ_BENCHMARK_JSON={}",
-            serde_json::Value::Object(reports)
-        );
+        println!("AUDENIQ_BENCHMARK_JSON={}", Value::Object(reports));
         return Ok(());
     }
     let mut options = Options::default();
@@ -100,16 +98,16 @@ fn entry() -> Result<()> {
         _ => return Err("unknown development command".into()),
     };
     if options.reference_codecs {
-        fn rename(value: &mut serde_json::Value, name: &str) {
+        fn rename(value: &mut Value, name: &str) {
             match value {
-                serde_json::Value::Object(map) => {
+                Value::Object(map) => {
                     let old = std::mem::take(map);
                     for (key, mut value) in old {
                         rename(&mut value, name);
                         map.insert(key.replace("baseline", name), value);
                     }
                 }
-                serde_json::Value::Array(values) => {
+                Value::Array(values) => {
                     for value in values {
                         rename(value, name);
                     }
@@ -126,9 +124,9 @@ fn entry() -> Result<()> {
             },
         );
         if comparison_mode {
-            report["comparison_mode"] = serde_json::json!("Explicit comparison binary; both review builds use fused conversion/QC. Consult binary SHA-256 and workflow checkout SHA for provenance.");
+            report["comparison_mode"] = json!("Explicit comparison binary; both review builds use fused conversion/QC. Consult binary SHA-256 and workflow checkout SHA for provenance.");
         } else {
-            report["reference_mode"] = serde_json::json!("Same engine/encoder/QC, reference-codecs feature enables Symphonia ALAC/FLAC decoding and demuxing. Generic JSON/hash/image dependencies remain in both builds.");
+            report["reference_mode"] = json!("Same engine/encoder/QC, reference-codecs feature enables Symphonia ALAC/FLAC decoding and demuxing. Generic JSON/hash/image dependencies remain in both builds.");
         }
     }
     if let Some(path) = options.output {
@@ -137,9 +135,9 @@ fn entry() -> Result<()> {
         }
         std::fs::write(
             path,
-            format!("{}\n", serde_json::to_string_pretty(&report)?),
+            format!("{}\n", audeniq_qc::json::to_string_pretty(&report)),
         )?;
     }
-    println!("{}", serde_json::to_string_pretty(&report)?);
+    println!("{}", audeniq_qc::json::to_string_pretty(&report));
     Ok(())
 }

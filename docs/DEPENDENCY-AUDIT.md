@@ -15,10 +15,10 @@ claim of measured speedup from dependency removal. Backend integration is deferr
 | WAV / AIFF / M4A / FLAC containers and metadata | `audio.rs`, `m4a.rs`, `mp4.rs`, `probe.rs`, native FLAC decoder | No |
 | LUFS / true peak / peak / clipping / silence | `meter.rs`, `resample.rs`, `kernels.rs` | No |
 | Fingerprint mono downmix / sinc resampling | `resample.rs`, `kernels.rs` | No |
-| FLAC CRC8 / CRC16 | `bits.rs`: native tables, CRC16 slicing-by-eight | No |
+| FLAC CRC8 / CRC16 | `bits.rs` (CRC8 table), `crc16.rs` (PCLMULQDQ/PMULL folding since round nine, slicing-by-eight for short input) | No |
 | SHA-256, MD5, IEEE CRC32 | `sha256.rs`, `md5.rs`, `crc32.rs` (in-repository since round four) | No |
-| JPEG / PNG cover decode | `probe.rs::cover` calls `image::Reader::decode` | Yes |
-| JSON reports | serde / serde_json | Yes |
+| JPEG / PNG cover decode | `jpeg.rs`, `png.rs`, `inflate.rs` (in-repository since round seven; image 0.24.9 kept as test oracle) | No |
+| JSON reports | `json.rs` (in-repository since round eight; serde_json 1.0.140 kept as test oracle) | No |
 
 FLAC encoding calls no libFLAC, FFmpeg process or native codec FFI. ALAC,
 WavPack and TTA encoders are not implemented: they are input formats that can
@@ -32,7 +32,10 @@ two different external/native encoders.
 
 ## Remaining direct dependencies and candidates
 
-The default direct dependency list has six crates: serde, serde_json, sha2,
+Status after round eight: the default build has **no** third-party crates
+(`cargo tree --locked -e normal` lists only audeniq-qc and the tools crate);
+all of the following are now dev-dependency test oracles only. At the time of
+this audit the default direct dependency list had six crates: serde, serde_json, sha2,
 md-5, crc32fast and image. Cargo.lock also contains optional reference/build
 dependencies; presence in the lockfile does not establish runtime linkage.
 The successful default `cargo tree --locked -e normal` from the fresh x86 CI
@@ -44,9 +47,9 @@ Its proc-macro subtree is compile-time tooling, not a set of runtime parsers.
 | FLAC PCM MD5 | md-5 0.10.6 | Specialized bounded streaming MD5, shared encoder/decoder primitive; process canonical 16/24-bit PCM through reusable chunk scratch rather than a full second block buffer where beneficial | First external primitive candidate for audio; time packing and compression separately |
 | PCM SHA-256 | sha2 0.11.0 | Keep only SHA-256 streaming state, software fallback, AArch64 SHA2 and x86 SHA-NI dispatch | Second; retain existing hardware acceleration and streaming/unaligned correctness |
 | IEEE CRC32 | Done: `src/crc32.rs` (crc32fast 1.5.2 kept as test oracle; still linked through PNG) | AVX-512/AVX2 VPCLMUL, PCLMUL, AArch64 PMULL folding with tree lane reduction; slicing-by-8 fallback | Measured, see BENCHMARK-VERIFIED-PIPELINE.md round five |
-| PNG cover validation | image 0.24.9 → png 0.17.16 → fdeflate / flate2 / miniz_oxide / Adler and CRC | Native chunks, zlib/DEFLATE, unfiltering and complete supported image validation; bounded row/pass buffers | Separate cover RAM work; no demonstrated benefit to ALAC encoding CPU |
-| JPEG cover validation | image 0.24.9 → jpeg-decoder 0.3.2 | Native markers/tables/entropy decoding and required reconstruction; baseline row/MCU work, explicit progressive compatibility | Later, larger scope; progressive scans may require image-sized coefficient state |
-| Fixed JSON output | serde 1.0.219 + serde_json 1.0.140 | Purpose-specific writer for fixed reports, correct escaping/finite number handling, stable API schema | Last for audio speed; serialization occurs outside sample processing |
+| PNG cover validation | Done: `src/png.rs` + `src/inflate.rs` | Chunks, CRC, zlib/DEFLATE and per-row filter checks with the previous decoder's exact acceptance; 32 KiB window, no image buffer | See BENCHMARK-VERIFIED-PIPELINE.md round seven |
+| JPEG cover validation | Done: `src/jpeg.rs` | Markers, tables and full Huffman decoding of baseline, progressive and lossless scans with the previous decoder's exact acceptance; coefficients kept only for progressive | See BENCHMARK-VERIFIED-PIPELINE.md round seven |
+| Fixed JSON output | Done: `src/json.rs` | Direct writer for the fixed reports (byte-identical to serde_json, ryu float digits), `Value`, `json!` and a correctly rounded parser for the tools | See BENCHMARK-VERIFIED-PIPELINE.md round eight |
 
 These are existing Rust libraries. Internalization usually means taking only
 the required Rust implementation into the repository, retaining licenses and
@@ -139,8 +142,12 @@ it does not justify a promised gain from rewriting a cryptographic primitive.
 
 ## Cover memory and compatibility
 
-`probe::cover` decodes a complete image, retains it only to read width/height,
-then drops it. Its limits are 64 MiB encoded input (also bounded by file limit),
+Since round seven `probe::cover` validates JPEG/PNG in this repository
+without decoding pixels (see BENCHMARK-VERIFIED-PIPELINE.md); the text below
+describes the earlier image-based decoder.
+
+`probe::cover` decoded a complete image, retained it only to read width/height,
+then dropped it. Its limits are 64 MiB encoded input (also bounded by file limit),
 8192×8192 dimensions and a configured 128 MiB image allocation limit.
 A 3000×3000 RGBA8 pixel array alone is about **34.3 MiB**; this is an arithmetic
 example, not measured RSS, and actual decoded formats/buffers vary.

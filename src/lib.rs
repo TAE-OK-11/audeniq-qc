@@ -5,6 +5,7 @@ pub mod audio;
 mod bits;
 #[cfg(not(feature = "reference-codecs"))]
 mod compressed;
+mod crc32;
 pub mod flac;
 #[cfg(not(feature = "reference-codecs"))]
 mod flac_decode;

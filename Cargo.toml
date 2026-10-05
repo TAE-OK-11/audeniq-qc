@@ -15,14 +15,14 @@ resolver = "2"
 [dependencies]
 serde = { version = "=1.0.219", features = ["derive"] }
 serde_json = "=1.0.140"
-crc32fast = "=1.5.2"
 symphonia = { version = "=0.5.4", optional = true, default-features = false, features = ["flac", "alac", "isomp4"] }
 image = { version = "=0.24.9", default-features = false, features = ["jpeg", "png"] }
 
 [dev-dependencies]
-# Independent oracle for the native MD5 tests only.
+# Independent oracles for the native MD5, SHA-256 and CRC-32 tests only.
 md5_reference = { package = "md-5", version = "=0.10.6" }
 sha2_reference = { package = "sha2", version = "=0.11.0" }
+crc32fast_reference = { package = "crc32fast", version = "=1.5.2" }
 
 [features]
 default = []

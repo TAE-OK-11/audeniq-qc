@@ -79,7 +79,7 @@ enum Normalizer {
 /// and compared sample-for-sample with its source PCM before being written.
 #[derive(Default)]
 struct FrameLog {
-    crc: crc32fast::Hasher,
+    crc: crate::crc32::Crc32,
     bytes: u64,
 }
 impl FrameLog {
@@ -290,7 +290,7 @@ fn verify_output(
     let mut file = File::open(path)?;
     let mut head = [0u8; 42];
     file.read_exact(&mut head)?;
-    let mut crc = crc32fast::Hasher::new();
+    let mut crc = crate::crc32::Crc32::new();
     let mut bytes = 0u64;
     let mut buffer = vec![0u8; 1 << 16];
     loop {
@@ -302,7 +302,7 @@ fn verify_output(
         crc.update(&buffer[..n]);
         bytes += n as u64;
     }
-    if head != *header || bytes != log.bytes || crc.finalize() != log.crc.clone().finalize() {
+    if head != *header || bytes != log.bytes || crc.finalize() != log.crc.finalize() {
         return Err(Error::Invalid("lossless round-trip verification"));
     }
     Ok(spec)

@@ -257,11 +257,7 @@ pub fn crc16(data: &[u8]) -> u16 {
     }
     crc
 }
-pub fn crc32(data: &[u8]) -> u32 {
-    // IEEE CRC32, not the incompatible x86 SSE4.2 CRC32C polynomial.
-    // crc32fast selects PCLMULQDQ on x86 or CRC instructions on AArch64.
-    crc32fast::hash(data)
-}
+pub use crate::crc32::crc32;
 
 #[cfg(test)]
 mod tests {

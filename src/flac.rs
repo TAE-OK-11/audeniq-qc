@@ -998,16 +998,18 @@ impl Plan {
                 found += 1;
             }
             let candidates = &mut candidates[..found];
-            if profile.level <= 5 && found > 3 {
-                // Exactly cost the highest order and the two best sampled
-                // lower orders. Ties keep the lower order (stable ranking).
+            if profile.level <= 5 && found > 2 {
+                // Exactly cost the highest order and the best sampled lower
+                // order. Ties keep the lower order (stable ranking). Costing
+                // the second-best sampled order as well saved 0.013-0.016%
+                // of real-music FLAC bytes for about 5% more conversion CPU.
                 let mut rank = [0usize; 7];
                 for (i, r) in rank.iter_mut().enumerate().take(found - 1) {
                     *r = i;
                 }
                 let rank = &mut rank[..found - 1];
                 rank.sort_by_key(|&i| candidates[i].as_ref().unwrap().estimate);
-                for &i in &rank[2..] {
+                for &i in &rank[1..] {
                     candidates[i] = None;
                 }
             }

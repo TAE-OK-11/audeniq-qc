@@ -422,8 +422,11 @@ pub struct DotKernel(fn(&[f32], &[f32]) -> f32);
 pub struct Dot64Kernel(fn(&[f64], &[f64]) -> f64);
 
 /// Integer LPC prediction across consecutive samples. Widening multiplication
-/// preserves all bits; a coefficient has at most 12 signed bits, so eight
+/// preserves all bits; a coefficient has at most 15 signed bits, so eight
 /// products of i32 samples cannot overflow the i64 accumulator.
+// The backend selects an explicit AVX2 build on x86; AArch64 always uses
+// the baseline-NEON auto-vectorized loops.
+#[cfg_attr(not(target_arch = "x86_64"), allow(dead_code))]
 pub(crate) struct LpcKernel(Backend);
 impl LpcKernel {
     pub(crate) fn new(backend: Backend) -> Self {
@@ -444,13 +447,18 @@ impl LpcKernel {
         out: &mut Vec<u32>,
     ) -> Option<()> {
         assert!(shift <= 15);
-        assert!(coefficients.iter().all(|&c| (-2048..=2047).contains(&c)));
+        assert!(coefficients.iter().all(|&c| (-16384..=16383).contains(&c)));
         assert!(samples.len() >= coefficients.len());
         out.clear();
         out.reserve(samples.len() - coefficients.len());
         match coefficients.len() {
+            1 => self.compute::<1>(samples, coefficients, shift, out),
             2 => self.compute::<2>(samples, coefficients, shift, out),
+            3 => self.compute::<3>(samples, coefficients, shift, out),
             4 => self.compute::<4>(samples, coefficients, shift, out),
+            5 => self.compute::<5>(samples, coefficients, shift, out),
+            6 => self.compute::<6>(samples, coefficients, shift, out),
+            7 => self.compute::<7>(samples, coefficients, shift, out),
             8 => self.compute::<8>(samples, coefficients, shift, out),
             _ => unreachable!("unsupported LPC order"),
         }
@@ -462,96 +470,135 @@ impl LpcKernel {
         shift: u32,
         out: &mut Vec<u32>,
     ) -> Option<()> {
+        out.resize(samples.len() - N, 0);
         #[cfg(target_arch = "x86_64")]
         if self.0 == Backend::Avx2 {
-            // SAFETY: selected at construction; all loads are bounded below.
-            return unsafe { lpc_avx2::<N>(samples, coefficients, shift, out) };
+            // SAFETY: AVX2 selected at construction; the body is safe Rust.
+            return unsafe { lpc_store_avx2::<N>(samples, coefficients, shift, out) }.then_some(());
         }
-        #[cfg(target_arch = "aarch64")]
-        if self.0 == Backend::Neon {
-            return unsafe { lpc_neon::<N>(samples, coefficients, shift, out) };
-        }
-        lpc_tail::<N>(samples, coefficients, shift, N, out)
+        lpc_store::<N>(samples, coefficients, shift, out).then_some(())
     }
 }
 
-fn fold_residual(sample: i32, prediction: i64, shift: u32) -> Option<u32> {
-    let delta = sample as i64 - (prediction >> shift);
-    i32::try_from(delta).ok()?;
-    Some(((delta << 1) ^ (delta >> 63)) as u32)
-}
-fn lpc_tail<const N: usize>(
+/// Store folded residuals for every sample from N. Fixed-size windows and an
+/// accumulated range flag (instead of an early return per lane) let LLVM
+/// vectorize the widening multiply-accumulate on AVX2 and baseline NEON.
+#[inline(always)]
+fn lpc_store<const N: usize>(
     samples: &[i32],
     coefficients: &[i32],
     shift: u32,
-    start: usize,
-    out: &mut Vec<u32>,
-) -> Option<()> {
-    for i in start..samples.len() {
+    out: &mut [u32],
+) -> bool {
+    let mut c = [0i64; N];
+    for (c, &x) in c.iter_mut().zip(coefficients) {
+        *c = x as i64;
+    }
+    let mut bad = 0u64;
+    for ((window, &x), o) in samples.windows(N).zip(&samples[N..]).zip(out.iter_mut()) {
+        let window: &[i32; N] = window.try_into().unwrap();
         let mut prediction = 0i64;
         for j in 0..N {
-            prediction += coefficients[j] as i64 * samples[i - j - 1] as i64;
+            prediction += c[j] * window[N - 1 - j] as i64;
         }
-        out.push(fold_residual(samples[i], prediction, shift)?);
+        let r = x as i64 - (prediction >> shift);
+        bad |= (r.wrapping_add(1 << 31) as u64) >> 32;
+        *o = ((r << 1) ^ (r >> 63)) as u32;
     }
-    Some(())
+    bad == 0
 }
 
 #[cfg(target_arch = "x86_64")]
 #[target_feature(enable = "avx2")]
-unsafe fn lpc_avx2<const N: usize>(
+unsafe fn lpc_store_avx2<const N: usize>(
     samples: &[i32],
     coefficients: &[i32],
     shift: u32,
-    out: &mut Vec<u32>,
-) -> Option<()> {
-    use std::arch::x86_64::*;
-    let mut i = N;
-    while i + 4 <= samples.len() {
-        let mut sum = _mm256_setzero_si256();
-        for (j, &c) in coefficients.iter().enumerate().take(N) {
-            let past = _mm_loadu_si128(samples.as_ptr().add(i - j - 1).cast());
-            let past = _mm256_cvtepi32_epi64(past);
-            sum = _mm256_add_epi64(sum, _mm256_mul_epi32(past, _mm256_set1_epi64x(c as i64)));
-        }
-        let mut predictions = [0i64; 4];
-        _mm256_storeu_si256(predictions.as_mut_ptr().cast(), sum);
-        for lane in 0..4 {
-            out.push(fold_residual(samples[i + lane], predictions[lane], shift)?);
-        }
-        i += 4;
-    }
-    lpc_tail::<N>(samples, coefficients, shift, i, out)
+    out: &mut [u32],
+) -> bool {
+    lpc_store::<N>(samples, coefficients, shift, out)
 }
 
-#[cfg(target_arch = "aarch64")]
-#[target_feature(enable = "neon")]
-unsafe fn lpc_neon<const N: usize>(
+impl LpcKernel {
+    /// Per-partition sums of folded LPC residuals without storing them, for
+    /// ranking models. `sums[p]` covers samples `p * size..(p + 1) * size`,
+    /// excluding the first `order` warm-up samples. Returns false when any
+    /// residual is outside i32 (FLAC cannot code that model).
+    pub(crate) fn partition_sums(
+        &self,
+        samples: &[i32],
+        coefficients: &[i32],
+        shift: u32,
+        size: usize,
+        sums: &mut [u64],
+    ) -> bool {
+        assert!(shift <= 15 && size > coefficients.len());
+        assert!(sums.len() * size <= samples.len());
+        assert!(coefficients.iter().all(|&c| (-16384..=16383).contains(&c)));
+        macro_rules! dispatch {
+            ($($n:literal)*) => {
+                match coefficients.len() {
+                    $($n => {
+                        #[cfg(target_arch = "x86_64")]
+                        if self.0 == Backend::Avx2 {
+                            // SAFETY: AVX2 selected at construction; the generic
+                            // body is bounds-checked safe Rust.
+                            return unsafe { lpc_sums_avx2::<$n>(samples, coefficients, shift, size, sums) };
+                        }
+                        lpc_sums::<$n>(samples, coefficients, shift, size, sums)
+                    })*
+                    _ => unreachable!("unsupported LPC order"),
+                }
+            };
+        }
+        dispatch!(1 2 3 4 5 6 7 8)
+    }
+}
+
+#[inline(always)]
+fn lpc_sums<const N: usize>(
     samples: &[i32],
     coefficients: &[i32],
     shift: u32,
-    out: &mut Vec<u32>,
-) -> Option<()> {
-    use std::arch::aarch64::*;
-    let mut i = N;
-    while i + 4 <= samples.len() {
-        let mut lo = vdupq_n_s64(0);
-        let mut hi = vdupq_n_s64(0);
-        for (j, &c) in coefficients.iter().enumerate().take(N) {
-            let past = vld1q_s32(samples.as_ptr().add(i - j - 1));
-            lo = vmlal_n_s32(lo, vget_low_s32(past), c);
-            hi = vmlal_n_s32(hi, vget_high_s32(past), c);
-        }
-        let mut predictions = [0i64; 4];
-        vst1q_s64(predictions.as_mut_ptr(), lo);
-        vst1q_s64(predictions.as_mut_ptr().add(2), hi);
-        for lane in 0..4 {
-            out.push(fold_residual(samples[i + lane], predictions[lane], shift)?);
-        }
-        i += 4;
+    size: usize,
+    sums: &mut [u64],
+) -> bool {
+    let mut c = [0i64; N];
+    for (c, &x) in c.iter_mut().zip(coefficients) {
+        *c = x as i64;
     }
-    lpc_tail::<N>(samples, coefficients, shift, i, out)
+    let mut bad = 0u64;
+    for (p, sum) in sums.iter_mut().enumerate() {
+        let start = (p * size).max(N);
+        let end = (p + 1) * size;
+        let mut total = 0u64;
+        for i in start..end {
+            let window: &[i32; N] = samples[i - N..i].try_into().unwrap();
+            let mut prediction = 0i64;
+            for j in 0..N {
+                prediction += c[j] * window[N - 1 - j] as i64;
+            }
+            let r = samples[i] as i64 - (prediction >> shift);
+            bad |= (r.wrapping_add(1 << 31) as u64) >> 32;
+            total += ((r << 1) ^ (r >> 63)) as u64;
+        }
+        *sum = total;
+    }
+    bad == 0
 }
+
+#[cfg(target_arch = "x86_64")]
+#[target_feature(enable = "avx2")]
+unsafe fn lpc_sums_avx2<const N: usize>(
+    samples: &[i32],
+    coefficients: &[i32],
+    shift: u32,
+    size: usize,
+    sums: &mut [u64],
+) -> bool {
+    lpc_sums::<N>(samples, coefficients, shift, size, sums)
+}
+
 impl Dot64Kernel {
     pub fn new(backend: Backend) -> Self {
         assert!(backend.available());
@@ -643,71 +690,73 @@ unsafe fn dot64_neon(a: &[f64], b: &[f64]) -> f64 {
     vaddvq_f64(v) + a[i..].iter().zip(&b[i..]).map(|(x, y)| x * y).sum::<f64>()
 }
 
-type PeakFn = fn(&[f32], &[f32], &[[f32; 4]; 12]) -> f32;
+type PeakFn = fn(&[f32], &[[f32; 4]; 12]) -> f32;
 pub struct PeakKernel(PeakFn);
 impl PeakKernel {
     pub fn new(backend: Backend, interpolate: bool) -> Self {
         assert!(backend.available());
         if !interpolate {
-            return Self(|_, _, _| 0.0);
+            return Self(|_, _| 0.0);
         }
         #[cfg(target_arch = "x86_64")]
         if backend == Backend::Avx2 {
-            return Self(|l, r, c| unsafe { peak_avx2(l, r, c) });
+            // SAFETY: AVX2 selected at construction; the body is safe Rust.
+            return Self(|x, c| unsafe { peak_avx2(x, c) });
         }
         #[cfg(target_arch = "aarch64")]
         if backend == Backend::Neon {
-            return Self(|l, r, c| unsafe { peak_neon(l, r, c) });
+            return Self(peak_lanes::<8>);
         }
-        Self(peak_scalar)
+        Self(peak_lanes::<1>)
     }
+    /// Maximum |interpolated value| over every 12-sample window of `x`.
     #[inline]
-    pub fn apply(&self, l: &[f32], r: &[f32], c: &[[f32; 4]; 12]) -> f32 {
-        assert_eq!(l.len(), 12);
-        assert_eq!(r.len(), 12);
-        (self.0)(l, r, c)
+    pub fn apply(&self, x: &[f32], c: &[[f32; 4]; 12]) -> f32 {
+        assert!(x.len() >= 12);
+        (self.0)(x, c)
     }
 }
-fn peak_scalar(l: &[f32], r: &[f32], c: &[[f32; 4]; 12]) -> f32 {
-    let mut a = [0.0f32; 4];
-    let mut b = [0.0f32; 4];
-    for i in 0..12 {
-        for p in 0..4 {
-            a[p] += l[i] * c[i][p];
-            b[p] += r[i] * c[i][p];
+/// `LANES` consecutive outputs at once. Per lane the arithmetic is exactly
+/// the scalar sum over taps 0..12 (mul then add, no FMA contraction), so the
+/// lane count changes speed only. LANES = 1 is the scalar backend.
+#[inline(always)]
+fn peak_lanes<const LANES: usize>(x: &[f32], c: &[[f32; 4]; 12]) -> f32 {
+    let outputs = x.len() - 11;
+    let mut best = [0.0f32; LANES];
+    let mut t = 0;
+    while t + LANES <= outputs {
+        let mut acc = [[0.0f32; LANES]; 4];
+        for (i, taps) in c.iter().enumerate() {
+            let v: &[f32; LANES] = x[t + i..t + i + LANES].try_into().unwrap();
+            for p in 0..4 {
+                for l in 0..LANES {
+                    acc[p][l] += v[l] * taps[p];
+                }
+            }
         }
+        for row in &acc {
+            for l in 0..LANES {
+                best[l] = best[l].max(row[l].abs());
+            }
+        }
+        t += LANES;
     }
-    a.iter().chain(&b).fold(0.0, |m, x| m.max(x.abs()))
+    let mut m = best.iter().fold(0.0f32, |m, &v| m.max(v));
+    for t in t..outputs {
+        let mut acc = [0.0f32; 4];
+        for (i, taps) in c.iter().enumerate() {
+            for p in 0..4 {
+                acc[p] += x[t + i] * taps[p];
+            }
+        }
+        m = acc.iter().fold(m, |m, v| m.max(v.abs()));
+    }
+    m
 }
 #[cfg(target_arch = "x86_64")]
 #[target_feature(enable = "avx2")]
-unsafe fn peak_avx2(l: &[f32], r: &[f32], c: &[[f32; 4]; 12]) -> f32 {
-    use std::arch::x86_64::*;
-    let mut acc = _mm256_setzero_ps();
-    for i in 0..12 {
-        let v =
-            _mm256_insertf128_ps::<1>(_mm256_castps128_ps256(_mm_set1_ps(l[i])), _mm_set1_ps(r[i]));
-        let coefficient = _mm_loadu_ps(c[i].as_ptr());
-        let coefficient =
-            _mm256_insertf128_ps::<1>(_mm256_castps128_ps256(coefficient), coefficient);
-        acc = _mm256_add_ps(acc, _mm256_mul_ps(v, coefficient));
-    }
-    let mut out = [0f32; 8];
-    _mm256_storeu_ps(out.as_mut_ptr(), acc);
-    out.iter().fold(0.0, |m, x| m.max(x.abs()))
-}
-#[cfg(target_arch = "aarch64")]
-#[target_feature(enable = "neon")]
-unsafe fn peak_neon(l: &[f32], r: &[f32], c: &[[f32; 4]; 12]) -> f32 {
-    use std::arch::aarch64::*;
-    let mut a = vdupq_n_f32(0.0);
-    let mut b = vdupq_n_f32(0.0);
-    for i in 0..12 {
-        let v = vld1q_f32(c[i].as_ptr());
-        a = vaddq_f32(a, vmulq_n_f32(v, l[i]));
-        b = vaddq_f32(b, vmulq_n_f32(v, r[i]));
-    }
-    vmaxvq_f32(vmaxq_f32(vabsq_f32(a), vabsq_f32(b)))
+unsafe fn peak_avx2(x: &[f32], c: &[[f32; 4]; 12]) -> f32 {
+    peak_lanes::<8>(x, c)
 }
 impl DotKernel {
     pub fn new(backend: Backend) -> Self {
@@ -897,6 +946,79 @@ mod tests {
                         }
                     }
                 }
+            }
+        }
+    }
+    #[test]
+    fn lpc_partition_sums_match_stored_residuals() {
+        let mut seed = 1729u32;
+        let samples: Vec<i32> = (0..4608)
+            .map(|i| {
+                seed = seed.wrapping_mul(1664525).wrapping_add(1013904223);
+                let tone = ((i as f64 * 0.02).sin() * 8_000_000.0) as i32;
+                tone + ((seed as i32) >> 12)
+            })
+            .collect();
+        for order in 1..=8 {
+            for shift in [0, 5, 15] {
+                for size in [18, 72, 4608] {
+                    let coefficients: Vec<i32> = (0..order)
+                        .map(|j| [16383, -16384, 9000, -1, 0, 77, -5000, 3][j])
+                        .collect();
+                    for backend in [Backend::Scalar, Backend::detect()] {
+                        let kernel = LpcKernel::new(backend);
+                        let mut residual = Vec::new();
+                        let stored = kernel
+                            .residual_into(&samples, &coefficients, shift, &mut residual)
+                            .is_some();
+                        let mut sums = vec![u64::MAX; samples.len() / size];
+                        let ok =
+                            kernel.partition_sums(&samples, &coefficients, shift, size, &mut sums);
+                        assert_eq!(ok, stored, "order {order} shift {shift}");
+                        if ok {
+                            for (p, &sum) in sums.iter().enumerate() {
+                                let start = (p * size).max(order) - order;
+                                let end = (p + 1) * size - order;
+                                let expected: u64 =
+                                    residual[start..end].iter().map(|&r| r as u64).sum();
+                                assert_eq!(sum, expected);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    #[test]
+    #[allow(clippy::needless_range_loop)] // mirrors the reference loop order
+    fn block_true_peak_matches_per_window_reference() {
+        let c = crate::resample::TP_COEFFICIENTS;
+        let mut seed = 99u32;
+        let x: Vec<f32> = (0..300)
+            .map(|i| {
+                seed = seed.wrapping_mul(1664525).wrapping_add(1013904223);
+                if i % 50 == 7 {
+                    1.0
+                } else {
+                    (seed as i32) as f32 / 2147483648.0
+                }
+            })
+            .collect();
+        for len in 12..x.len() {
+            let x = &x[..len];
+            let mut expected = 0.0f32;
+            for w in x.windows(12) {
+                for p in 0..4 {
+                    let mut a = 0.0f32;
+                    for i in 0..12 {
+                        a += w[i] * c[i][p];
+                    }
+                    expected = expected.max(a.abs());
+                }
+            }
+            for backend in [Backend::Scalar, Backend::detect()] {
+                let got = PeakKernel::new(backend, true).apply(x, &c);
+                assert_eq!(got.to_bits(), expected.to_bits(), "len {len}");
             }
         }
     }

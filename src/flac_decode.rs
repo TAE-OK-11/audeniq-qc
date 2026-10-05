@@ -13,6 +13,7 @@ pub(crate) struct Decoder {
     pub spec: AudioSpec,
     pub info: [u8; 34],
     buffer: Vec<u8>,
+    end: usize,
     start: usize,
     retained: Option<std::ops::Range<usize>>,
     eof: bool,
@@ -26,12 +27,6 @@ pub(crate) struct Decoder {
 
 fn invalid<T>(s: &'static str) -> Result<T> {
     Err(Error::Invalid(s))
-}
-fn checked(v: i64, bits: u32) -> Result<i32> {
-    if v < -(1i64 << (bits - 1)) || v >= 1i64 << (bits - 1) {
-        return invalid("FLAC reconstructed sample range");
-    }
-    Ok(v as i32)
 }
 fn residual(b: &mut Bits<'_>, p: &mut [i32], order: usize) -> Result<()> {
     let _profile = crate::profile::scope(crate::profile::Stage::FlacResidual);
@@ -57,9 +52,7 @@ fn residual(b: &mut Bits<'_>, p: &mut [i32], order: usize) -> Result<()> {
                 *v = b.signed(bits)?;
             }
         } else {
-            for v in dst {
-                *v = b.rice_signed(k)?;
-            }
+            b.rice_run(k, dst)?;
         }
     }
     Ok(())
@@ -125,21 +118,7 @@ fn subframe(b: &mut Bits<'_>, p: &mut [i32], bits: u32) -> Result<()> {
                     _ => restore_lpc::<0>(p, &coeff[..order], shift, width)?,
                 }
             } else {
-                let _profile = crate::profile::scope(crate::profile::Stage::FlacPredict);
-                for i in order..p.len() {
-                    let prediction = match order {
-                        0 => 0,
-                        1 => p[i - 1] as i64,
-                        2 => 2 * p[i - 1] as i64 - p[i - 2] as i64,
-                        3 => 3 * p[i - 1] as i64 - 3 * p[i - 2] as i64 + p[i - 3] as i64,
-                        4 => {
-                            4 * p[i - 1] as i64 - 6 * p[i - 2] as i64 + 4 * p[i - 3] as i64
-                                - p[i - 4] as i64
-                        }
-                        _ => unreachable!(),
-                    };
-                    p[i] = checked(prediction + p[i] as i64, width)?;
-                }
+                restore_fixed(p, order, width)?;
             }
         }
         _ => return invalid("FLAC subframe mode"),
@@ -151,10 +130,10 @@ fn subframe(b: &mut Bits<'_>, p: &mut [i32], bits: u32) -> Result<()> {
     }
     Ok(())
 }
-struct Header {
-    samples: usize,
-    number: u64,
-    variable: bool,
+pub(crate) struct Header {
+    pub samples: usize,
+    pub number: u64,
+    pub variable: bool,
     mode: u32,
 }
 fn header(b: &mut Bits<'_>, spec: &AudioSpec, maximum: usize) -> Result<Header> {
@@ -236,7 +215,7 @@ fn header(b: &mut Bits<'_>, spec: &AudioSpec, maximum: usize) -> Result<Header> 
         mode,
     })
 }
-fn decode(
+pub(crate) fn decode(
     data: &[u8],
     spec: &AudioSpec,
     maximum: usize,
@@ -382,6 +361,7 @@ impl Decoder {
             spec,
             info,
             buffer: Vec::new(),
+            end: 0,
             start: 0,
             retained: None,
             eof: false,
@@ -394,17 +374,21 @@ impl Decoder {
         })
     }
     fn fill(&mut self, limit: usize) -> Result<()> {
-        self.buffer.copy_within(self.start.., 0);
-        self.buffer.truncate(self.buffer.len() - self.start);
+        // Keep the allocation (and its initialized bytes) across refills;
+        // only the unread tail moves and only new bytes are read.
+        self.buffer.copy_within(self.start..self.end, 0);
+        self.end -= self.start;
         self.start = 0;
-        let old = self.buffer.len();
+        let old = self.end;
         let target = (old + 65536).min(limit);
         if target == old {
             return Err(Error::Limit("FLAC packet bytes"));
         }
-        self.buffer.resize(target, 0);
-        let n = self.file.read(&mut self.buffer[old..])?;
-        self.buffer.truncate(old + n);
+        if self.buffer.len() < target {
+            self.buffer.resize(target, 0);
+        }
+        let n = self.file.read(&mut self.buffer[old..target])?;
+        self.end = old + n;
         if n == 0 {
             self.eof = true;
         }
@@ -414,7 +398,7 @@ impl Decoder {
         self.retained = None;
         if self.decoded == self.spec.frames.unwrap() {
             out.clear();
-            if self.start != self.buffer.len() {
+            if self.start != self.end {
                 return invalid("FLAC trailing data");
             }
             let mut tail = [0];
@@ -436,11 +420,11 @@ impl Decoder {
         }
         loop {
             limits.check()?;
-            if !self.eof && self.buffer.len() - self.start < declared_max {
+            if !self.eof && self.end - self.start < declared_max {
                 self.fill(limits.max_packet_bytes)?;
                 continue;
             }
-            let data = &self.buffer[self.start..];
+            let data = &self.buffer[self.start..self.end];
             match decode(data, &self.spec, maximum, &mut self.planes, out) {
                 Ok((n, h)) => {
                     if declared_max != 0 && n > declared_max {
@@ -483,22 +467,101 @@ impl Decoder {
     }
 }
 
+/// Fixed predictors 0..4. Inputs are bounded to 25 bits once validated, so
+/// predictions fit i32; the residual addition widens. Range failures are
+/// accumulated and reported once per subframe instead of branching per sample.
+fn restore_fixed(p: &mut [i32], order: usize, bits: u32) -> Result<()> {
+    let _profile = crate::profile::scope(crate::profile::Stage::FlacPredict);
+    let low = -(1i64 << (bits - 1));
+    // One unsigned comparison checks low <= v < 2^(bits-1).
+    let span = (1u64 << bits) - 1;
+    let mut bad = false;
+    for &v in &p[..order] {
+        bad |= (v as i64).wrapping_sub(low) as u64 > span;
+    }
+    macro_rules! run {
+        ($predict:expr) => {
+            for i in order..p.len() {
+                let v = $predict(&*p, i) as i64 + p[i] as i64;
+                bad |= v.wrapping_sub(low) as u64 > span;
+                p[i] = v as i32;
+            }
+        };
+    }
+    match order {
+        0 => {
+            for &v in p.iter() {
+                bad |= (v as i64).wrapping_sub(low) as u64 > span;
+            }
+        }
+        1 => run!(|p: &[i32], i: usize| p[i - 1]),
+        2 => run!(|p: &[i32], i: usize| p[i - 1].wrapping_mul(2).wrapping_sub(p[i - 2])),
+        3 => run!(|p: &[i32], i: usize| p[i - 1]
+            .wrapping_sub(p[i - 2])
+            .wrapping_mul(3)
+            .wrapping_add(p[i - 3])),
+        4 => run!(|p: &[i32], i: usize| p[i - 1]
+            .wrapping_add(p[i - 3])
+            .wrapping_mul(4)
+            .wrapping_sub(p[i - 2].wrapping_mul(6))
+            .wrapping_sub(p[i - 4])),
+        _ => unreachable!(),
+    }
+    if bad {
+        return invalid("FLAC reconstructed sample range");
+    }
+    Ok(())
+}
+
+/// LPC restoration. Products are widened to i64 (coefficients have at most 15
+/// bits, samples 32), and range failures are accumulated per subframe. When
+/// the stream's declared precision, width and order bound every partial sum
+/// below 2^31 (FFmpeg's flacdsp 32-bit condition), an exact i32 accumulator
+/// is used instead; any out-of-range sample still fails the subframe.
 #[inline]
 fn restore_lpc<const N: usize>(p: &mut [i32], coeff: &[i32], shift: i32, bits: u32) -> Result<()> {
     let _profile = crate::profile::scope(crate::profile::Stage::FlacPredict);
     let order = if N == 0 { coeff.len() } else { N };
-    for i in order..p.len() {
-        let window = &p[i - order..i];
-        let mut sum = 0i64;
-        for j in 0..order {
-            sum += coeff[j] as i64 * window[order - j - 1] as i64;
+    let low = -(1i64 << (bits - 1));
+    // One unsigned comparison checks low <= v < 2^(bits-1).
+    let span = (1u64 << bits) - 1;
+    let mut bad = false;
+    for &v in &p[..order] {
+        bad |= (v as i64).wrapping_sub(low) as u64 > span;
+    }
+    let largest = coeff.iter().map(|c| c.unsigned_abs()).max().unwrap_or(0) as u64;
+    // Sum of |c| * |x| over the order, with |x| <= 2^(bits-1).
+    let bound = largest * order as u64 * (1u64 << (bits - 1));
+    if (0..32).contains(&shift) && bound < 1 << 31 {
+        for i in order..p.len() {
+            let window = &p[i - order..i];
+            let mut sum = 0i32;
+            for j in 0..order {
+                sum = sum.wrapping_add(coeff[j].wrapping_mul(window[order - j - 1]));
+            }
+            let v = (sum >> shift) as i64 + p[i] as i64;
+            bad |= v.wrapping_sub(low) as u64 > span;
+            p[i] = v as i32;
         }
-        let prediction = if shift >= 0 {
-            sum >> shift
-        } else {
-            sum << -shift
-        };
-        p[i] = checked(prediction + p[i] as i64, bits)?;
+    } else {
+        for i in order..p.len() {
+            let window = &p[i - order..i];
+            let mut sum = 0i64;
+            for j in 0..order {
+                sum += coeff[j] as i64 * window[order - j - 1] as i64;
+            }
+            let prediction = if shift >= 0 {
+                sum >> shift.min(63)
+            } else {
+                sum.wrapping_shl(shift.unsigned_abs())
+            };
+            let v = prediction.wrapping_add(p[i] as i64);
+            bad |= v.wrapping_sub(low) as u64 > span;
+            p[i] = v as i32;
+        }
+    }
+    if bad {
+        return invalid("FLAC reconstructed sample range");
     }
     Ok(())
 }

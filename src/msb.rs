@@ -100,6 +100,79 @@ impl<'a> Bits<'a> {
         }
         Ok(((value >> 1) as i32) ^ -((value & 1) as i32))
     }
+    /// Decode a complete FLAC Rice partition. While at least eight unread
+    /// bytes remain, refill with one unaligned big-endian load so that every
+    /// code of up to 56 bits decodes from the cache without per-value refill
+    /// or bounds branches. Bits beyond `available` are then the true following
+    /// stream bits, so a later byte-wise fill ORs identical values. Long
+    /// quotients and the final bytes use the checked per-value path.
+    #[inline]
+    pub fn rice_run(&mut self, k: u32, dst: &mut [i32]) -> Result<()> {
+        if k > 31 {
+            return Err(Error::Invalid("FLAC Rice width"));
+        }
+        let data = self.data;
+        let mut cache = self.cache;
+        let mut available = self.available;
+        let mut loaded = self.loaded;
+        let mut i = 0;
+        let mut range = 0u64;
+        'refill: while data.len() - loaded >= 8 {
+            // available <= 63 here; whole bytes already in the cache add none.
+            let word = u64::from_be_bytes(data[loaded..loaded + 8].try_into().unwrap());
+            cache |= word >> available;
+            let bytes = (63 - available) >> 3;
+            loaded += bytes as usize;
+            available += bytes * 8;
+            // available is now 56..=63: decode every code that fits.
+            loop {
+                let Some(out) = dst.get_mut(i) else {
+                    break 'refill;
+                };
+                let q = cache.leading_zeros();
+                let consumed = q + 1 + k;
+                if consumed > available {
+                    if available >= 56 {
+                        break 'refill; // long quotient: checked path
+                    }
+                    continue 'refill;
+                }
+                // q + 1 <= available <= 63, so neither shift reaches 64.
+                let rest = cache << (q + 1);
+                let tail = (rest >> 1) >> (63 - k);
+                let value = ((q as u64) << k) | tail;
+                range |= value >> 32;
+                *out = ((value >> 1) as i32) ^ -((value & 1) as i32);
+                cache = rest << k;
+                available -= consumed;
+                i += 1;
+            }
+        }
+        self.cache = cache;
+        self.available = available;
+        self.loaded = loaded;
+        self.pos = loaded * 8 - available as usize;
+        if range != 0 {
+            return Err(Error::Invalid("FLAC residual range"));
+        }
+        for v in &mut dst[i..] {
+            *v = self.rice_signed(k)?;
+        }
+        Ok(())
+    }
+    /// Top the cache up to 56..=63 bits with one unaligned load when eight
+    /// unread bytes remain (see `rice_run`); otherwise leave it to `fill`.
+    #[inline(always)]
+    pub fn refill(&mut self) {
+        if self.data.len() - self.loaded >= 8 {
+            let word =
+                u64::from_be_bytes(self.data[self.loaded..self.loaded + 8].try_into().unwrap());
+            self.cache |= word >> self.available;
+            let bytes = (63 - self.available) >> 3;
+            self.loaded += bytes as usize;
+            self.available += bytes * 8;
+        }
+    }
     #[inline]
     pub fn alac_scalar(&mut self, k: u32, bits: u32) -> Result<u32> {
         if k == 0 || k > 31 || bits > 32 {
@@ -268,6 +341,66 @@ mod tests {
                 }
             }
         }
+    }
+    #[test]
+    fn rice_runs_match_per_value_reads_and_reject_wide_values() {
+        let mut seed = 0x9e3779b97f4a7c15u64;
+        let mut next = move || {
+            seed = seed.wrapping_add(0x9e3779b97f4a7c15);
+            let mut z = seed;
+            z = (z ^ (z >> 30)).wrapping_mul(0xbf58476d1ce4e5b9);
+            z = (z ^ (z >> 27)).wrapping_mul(0x94d049bb133111eb);
+            z ^ (z >> 31)
+        };
+        for k in [0u32, 1, 4, 11, 14, 20, 30, 31] {
+            for offset in [0u32, 3, 7, 13] {
+                for count in [0usize, 1, 2, 9, 64, 300] {
+                    let mut w = crate::bits::BeWriter::new();
+                    w.put(offset, 5);
+                    let mut values = Vec::new();
+                    for i in 0..count {
+                        // Mostly short codes, plus long quotients that need
+                        // the checked fallback in the middle of a run.
+                        let q = if i % 37 == 5 { 70 } else { next() % 6 };
+                        let value = (q << k) | (next() & ((1u64 << k) - 1));
+                        if value > u32::MAX as u64 {
+                            continue;
+                        }
+                        w.unary(q as u32);
+                        w.put(k, value);
+                        values.push(((value >> 1) as i32) ^ -((value & 1) as i32));
+                    }
+                    w.put(13, 0x1abc);
+                    w.align();
+                    let mut fast = Bits::new(&w.bytes);
+                    let mut slow = Bits::new(&w.bytes);
+                    fast.get(offset).unwrap();
+                    slow.get(offset).unwrap();
+                    let mut out = vec![0; values.len()];
+                    fast.rice_run(k, &mut out).unwrap();
+                    for &v in &values {
+                        assert_eq!(slow.rice_signed(k).unwrap(), v);
+                    }
+                    assert_eq!(out, values);
+                    assert_eq!(fast.pos, slow.pos);
+                    assert_eq!(fast.get(13).unwrap(), 0x1abc);
+                    // Truncation inside the run must fail, never read past it.
+                    let cut = slow.pos.saturating_sub(1) / 8;
+                    if !values.is_empty() && cut * 8 >= offset as usize {
+                        let mut b = Bits::new(&w.bytes[..cut]);
+                        b.get(offset).unwrap();
+                        assert!(b.rice_run(k, &mut out).is_err());
+                    }
+                }
+            }
+        }
+        // Values above u32 are corrupt even when the code fits one word.
+        let mut w = crate::bits::BeWriter::new();
+        w.unary(3);
+        w.put(31, 0);
+        w.put(64, 0);
+        let mut b = Bits::new(&w.bytes);
+        assert!(b.rice_run(31, &mut [0]).is_err());
     }
     #[test]
     fn cached_reads_match_independent_bits_at_all_boundaries() {

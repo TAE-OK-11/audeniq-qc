@@ -1,0 +1,10 @@
+/home/user/audeniq-qc/reference-target/debug/deps/symphonia_bundle_flac-37892e92e92c2cf9.d: /root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/symphonia-bundle-flac-0.5.5/src/lib.rs /root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/symphonia-bundle-flac-0.5.5/src/decoder.rs /root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/symphonia-bundle-flac-0.5.5/src/demuxer.rs /root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/symphonia-bundle-flac-0.5.5/src/frame.rs /root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/symphonia-bundle-flac-0.5.5/src/parser.rs /root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/symphonia-bundle-flac-0.5.5/src/validate.rs
+
+/home/user/audeniq-qc/reference-target/debug/deps/libsymphonia_bundle_flac-37892e92e92c2cf9.rmeta: /root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/symphonia-bundle-flac-0.5.5/src/lib.rs /root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/symphonia-bundle-flac-0.5.5/src/decoder.rs /root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/symphonia-bundle-flac-0.5.5/src/demuxer.rs /root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/symphonia-bundle-flac-0.5.5/src/frame.rs /root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/symphonia-bundle-flac-0.5.5/src/parser.rs /root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/symphonia-bundle-flac-0.5.5/src/validate.rs
+
+/root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/symphonia-bundle-flac-0.5.5/src/lib.rs:
+/root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/symphonia-bundle-flac-0.5.5/src/decoder.rs:
+/root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/symphonia-bundle-flac-0.5.5/src/demuxer.rs:
+/root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/symphonia-bundle-flac-0.5.5/src/frame.rs:
+/root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/symphonia-bundle-flac-0.5.5/src/parser.rs:
+/root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/symphonia-bundle-flac-0.5.5/src/validate.rs:

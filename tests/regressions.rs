@@ -345,3 +345,81 @@ fn fused_conversion_qc_and_fingerprint_match_separate_analysis() {
     .is_err());
     assert!(!output.exists());
 }
+#[test]
+fn encoder_models_stereo_modes_and_wasted_bits_round_trip() {
+    // Independent WAV writer: these fixtures exercise wasted bits (16-bit
+    // content in 24-bit containers), every stereo assignment (identical,
+    // antiphase, one silent channel, independent), mono, tiny/odd tails,
+    // full-scale extremes and noise, at every compression level.
+    fn wav(path: &Path, channels: u16, depth: u16, samples: &[i32]) {
+        let bytes = (depth / 8) as usize;
+        let data = samples.len() * bytes;
+        let mut out = Vec::with_capacity(44 + data);
+        out.extend_from_slice(b"RIFF");
+        out.extend_from_slice(&(36 + data as u32 + (data as u32 & 1)).to_le_bytes());
+        out.extend_from_slice(b"WAVEfmt ");
+        out.extend_from_slice(&16u32.to_le_bytes());
+        out.extend_from_slice(&1u16.to_le_bytes());
+        out.extend_from_slice(&channels.to_le_bytes());
+        out.extend_from_slice(&48000u32.to_le_bytes());
+        out.extend_from_slice(&(48000 * channels as u32 * bytes as u32).to_le_bytes());
+        out.extend_from_slice(&(channels * bytes as u16).to_le_bytes());
+        out.extend_from_slice(&depth.to_le_bytes());
+        out.extend_from_slice(b"data");
+        out.extend_from_slice(&(data as u32).to_le_bytes());
+        for &s in samples {
+            out.extend_from_slice(&s.to_le_bytes()[..bytes]);
+        }
+        if data % 2 == 1 {
+            out.push(0);
+        }
+        std::fs::write(path, out).unwrap();
+    }
+    let d = Dir::new();
+    let mut seed = 1729u64;
+    let mut noise = move || {
+        seed ^= seed << 13;
+        seed ^= seed >> 7;
+        seed ^= seed << 17;
+        seed as i32
+    };
+    for (name, channels, depth, frames) in [
+        ("identical", 2u16, 24u16, 9001usize),
+        ("antiphase", 2, 24, 4609),
+        ("left-silent", 2, 16, 4608),
+        ("independent", 2, 24, 13),
+        ("wasted", 2, 24, 7000),
+        ("mono-wasted", 1, 24, 5000),
+        ("extremes", 2, 16, 4700),
+        ("noise", 1, 24, 3),
+    ] {
+        let max = (1i32 << (depth - 1)) - 1;
+        let mut samples = Vec::with_capacity(frames * channels as usize);
+        for i in 0..frames {
+            let tone = ((i as f64 * 0.031).sin() * max as f64 * 0.6) as i32;
+            let row: [i32; 2] = match name {
+                "identical" => [tone, tone],
+                "antiphase" => [tone, -tone],
+                "left-silent" => [0, tone],
+                "wasted" | "mono-wasted" => [tone & !0xff, (tone / 3) & !0xff],
+                "extremes" => [if i % 2 == 0 { max } else { -max - 1 }, -max - 1],
+                _ => [noise() >> (33 - depth), noise() >> (33 - depth)],
+            };
+            samples.extend_from_slice(&row[..channels as usize]);
+        }
+        let src = d.0.join(format!("{name}.wav"));
+        wav(&src, channels, depth, &samples);
+        let (_, expected, count) = pcm_sha256(&src, Limits::default(), Backend::Scalar).unwrap();
+        for level in 0..=8 {
+            for backend in [Backend::Scalar, Backend::detect()] {
+                let out = d.0.join(format!("{name}-{level}-{backend:?}.flac"));
+                let result =
+                    flac::convert_with_level(&src, &out, Limits::default(), backend, Some(level))
+                        .unwrap();
+                assert_eq!(result.pcm_sha256, expected, "{name} level {level}");
+                let (_, hash, n) = pcm_sha256(&out, Limits::default(), backend).unwrap();
+                assert_eq!((hash, n), (expected.clone(), count), "{name} {level}");
+            }
+        }
+    }
+}

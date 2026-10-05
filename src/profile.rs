@@ -17,6 +17,7 @@ pub(crate) enum Stage {
     SourceHash,
     Qc,
     OutputVerify,
+    FrameVerify,
 }
 pub(crate) struct Guard {
     #[cfg(feature = "profile-native")]
@@ -69,7 +70,7 @@ static ALAC_SAMPLES: [std::sync::atomic::AtomicU64; 32] =
 static COUNTERS: [std::sync::atomic::AtomicU64; 7] =
     [const { std::sync::atomic::AtomicU64::new(0) }; 7];
 #[cfg(feature = "profile-native")]
-const COUNT: usize = 14;
+const COUNT: usize = 15;
 #[cfg(feature = "profile-native")]
 static NS: [std::sync::atomic::AtomicU64; COUNT] =
     [const { std::sync::atomic::AtomicU64::new(0) }; COUNT];
@@ -102,6 +103,7 @@ pub fn report() -> serde_json::Value {
         "source_hash",
         "qc",
         "output_verify",
+        "frame_verify",
     ];
     let stages: serde_json::Map<String, serde_json::Value> = names.iter().enumerate().map(|(i, &name)| {
         (name.into(), serde_json::json!({"calls": CALLS[i].load(Relaxed), "wall_ns": NS[i].load(Relaxed)}))

@@ -341,6 +341,8 @@ struct Encoder {
     dot: Dot64Kernel,
     lpc: LpcKernel,
     rice: RiceKernel,
+    #[cfg(not(feature = "reference-codecs"))]
+    backend: Backend,
     profile: Profile,
     raw: Vec<u8>,
     frame_buffer: Vec<u8>,
@@ -348,9 +350,7 @@ struct Encoder {
     planner: Planner,
     log: FrameLog,
     #[cfg(not(feature = "reference-codecs"))]
-    verify_planes: [Vec<i32>; 2],
-    #[cfg(not(feature = "reference-codecs"))]
-    verify_out: Vec<i32>,
+    verify: crate::flac_decode::VerifyScratch,
 }
 impl Encoder {
     fn new(
@@ -378,6 +378,8 @@ impl Encoder {
             dot: Dot64Kernel::new(backend),
             lpc: LpcKernel::new(backend),
             rice: RiceKernel::new(backend),
+            #[cfg(not(feature = "reference-codecs"))]
+            backend,
             profile,
             raw: Vec::with_capacity(raw_capacity),
             frame_buffer: Vec::with_capacity(raw_capacity + 128),
@@ -385,9 +387,7 @@ impl Encoder {
             planner: Planner::default(),
             log: FrameLog::default(),
             #[cfg(not(feature = "reference-codecs"))]
-            verify_planes: std::array::from_fn(|_| Vec::new()),
-            #[cfg(not(feature = "reference-codecs"))]
-            verify_out: Vec::new(),
+            verify: Default::default(),
         })
     }
     fn push(&mut self, samples: &[i32]) -> Result<()> {
@@ -522,25 +522,26 @@ impl Encoder {
         }
         self.min_frame = self.min_frame.min(bw.bytes.len());
         self.max_frame = self.max_frame.max(bw.bytes.len());
-        // Decode the complete frame (header CRC8, subframes, frame CRC16)
-        // and require the exact source block before any byte is written.
+        // Parse the complete frame (header CRC8, subframes, frame CRC16) and
+        // require that it decodes to the exact source block before any byte
+        // is written; see `flac_decode::verify` for the equivalence argument.
         #[cfg(not(feature = "reference-codecs"))]
         {
             let _profile = crate::profile::scope(crate::profile::Stage::FrameVerify);
-            let verified = crate::flac_decode::decode(
+            let verified = crate::flac_decode::verify(
                 &bw.bytes,
                 &self.spec,
                 self.profile.block,
-                &mut self.verify_planes,
-                &mut self.verify_out,
+                samples,
+                &mut self.verify,
+                self.backend,
             );
             if !verified.is_ok_and(|(length, header)| {
                 length == bw.bytes.len()
                     && header.samples == n
                     && header.number == self.number
                     && !header.variable
-            }) || self.verify_out[..] != *samples
-            {
+            }) {
                 return Err(Error::Invalid("lossless frame verification"));
             }
         }
@@ -1126,5 +1127,181 @@ fn utf8(bw: &mut BeWriter, n: u64) {
     bw.put(8, first | (n >> remaining));
     for i in (0..len - 1).rev() {
         bw.put(8, 0x80 | ((n >> (i * 6)) & 63));
+    }
+}
+
+#[cfg(all(test, not(feature = "reference-codecs")))]
+mod tests {
+    use super::*;
+
+    fn rng(seed: &mut u64) -> u64 {
+        *seed = seed.wrapping_add(0x9e3779b97f4a7c15);
+        let mut z = *seed;
+        z = (z ^ (z >> 30)).wrapping_mul(0xbf58476d1ce4e5b9);
+        z = (z ^ (z >> 27)).wrapping_mul(0x94d049bb133111eb);
+        z ^ (z >> 31)
+    }
+
+    /// Left-aligned interleaved source blocks covering every subframe type the
+    /// encoder emits: constant, verbatim (noise), fixed and LPC (tones),
+    /// wasted bits, extremes and all stereo assignments.
+    fn blocks(channels: usize, depth: u32, n: usize, seed: &mut u64) -> Vec<Vec<i32>> {
+        let shift = 32 - depth;
+        let max = (1i64 << (depth - 1)) - 1;
+        let mut out = Vec::new();
+        for kind in 0..9 {
+            let mut block = Vec::with_capacity(n * channels);
+            for i in 0..n {
+                let t = i as f64 / 48000.0;
+                for ch in 0..channels {
+                    let tone = (t * std::f64::consts::TAU * (440.0 + 97.0 * ch as f64)).sin();
+                    let v: i64 = match kind {
+                        0 => 1234,
+                        1 => (rng(seed) as i64 >> 20) % max,
+                        2 => (tone * 0.4 * max as f64) as i64,
+                        3 => ((tone * 0.3 * max as f64) as i64 >> 4) << 4,
+                        4 => {
+                            if (i / 7) % 2 == 0 {
+                                max
+                            } else {
+                                -max - 1
+                            }
+                        }
+                        5 => (tone * 0.4 * max as f64) as i64 * if ch == 0 { 1 } else { -1 },
+                        6 => (tone * 0.4 * max as f64) as i64 + (rng(seed) % 9) as i64,
+                        7 => {
+                            let left = (tone * 0.5 * max as f64) as i64;
+                            if ch == 0 {
+                                left
+                            } else {
+                                left / 2 + (rng(seed) % 64) as i64
+                            }
+                        }
+                        _ => ((t * std::f64::consts::TAU * 3000.0).sin() * 0.9 * max as f64) as i64,
+                    };
+                    block.push((v.clamp(-max - 1, max) as i32) << shift);
+                }
+            }
+            out.push(block);
+        }
+        out
+    }
+
+    fn decoded_matches(frame: &[u8], spec: &AudioSpec, block: usize, samples: &[i32]) -> bool {
+        let mut planes = std::array::from_fn(|_| Vec::new());
+        let mut out = Vec::new();
+        crate::flac_decode::decode(frame, spec, block, &mut planes, &mut out)
+            .is_ok_and(|(length, _)| length == frame.len())
+            && out[..] == *samples
+    }
+
+    fn verified(
+        frame: &[u8],
+        spec: &AudioSpec,
+        block: usize,
+        samples: &[i32],
+        scratch: &mut crate::flac_decode::VerifyScratch,
+    ) -> bool {
+        crate::flac_decode::verify(frame, spec, block, samples, scratch, Backend::detect())
+            .is_ok_and(|(length, _)| length == frame.len())
+    }
+
+    #[test]
+    fn residual_check_verification_accepts_exactly_what_decoding_reproduces() {
+        let dir = std::env::temp_dir().join(format!("audeniq-verify-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let mut seed = 1729u64;
+        let mut scratch = Default::default();
+        let mut checked = 0;
+        let mut decodable_mismatches = 0;
+        for channels in [1u16, 2] {
+            for depth in [16u16, 24] {
+                for level in [0u8, 3, 5, 8] {
+                    let spec = AudioSpec {
+                        container: "wav".into(),
+                        codec: "pcm".into(),
+                        sample_rate: 48000,
+                        channels,
+                        bits_per_sample: depth,
+                        frames: None,
+                    };
+                    let profile = Profile::new(level).unwrap();
+                    let path = dir.join(format!("{channels}-{depth}-{level}.flac"));
+                    let _ = std::fs::remove_file(&path);
+                    let file = File::create(&path).unwrap();
+                    let mut encoder = Encoder::new(
+                        file,
+                        spec.clone(),
+                        Limits::default(),
+                        Backend::detect(),
+                        profile,
+                    )
+                    .unwrap();
+                    for n in [profile.block, 17, 1] {
+                        for samples in blocks(channels as usize, depth as u32, n, &mut seed) {
+                            encoder.write_block(&samples).unwrap();
+                            let frame = encoder.frame_buffer.clone();
+                            let block = profile.block;
+                            assert!(decoded_matches(&frame, &spec, block, &samples));
+                            assert!(verified(&frame, &spec, block, &samples, &mut scratch));
+                            // CRC-repaired bit flips: both must agree on
+                            // acceptance (a flip that still decodes to the
+                            // source is accepted by both).
+                            for _ in 0..48 {
+                                let mut bad = frame.clone();
+                                let bit = rng(&mut seed) as usize % ((bad.len() - 2) * 8);
+                                bad[bit / 8] ^= 0x80 >> (bit % 8);
+                                let end = bad.len() - 2;
+                                let crc = crate::bits::crc16(&bad[..end]);
+                                bad[end..].copy_from_slice(&crc.to_be_bytes());
+                                assert_eq!(
+                                    verified(&bad, &spec, block, &samples, &mut scratch),
+                                    decoded_matches(&bad, &spec, block, &samples),
+                                    "bit {bit} channels={channels} depth={depth} level={level}"
+                                );
+                                checked += 1;
+                                // Count flips that parse and decode, but to
+                                // different PCM: only the sample check sees them.
+                                let mut planes = std::array::from_fn(|_| Vec::new());
+                                let mut out = Vec::new();
+                                if crate::flac_decode::decode(
+                                    &bad,
+                                    &spec,
+                                    block,
+                                    &mut planes,
+                                    &mut out,
+                                )
+                                .is_ok()
+                                    && out[..] != *samples
+                                {
+                                    decodable_mismatches += 1;
+                                }
+                            }
+                            // Source perturbations: a different sample, or a
+                            // set low bit below the declared depth.
+                            for delta in [1i32 << (32 - depth), 1] {
+                                let mut other = samples.clone();
+                                let i = rng(&mut seed) as usize % other.len();
+                                other[i] = other[i].wrapping_add(delta);
+                                assert!(!verified(&frame, &spec, block, &other, &mut scratch));
+                                assert!(!decoded_matches(&frame, &spec, block, &other));
+                            }
+                            for cut in [0, 1, frame.len() / 2, frame.len() - 1] {
+                                assert!(!verified(
+                                    &frame[..cut],
+                                    &spec,
+                                    block,
+                                    &samples,
+                                    &mut scratch
+                                ));
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        std::fs::remove_dir_all(&dir).unwrap();
+        assert!(checked > 10_000);
+        assert!(decodable_mismatches > 1_000, "{decodable_mismatches}");
     }
 }

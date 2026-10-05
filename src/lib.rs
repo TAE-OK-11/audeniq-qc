@@ -24,6 +24,8 @@ mod profile;
 mod sha256;
 #[cfg(feature = "profile-native")]
 pub use profile::report as native_profile;
+/// The canonical PCM SHA-256 implementation, shared with the tools crate.
+pub use sha256::Sha256;
 pub mod resample;
 mod tta;
 mod wavpack;

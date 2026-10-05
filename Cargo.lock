@@ -31,8 +31,8 @@ dependencies = [
 name = "audeniq-qc-tools"
 version = "0.1.0"
 dependencies = [
+ "audeniq-qc",
  "serde_json",
- "sha2",
 ]
 
 [[package]]

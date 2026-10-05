@@ -136,7 +136,7 @@ pub fn execute(options: &Options) -> Result<Value> {
                 let actual = if format == "wav" {
                     oracle_hash(&output)?
                 } else {
-                    file_sha(&output)?
+                    raw_oracle_hash(&output, rate, channels)?
                 };
                 verify!(actual == expected, "independent PCM export hash");
             }

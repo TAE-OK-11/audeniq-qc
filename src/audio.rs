@@ -1,8 +1,8 @@
 #[cfg(not(feature = "reference-codecs"))]
 use crate::compressed::Compressed;
-use crate::{kernels::Backend, AudioSpec, Error, Limits, Result};
 #[cfg(feature = "reference-codecs")]
-use md5::{Digest as _, Md5};
+use crate::md5::Md5;
+use crate::{kernels::Backend, AudioSpec, Error, Limits, Result};
 use std::{
     fs::File,
     io::{Read, Seek, SeekFrom},
@@ -573,7 +573,7 @@ impl Compressed {
                     return Err(Error::Invalid("FLAC MD5 mismatch"));
                 }
                 if let Some((md5, expected)) = self.pcm_md5.take() {
-                    let actual: [u8; 16] = md5.finalize().into();
+                    let actual: [u8; 16] = md5.finalize();
                     if actual != expected {
                         return Err(Error::Invalid("FLAC MD5 mismatch"));
                     }

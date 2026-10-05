@@ -2,8 +2,8 @@
 //! ported/reworked from FFmpeg flac.c, flacdec.c, flacdsp.c (LGPL-2.1-or-later).
 //! Copyright (c) 2003 Alex Beregszaszi; (c) 2012 Mans Rullgard.
 //! See THIRD_PARTY.md.
+use crate::md5::Md5;
 use crate::{kernels::Backend, msb::Bits, AudioSpec, Error, Limits, Result};
-use md5::{Digest, Md5};
 use std::{
     fs::File,
     io::{Read, Seek, SeekFrom},

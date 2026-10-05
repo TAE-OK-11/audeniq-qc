@@ -10,6 +10,7 @@ pub mod flac;
 mod flac_decode;
 pub mod kernels;
 mod m4a;
+mod md5;
 pub mod meter;
 mod mp4;
 #[cfg(not(feature = "reference-codecs"))]

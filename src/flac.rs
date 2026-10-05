@@ -6,13 +6,13 @@
 // streaming MD5/PCM SHA256, verified output and atomic no-clobber publication.
 #[cfg(feature = "reference-codecs")]
 use crate::audio::pcm_sha256;
+use crate::md5::Md5;
 use crate::{
     audio::AudioReader,
     bits::{crc16, crc8, BeWriter},
     kernels::{Backend, Dot64Kernel, LpcKernel, RiceKernel},
     AudioSpec, Error, Limits, Result,
 };
-use md5::{Digest as _, Md5};
 use serde::Serialize;
 use sha2::{Digest, Sha256};
 use std::{

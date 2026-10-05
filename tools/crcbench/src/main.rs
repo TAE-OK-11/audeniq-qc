@@ -33,8 +33,7 @@ fn main() {
     }
     #[cfg(target_arch = "aarch64")]
     {
-        if Engine::detect() == Engine::PmullEor3 {
-            engines.push(Engine::Pmull);
+        if std::arch::is_aarch64_feature_detected!("sha3") {
             cands.push(("arm8-eor3".into(), Box::new(|d: &[u8]| unsafe { arm8::crc32(d) })));
         }
     }

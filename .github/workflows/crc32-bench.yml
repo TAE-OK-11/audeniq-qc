@@ -37,4 +37,4 @@ jobs:
           ffmpeg -loglevel error -f lavfi -i "anoisesrc=color=pink:amplitude=0.3:sample_rate=44100:duration=240" -f lavfi -i "sine=frequency=220:sample_rate=44100:duration=240" -filter_complex "[0][1]amerge=inputs=2" -ac 2 -c:a flac -sample_fmt s16 /tmp/b/s44.flac
           ffmpeg -loglevel error -f lavfi -i "anoisesrc=color=pink:amplitude=0.3:sample_rate=96000:duration=180" -f lavfi -i "sine=frequency=220:sample_rate=96000:duration=180" -filter_complex "[0][1]amerge=inputs=2" -ac 2 -c:a flac -sample_fmt s32 -bits_per_raw_sample 24 /tmp/b/s96.flac
           ls -la /tmp/b
-          BENCH_TMP=/tmp/b python3 tools/crcbench/paired.py 41 /tmp/old /tmp/new /tmp/b/s44.flac /tmp/b/s96.flac
+          BENCH_TMP=/tmp/b python3 tools/crcbench/paired.py 61 /tmp/old /tmp/new /tmp/b/s44.flac /tmp/b/s96.flac

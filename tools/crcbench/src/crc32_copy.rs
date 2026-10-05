@@ -105,6 +105,8 @@ pub(crate) enum Engine {
     Avx512,
     #[cfg(target_arch = "aarch64")]
     Pmull,
+    #[cfg(target_arch = "aarch64")]
+    PmullEor3,
 }
 
 impl Engine {
@@ -124,6 +126,9 @@ impl Engine {
         if std::arch::is_aarch64_feature_detected!("pmull")
             && std::arch::is_aarch64_feature_detected!("crc")
         {
+            if std::arch::is_aarch64_feature_detected!("sha3") {
+                return Self::PmullEor3;
+            }
             return Self::Pmull;
         }
         Self::Portable
@@ -165,6 +170,8 @@ impl Crc32 {
                 Engine::Avx512 => x86::update_avx512(self.c, data),
                 #[cfg(target_arch = "aarch64")]
                 Engine::Pmull => arm::update_pmull(self.c, data),
+                #[cfg(target_arch = "aarch64")]
+                Engine::PmullEor3 => arm::update_pmull_eor3(self.c, data),
             }
         };
     }
@@ -400,15 +407,19 @@ mod arm {
     unsafe fn load(data: &[u8]) -> uint8x16_t {
         vld1q_u8(data.as_ptr())
     }
+    /// clmul(a.lo, k.lo) ^ clmul(a.hi, k.hi) ^ b, with the three-way XOR
+    /// of the SHA3 extension when `EOR3`.
     #[inline(always)]
-    unsafe fn fold(a: uint8x16_t, b: uint8x16_t, k: (u64, u64)) -> uint8x16_t {
+    unsafe fn fold<const EOR3: bool>(a: uint8x16_t, b: uint8x16_t, k: (u64, u64)) -> uint8x16_t {
         let a = vreinterpretq_p64_u8(a);
-        let lo = vmull_p64(vgetq_lane_p64::<0>(a), k.0);
-        let hi = vmull_p64(vgetq_lane_p64::<1>(a), k.1);
-        veorq_u8(
-            veorq_u8(vreinterpretq_u8_p128(lo), vreinterpretq_u8_p128(hi)),
-            b,
-        )
+        let lo = vreinterpretq_u8_p128(vmull_p64(vgetq_lane_p64::<0>(a), k.0));
+        let hi = vreinterpretq_u8_p128(vmull_p64(vgetq_lane_p64::<1>(a), k.1));
+        if EOR3 {
+            // Only instantiated inside `update_pmull_eor3` (SHA3 enabled).
+            veor3q_u8(lo, hi, b)
+        } else {
+            veorq_u8(veorq_u8(lo, hi), b)
+        }
     }
 
     #[target_feature(enable = "crc")]
@@ -424,7 +435,16 @@ mod arm {
     }
 
     #[target_feature(enable = "neon,aes,crc")]
-    pub(super) unsafe fn update_pmull(c: u32, mut data: &[u8]) -> u32 {
+    pub(super) unsafe fn update_pmull(c: u32, data: &[u8]) -> u32 {
+        update::<false>(c, data)
+    }
+    #[target_feature(enable = "neon,aes,crc,sha3")]
+    pub(super) unsafe fn update_pmull_eor3(c: u32, data: &[u8]) -> u32 {
+        update::<true>(c, data)
+    }
+
+    #[inline(always)]
+    unsafe fn update<const EOR3: bool>(c: u32, mut data: &[u8]) -> u32 {
         if data.len() < MIN_FOLD {
             return crc_bytes(c, data);
         }
@@ -435,18 +455,18 @@ mod arm {
         let mut x3 = load(&data[48..]);
         data = &data[64..];
         while data.len() >= 64 {
-            x0 = fold(x0, load(data), k::D512);
-            x1 = fold(x1, load(&data[16..]), k::D512);
-            x2 = fold(x2, load(&data[32..]), k::D512);
-            x3 = fold(x3, load(&data[48..]), k::D512);
+            x0 = fold::<EOR3>(x0, load(data), k::D512);
+            x1 = fold::<EOR3>(x1, load(&data[16..]), k::D512);
+            x2 = fold::<EOR3>(x2, load(&data[32..]), k::D512);
+            x3 = fold::<EOR3>(x3, load(&data[48..]), k::D512);
             data = &data[64..];
         }
         let mut x = veorq_u8(
-            fold(x0, x3, k::D384),
-            fold(x1, fold(x2, vdupq_n_u8(0), k::D128), k::D256),
+            fold::<EOR3>(x0, x3, k::D384),
+            fold::<EOR3>(x1, fold::<EOR3>(x2, vdupq_n_u8(0), k::D128), k::D256),
         );
         while data.len() >= 16 {
-            x = fold(x, load(data), k::D128);
+            x = fold::<EOR3>(x, load(data), k::D128);
             data = &data[16..];
         }
         let x = vreinterpretq_u64_u8(x);
@@ -469,6 +489,10 @@ mod tests {
         #[cfg(target_arch = "x86_64")]
         if detected == Engine::Avx512 {
             engines.push(Engine::Avx2);
+        }
+        #[cfg(target_arch = "aarch64")]
+        if detected == Engine::PmullEor3 {
+            engines.push(Engine::Pmull);
         }
         if !engines.contains(&detected) {
             engines.push(detected);

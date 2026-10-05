@@ -3,6 +3,8 @@
 mod crc32;
 #[cfg(target_arch = "x86_64")]
 mod ref_kernels;
+#[cfg(target_arch = "aarch64")]
+mod arm8;
 use crc32::{Crc32, Engine};
 use std::time::Instant;
 
@@ -28,6 +30,13 @@ fn main() {
     {
         if Engine::detect() != Engine::Portable { engines.push(Engine::Pclmul); }
         if matches!(Engine::detect(), Engine::Avx512) { engines.push(Engine::Avx2); }
+    }
+    #[cfg(target_arch = "aarch64")]
+    {
+        if Engine::detect() == Engine::PmullEor3 {
+            engines.push(Engine::Pmull);
+            cands.push(("arm8-eor3".into(), Box::new(|d: &[u8]| unsafe { arm8::crc32(d) })));
+        }
     }
     engines.dedup();
     for e in engines {

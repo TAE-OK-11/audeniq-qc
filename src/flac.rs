@@ -341,6 +341,8 @@ struct Encoder {
     dot: Dot64Kernel,
     lpc: LpcKernel,
     rice: RiceKernel,
+    #[cfg(not(feature = "reference-codecs"))]
+    backend: Backend,
     profile: Profile,
     raw: Vec<u8>,
     frame_buffer: Vec<u8>,
@@ -348,9 +350,7 @@ struct Encoder {
     planner: Planner,
     log: FrameLog,
     #[cfg(not(feature = "reference-codecs"))]
-    verify_planes: [Vec<i32>; 2],
-    #[cfg(not(feature = "reference-codecs"))]
-    verify_out: Vec<i32>,
+    verify: crate::flac_decode::VerifyScratch,
 }
 impl Encoder {
     fn new(
@@ -378,16 +378,19 @@ impl Encoder {
             dot: Dot64Kernel::new(backend),
             lpc: LpcKernel::new(backend),
             rice: RiceKernel::new(backend),
+            #[cfg(not(feature = "reference-codecs"))]
+            backend,
             profile,
             raw: Vec::with_capacity(raw_capacity),
             frame_buffer: Vec::with_capacity(raw_capacity + 128),
             channel_buffers: std::array::from_fn(|_| Vec::new()),
-            planner: Planner::default(),
+            planner: Planner {
+                fixed_sums: vec![[0; PARTITIONS]; 5],
+                ..Default::default()
+            },
             log: FrameLog::default(),
             #[cfg(not(feature = "reference-codecs"))]
-            verify_planes: std::array::from_fn(|_| Vec::new()),
-            #[cfg(not(feature = "reference-codecs"))]
-            verify_out: Vec::new(),
+            verify: Default::default(),
         })
     }
     fn push(&mut self, samples: &[i32]) -> Result<()> {
@@ -446,13 +449,12 @@ impl Encoder {
             rice: &self.rice,
             profile: self.profile,
         };
-        let planner = &mut self.planner;
         // FLAC channel assignment: 1 = L/R, 8 = left/side, 9 = side/right,
         // 10 = mid/side; side carries one extra bit. As in FFmpeg's flacenc,
         // second-order fixed residual sums estimate all four pairs, and only
         // the two subframes of the cheapest pair are planned.
-        let (assignment, first, second) = if channels == 1 {
-            (0u64, Plan::new(left, depth, &ctx, planner), None)
+        let (assignment, subframes) = if channels == 1 {
+            (0u64, [Some((0, depth)), None])
         } else {
             mid.resize(n, 0);
             side.resize(n, 0);
@@ -480,22 +482,13 @@ impl Encoder {
             );
             let costs = [l + r, l + d, d + r, m + d];
             let best = (0..4).min_by_key(|&i| costs[i]).unwrap();
-            let (assignment, a, b, a_depth, b_depth) = match best {
-                0 => (1, left, right, depth, depth),
-                1 => (8, left, side, depth, depth + 1),
-                2 => (9, side, right, depth + 1, depth),
-                _ => (10, mid, side, depth, depth + 1),
-            };
-            let first = Plan::new(a, a_depth, &ctx, planner);
-            let second = Plan::new(b, b_depth, &ctx, planner);
-            (assignment, first, Some(second))
-        };
-        let [left, right, mid, side] = &self.channel_buffers;
-        let (a, b): (&[i32], &[i32]) = match assignment {
-            0 | 1 => (left, right),
-            8 => (left, side),
-            9 => (side, right),
-            _ => (mid, side),
+            // Indices into channel_buffers: left, right, mid, side.
+            match best {
+                0 => (1, [Some((0, depth)), Some((1, depth))]),
+                1 => (8, [Some((0, depth)), Some((3, depth + 1))]),
+                2 => (9, [Some((3, depth + 1)), Some((1, depth))]),
+                _ => (10, [Some((2, depth)), Some((3, depth + 1))]),
+            }
         };
         let mut bw = BeWriter::reuse(std::mem::take(&mut self.frame_buffer));
         bw.put(16, 0xfff8);
@@ -508,10 +501,14 @@ impl Encoder {
         bw.put(16, (n - 1) as u64);
         let crc = crc8(&bw.bytes);
         bw.put(8, crc as u64);
+        // The header does not depend on subframe contents, so each subframe
+        // is planned and written in turn: only one planned model (and its
+        // stored residual) is alive at a time.
         let planner = &mut self.planner;
-        first.write(&mut bw, a, &ctx, planner)?;
-        if let Some(second) = second {
-            second.write(&mut bw, b, &ctx, planner)?;
+        for (index, subframe_depth) in subframes.into_iter().flatten() {
+            let samples = &mut self.channel_buffers[index];
+            let plan = Plan::new(samples, subframe_depth, &ctx, planner);
+            plan.write(&mut bw, samples, &ctx, planner)?;
         }
         bw.align();
         let crc = crc16(&bw.bytes);
@@ -522,25 +519,26 @@ impl Encoder {
         }
         self.min_frame = self.min_frame.min(bw.bytes.len());
         self.max_frame = self.max_frame.max(bw.bytes.len());
-        // Decode the complete frame (header CRC8, subframes, frame CRC16)
-        // and require the exact source block before any byte is written.
+        // Parse the complete frame (header CRC8, subframes, frame CRC16) and
+        // require that it decodes to the exact source block before any byte
+        // is written; see `flac_decode::verify` for the equivalence argument.
         #[cfg(not(feature = "reference-codecs"))]
         {
             let _profile = crate::profile::scope(crate::profile::Stage::FrameVerify);
-            let verified = crate::flac_decode::decode(
+            let verified = crate::flac_decode::verify(
                 &bw.bytes,
                 &self.spec,
                 self.profile.block,
-                &mut self.verify_planes,
-                &mut self.verify_out,
+                samples,
+                &mut self.verify,
+                self.backend,
             );
             if !verified.is_ok_and(|(length, header)| {
                 length == bw.bytes.len()
                     && header.samples == n
                     && header.number == self.number
                     && !header.variable
-            }) || self.verify_out[..] != *samples
-            {
+            }) {
                 return Err(Error::Invalid("lossless frame verification"));
             }
         }
@@ -724,6 +722,46 @@ fn fixed_sum(x: &[i32], order: usize, start: usize, end: usize) -> u64 {
     total
 }
 
+/// `sums[order][i] == fixed_sum(x, order, max(i * size, order), (i + 1) * size)`
+/// for every order 0..=4, from one traversal instead of five. Residuals are
+/// formed as repeated differences of the same samples, which equal the
+/// direct fixed-predictor formulas as integers (no intermediate exceeds the
+/// order-4 residual bound), so every sum and planning decision is unchanged.
+fn fixed_partition_sums(x: &[i32], size: usize, parts: usize, sums: &mut [[u64; PARTITIONS]]) {
+    for i in 0..parts {
+        let (lo, hi) = (i * size, (i + 1) * size);
+        let mut acc = [0u64; 5];
+        // Order k has residuals only from sample k; before sample 4 the
+        // orders are summed separately (first partition only).
+        let start = lo.max(4).min(hi);
+        for (order, acc) in acc.iter_mut().enumerate() {
+            if lo.max(order) < start {
+                *acc = fixed_sum(x, order, lo.max(order), start);
+            }
+        }
+        let [a0, a1, a2, a3, a4] = &mut acc;
+        for ((((&a, &b), &c), &d), &e) in x[start..hi]
+            .iter()
+            .zip(&x[start - 1..hi - 1])
+            .zip(&x[start - 2..hi - 2])
+            .zip(&x[start - 3..hi - 3])
+            .zip(&x[start - 4..hi - 4])
+        {
+            let (d1, d1b, d1c, d1d) = (a - b, b - c, c - d, d - e);
+            let (d2, d2b, d2c) = (d1 - d1b, d1b - d1c, d1c - d1d);
+            let (d3, d3b) = (d2 - d2b, d2b - d2c);
+            *a0 += fold(a) as u64;
+            *a1 += fold(d1) as u64;
+            *a2 += fold(d2) as u64;
+            *a3 += fold(d3) as u64;
+            *a4 += fold(d3 - d3b) as u64;
+        }
+        for (sums, total) in sums.iter_mut().zip(acc) {
+            sums[i] = total;
+        }
+    }
+}
+
 #[derive(Clone)]
 enum Mode {
     Constant,
@@ -737,6 +775,8 @@ enum Mode {
         order: usize,
         shift: u32,
         rice: Box<Rice>,
+        /// Folded residuals stored while the model was costed, if they were.
+        residual: Option<Vec<u32>>,
     },
 }
 #[derive(Clone)]
@@ -758,6 +798,7 @@ struct Planner {
     windowed: Vec<f64>,
     residuals: Vec<Vec<u32>>,
     sums: Vec<u64>,
+    fixed_sums: Vec<[u64; PARTITIONS]>,
 }
 impl Planner {
     fn residual(&mut self) -> Vec<u32> {
@@ -848,13 +889,23 @@ impl Plan {
         let size = n >> finest;
         let parts = 1usize << finest;
         planner.sums.resize(parts, 0);
+        let fused = profile.fixed == 4 && size > 4;
+        if fused {
+            fixed_partition_sums(samples, size, parts, &mut planner.fixed_sums);
+        }
         for order in 0..=profile.fixed.min(n - 1) {
             if size <= order {
                 break;
             }
-            for (i, sum) in planner.sums.iter_mut().enumerate() {
-                let start = (i * size).max(order);
-                *sum = fixed_sum(samples, order, start, (i + 1) * size);
+            if fused {
+                planner
+                    .sums
+                    .copy_from_slice(&planner.fixed_sums[order][..parts]);
+            } else {
+                for (i, sum) in planner.sums.iter_mut().enumerate() {
+                    let start = (i * size).max(order);
+                    *sum = fixed_sum(samples, order, start, (i + 1) * size);
+                }
             }
             let rice = choose_rice(&planner.sums, n, order, finest);
             let cost = header + order as u64 * depth as u64 + rice.bits;
@@ -943,20 +994,30 @@ impl Plan {
                 found += 1;
             }
             let candidates = &mut candidates[..found];
-            if profile.level <= 5 && found > 3 {
-                // Exactly cost the highest order and the two best sampled
-                // lower orders. Ties keep the lower order (stable ranking).
+            if profile.level <= 5 && found > 2 {
+                // Exactly cost the highest order and the best sampled lower
+                // order. Ties keep the lower order (stable ranking). Costing
+                // the second-best sampled order as well saved 0.013-0.016%
+                // of real-music FLAC bytes for about 5% more conversion CPU.
                 let mut rank = [0usize; 7];
                 for (i, r) in rank.iter_mut().enumerate().take(found - 1) {
                     *r = i;
                 }
                 let rank = &mut rank[..found - 1];
                 rank.sort_by_key(|&i| candidates[i].as_ref().unwrap().estimate);
-                for &i in &rank[2..] {
+                for &i in &rank[1..] {
                     candidates[i] = None;
                 }
             }
-            for candidate in candidates.iter_mut() {
+            // Cost the highest order first and keep its residual (it wins
+            // most real-music subframes), so the writer need not recompute it;
+            // lower orders are summed only. Iterating downwards, a lower order
+            // also replaces an equal-cost LPC model, which selects the same
+            // model as ascending evaluation with strict comparisons (lowest
+            // order among equal costs; LPC must beat fixed/verbatim
+            // strictly). At most one residual buffer is held per subframe.
+            let mut stored = false;
+            for candidate in candidates.iter_mut().rev() {
                 let Some(LpcCandidate {
                     coefficients,
                     order,
@@ -966,13 +1027,35 @@ impl Plan {
                 else {
                     continue;
                 };
-                if !ctx.lpc.partition_sums(
-                    samples,
-                    &coefficients[..order],
-                    shift,
-                    size,
-                    &mut planner.sums,
-                ) {
+                let coefficients_used = &coefficients[..order];
+                let mut residual = None;
+                let valid = if stored {
+                    ctx.lpc.partition_sums(
+                        samples,
+                        coefficients_used,
+                        shift,
+                        size,
+                        &mut planner.sums,
+                    )
+                } else {
+                    stored = true;
+                    let mut buffer = planner.residual();
+                    let valid = ctx.lpc.partition_sums_into(
+                        samples,
+                        coefficients_used,
+                        shift,
+                        size,
+                        &mut planner.sums[..parts],
+                        &mut buffer,
+                    );
+                    if valid {
+                        residual = Some(buffer);
+                    } else {
+                        planner.recycle(buffer);
+                    }
+                    valid
+                };
+                if !valid {
                     continue;
                 }
                 let rice = choose_rice(&planner.sums, n, order, finest);
@@ -982,18 +1065,32 @@ impl Plan {
                     + 5
                     + order as u64 * LPC_PRECISION as u64
                     + rice.bits;
-                if cost < best.cost {
-                    best = Self {
-                        cost,
-                        depth,
-                        wasted,
-                        mode: Mode::Lpc {
-                            coefficients,
-                            order,
-                            shift,
-                            rice: Box::new(rice),
+                let lpc_best = matches!(best.mode, Mode::Lpc { .. });
+                if cost < best.cost || (lpc_best && cost == best.cost) {
+                    let replaced = std::mem::replace(
+                        &mut best,
+                        Self {
+                            cost,
+                            depth,
+                            wasted,
+                            mode: Mode::Lpc {
+                                coefficients,
+                                order,
+                                shift,
+                                rice: Box::new(rice),
+                                residual,
+                            },
                         },
-                    };
+                    );
+                    if let Mode::Lpc {
+                        residual: Some(buffer),
+                        ..
+                    } = replaced.mode
+                    {
+                        planner.recycle(buffer);
+                    }
+                } else if let Some(buffer) = residual {
+                    planner.recycle(buffer);
                 }
             }
         }
@@ -1042,6 +1139,7 @@ impl Plan {
                 order,
                 shift,
                 rice,
+                residual,
             } => {
                 header(bw, 32 + order as u64 - 1);
                 for x in &samples[..order] {
@@ -1052,15 +1150,22 @@ impl Plan {
                 for &c in &coefficients[..order] {
                     bw.put(LPC_PRECISION, c as u64);
                 }
-                let mut residual = planner.residual();
-                // Planning proved every residual of this model fits i32.
-                if ctx
-                    .lpc
-                    .residual_into(samples, &coefficients[..order], shift, &mut residual)
-                    .is_none()
-                {
-                    return Err(Error::Invalid("planned LPC residual range"));
-                }
+                let residual = match residual {
+                    // Stored while costing; every value was range-checked.
+                    Some(residual) => residual,
+                    None => {
+                        let mut residual = planner.residual();
+                        // Planning proved every residual of this model fits i32.
+                        if ctx
+                            .lpc
+                            .residual_into(samples, &coefficients[..order], shift, &mut residual)
+                            .is_none()
+                        {
+                            return Err(Error::Invalid("planned LPC residual range"));
+                        }
+                        residual
+                    }
+                };
                 write_residual(bw, &residual, samples.len(), order, &rice, ctx.rice);
                 planner.recycle(residual);
             }
@@ -1126,5 +1231,209 @@ fn utf8(bw: &mut BeWriter, n: u64) {
     bw.put(8, first | (n >> remaining));
     for i in (0..len - 1).rev() {
         bw.put(8, 0x80 | ((n >> (i * 6)) & 63));
+    }
+}
+
+#[cfg(all(test, not(feature = "reference-codecs")))]
+mod tests {
+    use super::*;
+
+    fn rng(seed: &mut u64) -> u64 {
+        *seed = seed.wrapping_add(0x9e3779b97f4a7c15);
+        let mut z = *seed;
+        z = (z ^ (z >> 30)).wrapping_mul(0xbf58476d1ce4e5b9);
+        z = (z ^ (z >> 27)).wrapping_mul(0x94d049bb133111eb);
+        z ^ (z >> 31)
+    }
+
+    /// Left-aligned interleaved source blocks covering every subframe type the
+    /// encoder emits: constant, verbatim (noise), fixed and LPC (tones),
+    /// wasted bits, extremes and all stereo assignments.
+    fn blocks(channels: usize, depth: u32, n: usize, seed: &mut u64) -> Vec<Vec<i32>> {
+        let shift = 32 - depth;
+        let max = (1i64 << (depth - 1)) - 1;
+        let mut out = Vec::new();
+        for kind in 0..9 {
+            let mut block = Vec::with_capacity(n * channels);
+            for i in 0..n {
+                let t = i as f64 / 48000.0;
+                for ch in 0..channels {
+                    let tone = (t * std::f64::consts::TAU * (440.0 + 97.0 * ch as f64)).sin();
+                    let v: i64 = match kind {
+                        0 => 1234,
+                        1 => (rng(seed) as i64 >> 20) % max,
+                        2 => (tone * 0.4 * max as f64) as i64,
+                        3 => ((tone * 0.3 * max as f64) as i64 >> 4) << 4,
+                        4 => {
+                            if (i / 7) % 2 == 0 {
+                                max
+                            } else {
+                                -max - 1
+                            }
+                        }
+                        5 => (tone * 0.4 * max as f64) as i64 * if ch == 0 { 1 } else { -1 },
+                        6 => (tone * 0.4 * max as f64) as i64 + (rng(seed) % 9) as i64,
+                        7 => {
+                            let left = (tone * 0.5 * max as f64) as i64;
+                            if ch == 0 {
+                                left
+                            } else {
+                                left / 2 + (rng(seed) % 64) as i64
+                            }
+                        }
+                        _ => ((t * std::f64::consts::TAU * 3000.0).sin() * 0.9 * max as f64) as i64,
+                    };
+                    block.push((v.clamp(-max - 1, max) as i32) << shift);
+                }
+            }
+            out.push(block);
+        }
+        out
+    }
+
+    fn decoded_matches(frame: &[u8], spec: &AudioSpec, block: usize, samples: &[i32]) -> bool {
+        let mut planes = std::array::from_fn(|_| Vec::new());
+        let mut out = Vec::new();
+        crate::flac_decode::decode(frame, spec, block, &mut planes, &mut out)
+            .is_ok_and(|(length, _)| length == frame.len())
+            && out[..] == *samples
+    }
+
+    fn verified(
+        frame: &[u8],
+        spec: &AudioSpec,
+        block: usize,
+        samples: &[i32],
+        scratch: &mut crate::flac_decode::VerifyScratch,
+    ) -> bool {
+        crate::flac_decode::verify(frame, spec, block, samples, scratch, Backend::detect())
+            .is_ok_and(|(length, _)| length == frame.len())
+    }
+
+    #[test]
+    fn fused_fixed_sums_equal_per_order_sums() {
+        let mut seed = 99u64;
+        for bits in [16u32, 17, 24, 25] {
+            let max = (1i64 << (bits - 1)) - 1;
+            for (size, parts) in [(5usize, 1usize), (18, 256), (16, 8), (4608, 1), (37, 3)] {
+                let n = size * parts;
+                for pattern in 0..3 {
+                    let x: Vec<i32> = (0..n)
+                        .map(|i| match pattern {
+                            0 => (rng(&mut seed) as i64 % (max + 1)) as i32,
+                            1 => (if i % 2 == 0 { max } else { -max - 1 }) as i32,
+                            _ => ((i as f64 * 0.01).sin() * max as f64) as i32,
+                        })
+                        .collect();
+                    let mut sums = vec![[0u64; PARTITIONS]; 5];
+                    fixed_partition_sums(&x, size, parts, &mut sums);
+                    for (order, sums) in sums.iter().enumerate() {
+                        for (i, &sum) in sums[..parts].iter().enumerate() {
+                            let start = (i * size).max(order);
+                            assert_eq!(sum, fixed_sum(&x, order, start, (i + 1) * size));
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn residual_check_verification_accepts_exactly_what_decoding_reproduces() {
+        let dir = std::env::temp_dir().join(format!("audeniq-verify-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let mut seed = 1729u64;
+        let mut scratch = Default::default();
+        let mut checked = 0;
+        let mut decodable_mismatches = 0;
+        for channels in [1u16, 2] {
+            for depth in [16u16, 24] {
+                for level in [0u8, 3, 5, 8] {
+                    let spec = AudioSpec {
+                        container: "wav".into(),
+                        codec: "pcm".into(),
+                        sample_rate: 48000,
+                        channels,
+                        bits_per_sample: depth,
+                        frames: None,
+                    };
+                    let profile = Profile::new(level).unwrap();
+                    let path = dir.join(format!("{channels}-{depth}-{level}.flac"));
+                    let _ = std::fs::remove_file(&path);
+                    let file = File::create(&path).unwrap();
+                    let mut encoder = Encoder::new(
+                        file,
+                        spec.clone(),
+                        Limits::default(),
+                        Backend::detect(),
+                        profile,
+                    )
+                    .unwrap();
+                    for n in [profile.block, 17, 1] {
+                        for samples in blocks(channels as usize, depth as u32, n, &mut seed) {
+                            encoder.write_block(&samples).unwrap();
+                            let frame = encoder.frame_buffer.clone();
+                            let block = profile.block;
+                            assert!(decoded_matches(&frame, &spec, block, &samples));
+                            assert!(verified(&frame, &spec, block, &samples, &mut scratch));
+                            // CRC-repaired bit flips: both must agree on
+                            // acceptance (a flip that still decodes to the
+                            // source is accepted by both).
+                            for _ in 0..48 {
+                                let mut bad = frame.clone();
+                                let bit = rng(&mut seed) as usize % ((bad.len() - 2) * 8);
+                                bad[bit / 8] ^= 0x80 >> (bit % 8);
+                                let end = bad.len() - 2;
+                                let crc = crate::bits::crc16(&bad[..end]);
+                                bad[end..].copy_from_slice(&crc.to_be_bytes());
+                                assert_eq!(
+                                    verified(&bad, &spec, block, &samples, &mut scratch),
+                                    decoded_matches(&bad, &spec, block, &samples),
+                                    "bit {bit} channels={channels} depth={depth} level={level}"
+                                );
+                                checked += 1;
+                                // Count flips that parse and decode, but to
+                                // different PCM: only the sample check sees them.
+                                let mut planes = std::array::from_fn(|_| Vec::new());
+                                let mut out = Vec::new();
+                                if crate::flac_decode::decode(
+                                    &bad,
+                                    &spec,
+                                    block,
+                                    &mut planes,
+                                    &mut out,
+                                )
+                                .is_ok()
+                                    && out[..] != *samples
+                                {
+                                    decodable_mismatches += 1;
+                                }
+                            }
+                            // Source perturbations: a different sample, or a
+                            // set low bit below the declared depth.
+                            for delta in [1i32 << (32 - depth), 1] {
+                                let mut other = samples.clone();
+                                let i = rng(&mut seed) as usize % other.len();
+                                other[i] = other[i].wrapping_add(delta);
+                                assert!(!verified(&frame, &spec, block, &other, &mut scratch));
+                                assert!(!decoded_matches(&frame, &spec, block, &other));
+                            }
+                            for cut in [0, 1, frame.len() / 2, frame.len() - 1] {
+                                assert!(!verified(
+                                    &frame[..cut],
+                                    &spec,
+                                    block,
+                                    &samples,
+                                    &mut scratch
+                                ));
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        std::fs::remove_dir_all(&dir).unwrap();
+        assert!(checked > 10_000);
+        assert!(decodable_mismatches > 1_000, "{decodable_mismatches}");
     }
 }

@@ -1,0 +1,29 @@
+{
+ "cases": 1600,
+ "seed": 1729,
+ "seed_files": [
+  "t01.wav",
+  "t01.m4a",
+  "t01.flac",
+  "t28.flac",
+  "t28.m4a",
+  "t60.wav",
+  "t60.flac",
+  "t63.wav",
+  "t14.flac",
+  "t46.m4a",
+  "50 - Extremely large PICTURE.flac",
+  "26 - variable blocksize file created with CUETools.Flake 2.1.6.flac"
+ ],
+ "counts": {
+  "pcm-hash:rejected": 1003,
+  "analyze:rejected": 1003,
+  "convert:rejected": 1273,
+  "pcm-hash:ok": 597,
+  "analyze:ok": 597,
+  "convert:ok": 327,
+  "convert:crossdecode-checked": 327
+ },
+ "failures": [],
+ "status": "passed"
+}

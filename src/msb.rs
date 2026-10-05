@@ -106,7 +106,8 @@ impl<'a> Bits<'a> {
     /// or bounds branches. Bits beyond `available` are then the true following
     /// stream bits, so a later byte-wise fill ORs identical values. Long
     /// quotients and the final bytes use the checked per-value path.
-    #[inline]
+    // Always inlined so the caller's target features (LZCNT/BMI2) apply.
+    #[inline(always)]
     pub fn rice_run(&mut self, k: u32, dst: &mut [i32]) -> Result<()> {
         if k > 31 {
             return Err(Error::Invalid("FLAC Rice width"));
@@ -173,7 +174,7 @@ impl<'a> Bits<'a> {
             self.available += bytes * 8;
         }
     }
-    #[inline]
+    #[inline(always)]
     pub fn alac_scalar(&mut self, k: u32, bits: u32) -> Result<u32> {
         if k == 0 || k > 31 || bits > 32 {
             return Err(Error::Invalid("ALAC Rice width"));

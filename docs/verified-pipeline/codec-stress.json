@@ -1,0 +1,267 @@
+{
+  "cases": [
+    {
+      "channels": 1,
+      "depth": 16,
+      "native_flac_exact": true,
+      "pattern": "zero",
+      "pcm_exact": true,
+      "profiles": 8
+    },
+    {
+      "channels": 1,
+      "depth": 16,
+      "native_flac_exact": true,
+      "pattern": "constant",
+      "pcm_exact": true,
+      "profiles": 8
+    },
+    {
+      "channels": 1,
+      "depth": 16,
+      "native_flac_exact": true,
+      "pattern": "impulse",
+      "pcm_exact": true,
+      "profiles": 8
+    },
+    {
+      "channels": 1,
+      "depth": 16,
+      "native_flac_exact": true,
+      "pattern": "ramp",
+      "pcm_exact": true,
+      "profiles": 8
+    },
+    {
+      "channels": 1,
+      "depth": 16,
+      "native_flac_exact": true,
+      "pattern": "limits",
+      "pcm_exact": true,
+      "profiles": 8
+    },
+    {
+      "channels": 1,
+      "depth": 16,
+      "native_flac_exact": true,
+      "pattern": "random",
+      "pcm_exact": true,
+      "profiles": 8
+    },
+    {
+      "channels": 1,
+      "depth": 16,
+      "native_flac_exact": true,
+      "pattern": "identical",
+      "pcm_exact": true,
+      "profiles": 8
+    },
+    {
+      "channels": 1,
+      "depth": 16,
+      "native_flac_exact": true,
+      "pattern": "opposite",
+      "pcm_exact": true,
+      "profiles": 8
+    },
+    {
+      "channels": 2,
+      "depth": 16,
+      "native_flac_exact": true,
+      "pattern": "zero",
+      "pcm_exact": true,
+      "profiles": 8
+    },
+    {
+      "channels": 2,
+      "depth": 16,
+      "native_flac_exact": true,
+      "pattern": "constant",
+      "pcm_exact": true,
+      "profiles": 8
+    },
+    {
+      "channels": 2,
+      "depth": 16,
+      "native_flac_exact": true,
+      "pattern": "impulse",
+      "pcm_exact": true,
+      "profiles": 8
+    },
+    {
+      "channels": 2,
+      "depth": 16,
+      "native_flac_exact": true,
+      "pattern": "ramp",
+      "pcm_exact": true,
+      "profiles": 8
+    },
+    {
+      "channels": 2,
+      "depth": 16,
+      "native_flac_exact": true,
+      "pattern": "limits",
+      "pcm_exact": true,
+      "profiles": 8
+    },
+    {
+      "channels": 2,
+      "depth": 16,
+      "native_flac_exact": true,
+      "pattern": "random",
+      "pcm_exact": true,
+      "profiles": 8
+    },
+    {
+      "channels": 2,
+      "depth": 16,
+      "native_flac_exact": true,
+      "pattern": "identical",
+      "pcm_exact": true,
+      "profiles": 8
+    },
+    {
+      "channels": 2,
+      "depth": 16,
+      "native_flac_exact": true,
+      "pattern": "opposite",
+      "pcm_exact": true,
+      "profiles": 8
+    },
+    {
+      "channels": 1,
+      "depth": 24,
+      "native_flac_exact": true,
+      "pattern": "zero",
+      "pcm_exact": true,
+      "profiles": 8
+    },
+    {
+      "channels": 1,
+      "depth": 24,
+      "native_flac_exact": true,
+      "pattern": "constant",
+      "pcm_exact": true,
+      "profiles": 8
+    },
+    {
+      "channels": 1,
+      "depth": 24,
+      "native_flac_exact": true,
+      "pattern": "impulse",
+      "pcm_exact": true,
+      "profiles": 8
+    },
+    {
+      "channels": 1,
+      "depth": 24,
+      "native_flac_exact": true,
+      "pattern": "ramp",
+      "pcm_exact": true,
+      "profiles": 8
+    },
+    {
+      "channels": 1,
+      "depth": 24,
+      "native_flac_exact": true,
+      "pattern": "limits",
+      "pcm_exact": true,
+      "profiles": 8
+    },
+    {
+      "channels": 1,
+      "depth": 24,
+      "native_flac_exact": true,
+      "pattern": "random",
+      "pcm_exact": true,
+      "profiles": 8
+    },
+    {
+      "channels": 1,
+      "depth": 24,
+      "native_flac_exact": true,
+      "pattern": "identical",
+      "pcm_exact": true,
+      "profiles": 8
+    },
+    {
+      "channels": 1,
+      "depth": 24,
+      "native_flac_exact": true,
+      "pattern": "opposite",
+      "pcm_exact": true,
+      "profiles": 8
+    },
+    {
+      "channels": 2,
+      "depth": 24,
+      "native_flac_exact": true,
+      "pattern": "zero",
+      "pcm_exact": true,
+      "profiles": 8
+    },
+    {
+      "channels": 2,
+      "depth": 24,
+      "native_flac_exact": true,
+      "pattern": "constant",
+      "pcm_exact": true,
+      "profiles": 8
+    },
+    {
+      "channels": 2,
+      "depth": 24,
+      "native_flac_exact": true,
+      "pattern": "impulse",
+      "pcm_exact": true,
+      "profiles": 8
+    },
+    {
+      "channels": 2,
+      "depth": 24,
+      "native_flac_exact": true,
+      "pattern": "ramp",
+      "pcm_exact": true,
+      "profiles": 8
+    },
+    {
+      "channels": 2,
+      "depth": 24,
+      "native_flac_exact": true,
+      "pattern": "limits",
+      "pcm_exact": true,
+      "profiles": 8
+    },
+    {
+      "channels": 2,
+      "depth": 24,
+      "native_flac_exact": true,
+      "pattern": "random",
+      "pcm_exact": true,
+      "profiles": 8
+    },
+    {
+      "channels": 2,
+      "depth": 24,
+      "native_flac_exact": true,
+      "pattern": "identical",
+      "pcm_exact": true,
+      "profiles": 8
+    },
+    {
+      "channels": 2,
+      "depth": 24,
+      "native_flac_exact": true,
+      "pattern": "opposite",
+      "pcm_exact": true,
+      "profiles": 8
+    }
+  ],
+  "checks": 288,
+  "fixture_rng": "SplitMix64 seed 1729",
+  "frames_per_case": 8193,
+  "harness": "audeniq-qc-tools Rust",
+  "sample_rate": 48000,
+  "source": "independent deterministic PCM integers + FFmpeg development oracle",
+  "status": "passed"
+}

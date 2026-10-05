@@ -1,0 +1,194 @@
+{
+  "cases": [
+    {
+      "case": "44100-16-1.encoded.wav",
+      "pcm_exact": true,
+      "roundtrip_exact": true
+    },
+    {
+      "case": "44100-16-1.encoded.flac",
+      "pcm_exact": true,
+      "roundtrip_exact": true
+    },
+    {
+      "case": "44100-16-1.encoded.m4a",
+      "pcm_exact": true,
+      "roundtrip_exact": true
+    },
+    {
+      "case": "44100-16-1.encoded.aiff",
+      "pcm_exact": true,
+      "roundtrip_exact": true
+    },
+    {
+      "case": "44100-16-1.encoded.tta",
+      "pcm_exact": true,
+      "roundtrip_exact": true
+    },
+    {
+      "case": "44100-16-1.encoded.wv",
+      "pcm_exact": true,
+      "roundtrip_exact": true
+    },
+    {
+      "case": "44100-16-1.encoded.rf64.wav",
+      "pcm_exact": true,
+      "roundtrip_exact": true
+    },
+    {
+      "case": "48000-24-2.encoded.wav",
+      "pcm_exact": true,
+      "roundtrip_exact": true
+    },
+    {
+      "case": "48000-24-2.encoded.flac",
+      "pcm_exact": true,
+      "roundtrip_exact": true
+    },
+    {
+      "case": "48000-24-2.encoded.m4a",
+      "pcm_exact": true,
+      "roundtrip_exact": true
+    },
+    {
+      "case": "48000-24-2.encoded.aiff",
+      "pcm_exact": true,
+      "roundtrip_exact": true
+    },
+    {
+      "case": "48000-24-2.encoded.tta",
+      "pcm_exact": true,
+      "roundtrip_exact": true
+    },
+    {
+      "case": "48000-24-2.encoded.wv",
+      "pcm_exact": true,
+      "roundtrip_exact": true
+    },
+    {
+      "case": "48000-24-2.encoded.rf64.wav",
+      "pcm_exact": true,
+      "roundtrip_exact": true
+    },
+    {
+      "case": "96000-24-2.encoded.wav",
+      "pcm_exact": true,
+      "roundtrip_exact": true
+    },
+    {
+      "case": "96000-24-2.encoded.flac",
+      "pcm_exact": true,
+      "roundtrip_exact": true
+    },
+    {
+      "case": "96000-24-2.encoded.m4a",
+      "pcm_exact": true,
+      "roundtrip_exact": true
+    },
+    {
+      "case": "96000-24-2.encoded.aiff",
+      "pcm_exact": true,
+      "roundtrip_exact": true
+    },
+    {
+      "case": "96000-24-2.encoded.tta",
+      "pcm_exact": true,
+      "roundtrip_exact": true
+    },
+    {
+      "case": "96000-24-2.encoded.wv",
+      "pcm_exact": true,
+      "roundtrip_exact": true
+    },
+    {
+      "case": "96000-24-2.encoded.rf64.wav",
+      "pcm_exact": true,
+      "roundtrip_exact": true
+    },
+    {
+      "case": "192000-16-2.encoded.wav",
+      "pcm_exact": true,
+      "roundtrip_exact": true
+    },
+    {
+      "case": "192000-16-2.encoded.flac",
+      "pcm_exact": true,
+      "roundtrip_exact": true
+    },
+    {
+      "case": "192000-16-2.encoded.m4a",
+      "pcm_exact": true,
+      "roundtrip_exact": true
+    },
+    {
+      "case": "192000-16-2.encoded.aiff",
+      "pcm_exact": true,
+      "roundtrip_exact": true
+    },
+    {
+      "case": "192000-16-2.encoded.tta",
+      "pcm_exact": true,
+      "roundtrip_exact": true
+    },
+    {
+      "case": "192000-16-2.encoded.wv",
+      "pcm_exact": true,
+      "roundtrip_exact": true
+    },
+    {
+      "case": "192000-16-2.encoded.rf64.wav",
+      "pcm_exact": true,
+      "roundtrip_exact": true
+    },
+    {
+      "case": "tone",
+      "ffmpeg_lufs": -7.3,
+      "ffmpeg_true_peak": -6.7,
+      "native_lufs": -7.30669647920734,
+      "native_true_peak": -6.744842646063343
+    },
+    {
+      "case": "silence",
+      "ffmpeg_lufs": -70.0,
+      "ffmpeg_true_peak": null,
+      "native_lufs": null,
+      "native_true_peak": null
+    },
+    {
+      "case": "noise",
+      "ffmpeg_lufs": 1.4,
+      "ffmpeg_true_peak": 5.5,
+      "native_lufs": 1.3751582638012074,
+      "native_true_peak": 4.629395435079041
+    },
+    {
+      "case": "clip",
+      "ffmpeg_lufs": 3.7,
+      "ffmpeg_true_peak": 1.2,
+      "native_lufs": 3.73431543137906,
+      "native_true_peak": 1.0981234282899996
+    },
+    {
+      "case": "gated",
+      "ffmpeg_lufs": -8.4,
+      "ffmpeg_true_peak": -7.2,
+      "native_lufs": -8.393722351101419,
+      "native_true_peak": -7.3053775013755455
+    },
+    {
+      "case": "near_nyquist",
+      "ffmpeg_lufs": 2.4,
+      "ffmpeg_true_peak": -0.9,
+      "native_lufs": 2.4278696570474327,
+      "native_true_peak": -0.7226610191800222
+    }
+  ],
+  "checks": 596,
+  "fixture_rng": "SplitMix64 seed 1729",
+  "harness": "audeniq-qc-tools Rust",
+  "lufs_tolerance_lu": 0.11,
+  "status": "passed",
+  "true_peak_certified": false,
+  "true_peak_comparison_exclusions": "Full-band white noise difference is recorded and is not claimed bit-identical. Near-Nyquist tone has 10ms fade.",
+  "true_peak_tolerance_db": 0.5
+}

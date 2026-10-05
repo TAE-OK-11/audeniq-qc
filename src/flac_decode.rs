@@ -2,7 +2,7 @@
 //! ported/reworked from FFmpeg flac.c, flacdec.c, flacdsp.c (LGPL-2.1-or-later).
 //! Copyright (c) 2003 Alex Beregszaszi; (c) 2012 Mans Rullgard.
 //! See THIRD_PARTY.md.
-use crate::{msb::Bits, AudioSpec, Error, Limits, Result};
+use crate::{kernels::Backend, msb::Bits, AudioSpec, Error, Limits, Result};
 use md5::{Digest, Md5};
 use std::{
     fs::File,
@@ -30,6 +30,26 @@ fn invalid<T>(s: &'static str) -> Result<T> {
 }
 fn residual(b: &mut Bits<'_>, p: &mut [i32], order: usize) -> Result<()> {
     let _profile = crate::profile::scope(crate::profile::Stage::FlacResidual);
+    #[cfg(target_arch = "x86_64")]
+    if crate::kernels::bit_ops() {
+        // SAFETY: LZCNT/BMI1/BMI2 were detected at runtime; the body is the
+        // same bounds-checked safe Rust.
+        return unsafe { residual_bit_ops(b, p, order) };
+    }
+    residual_body(b, p, order)
+}
+
+/// Rice decoding is a serial chain of leading-zero counts and variable
+/// shifts. Baseline x86-64 lowers those to BSR plus fix-ups and 3-uop
+/// `shl/shr cl`; LZCNT and BMI2 `shlx/shrx` shorten every step.
+#[cfg(target_arch = "x86_64")]
+#[target_feature(enable = "lzcnt,bmi1,bmi2")]
+unsafe fn residual_bit_ops(b: &mut Bits<'_>, p: &mut [i32], order: usize) -> Result<()> {
+    residual_body(b, p, order)
+}
+
+#[inline(always)]
+fn residual_body(b: &mut Bits<'_>, p: &mut [i32], order: usize) -> Result<()> {
     let method = b.get(2)?;
     let partition = b.get(4)?;
     let partitions = 1usize << partition;
@@ -259,33 +279,386 @@ pub(crate) fn decode(
         // i32 even before validation. Accumulate range failures and check once
         // so SIMD/vectorization is possible without weakening integrity.
         let bound = 1i32 << (spec.bits_per_sample - 1);
-        let mut bad = false;
-        for ((dst, &a), &d) in out
-            .as_chunks_mut::<2>()
-            .0
-            .iter_mut()
-            .zip(&planes[0])
-            .zip(&planes[1])
-        {
-            let (left, right) = match h.mode {
-                8 => (a, a - d),
-                9 => (a + d, d),
-                10 => {
-                    let mid = (a << 1) | (d & 1);
-                    ((mid + d) >> 1, (mid - d) >> 1)
-                }
-                _ => (a, d),
-            };
-            bad |= left < -bound || left >= bound || right < -bound || right >= bound;
-            dst[0] = left.wrapping_shl(shift as u32);
-            dst[1] = right.wrapping_shl(shift as u32);
-        }
+        let (a, d) = (&planes[0][..], &planes[1][..]);
+        let bad = match h.mode {
+            8 => decorrelate::<8>(a, d, out, bound, shift as u32),
+            9 => decorrelate::<9>(a, d, out, bound, shift as u32),
+            _ => decorrelate::<10>(a, d, out, bound, shift as u32),
+        };
         if bad {
             return invalid("FLAC reconstructed stereo range");
         }
     }
     Ok((length + 2, h))
 }
+
+/// Scratch planes for [`verify`]: expected subframe signal and parsed residuals.
+#[derive(Default)]
+pub(crate) struct VerifyScratch {
+    expected: [Vec<i32>; 2],
+    residual: Vec<i32>,
+}
+
+/// Check that `data` begins with exactly one FLAC frame that [`decode`] would
+/// accept and reconstruct to `expected` (interleaved, left-aligned PCM).
+///
+/// The bitstream is parsed exactly as `decode` parses it: header and CRC-8,
+/// every subframe header, warm-up sample, coefficient, Rice partition and
+/// escape, zero padding and CRC-16. Only the final reconstruction differs.
+/// `decode` rebuilds sample `i` as `pred(decoded[..i]) + residual[i]`, a serial
+/// recurrence. Here the expected subframe signal `x` is derived from the
+/// source and every residual must equal `x[i] - pred(x[..i])` with the same
+/// predictor arithmetic, and every warm-up/verbatim/constant value must equal
+/// `x[i]`. By induction over `i`, the decoder's output equals `x` exactly
+/// when all of these hold, so acceptance is identical to `decode` followed by
+/// a sample-for-sample comparison, while the checks have no loop-carried
+/// dependency. Stereo decorrelation is checked in the forward direction; each
+/// FLAC channel mode is a bijection on in-range samples (see `channel`).
+pub(crate) fn verify(
+    data: &[u8],
+    spec: &AudioSpec,
+    maximum: usize,
+    expected: &[i32],
+    scratch: &mut VerifyScratch,
+    backend: Backend,
+) -> Result<(usize, Header)> {
+    let mut b = Bits::new(data);
+    let h = header(&mut b, spec, maximum)?;
+    let header_len = b.pos / 8;
+    let crc = b.get(8)?;
+    if crate::bits::crc8(&data[..header_len]) as u32 != crc {
+        return invalid("FLAC header CRC");
+    }
+    let channels = spec.channels as usize;
+    if expected.len() != h.samples * channels {
+        return invalid("FLAC verified block length");
+    }
+    // `decode` left-aligns with a wrapping shift, so the source must have zero
+    // low bits; the planes are the right-aligned source channels.
+    let shift = 32 - spec.bits_per_sample as u32;
+    let low = (1i32 << shift) - 1;
+    let mut bad = 0i32;
+    let [first, second] = &mut scratch.expected;
+    first.resize(h.samples, 0);
+    if channels == 1 {
+        for (e, &x) in first.iter_mut().zip(expected) {
+            bad |= x & low;
+            *e = x >> shift;
+        }
+    } else {
+        second.resize(h.samples, 0);
+        // Forward FLAC decorrelation of the source. `decode` inverts these
+        // maps: left/side (a, a - d), side/right (a + d, d) and mid/side via
+        // mid2 = (a << 1) | (d & 1). With L, R in range, L + R and L - R
+        // have equal parity, so the inverse of each forward pair is (L, R);
+        // and forward(inverse(a, d)) == (a, d), so no other in-range pair
+        // decodes to (L, R).
+        for ((row, a), d) in expected
+            .as_chunks::<2>()
+            .0
+            .iter()
+            .zip(first.iter_mut())
+            .zip(second.iter_mut())
+        {
+            bad |= (row[0] | row[1]) & low;
+            let (l, r) = (row[0] >> shift, row[1] >> shift);
+            (*a, *d) = match h.mode {
+                8 => (l, l - r),
+                9 => (l - r, r),
+                10 => ((l + r) >> 1, l - r),
+                _ => (l, r),
+            };
+        }
+    }
+    if bad != 0 {
+        return invalid("FLAC verified source alignment");
+    }
+    for ch in 0..channels {
+        let bits = spec.bits_per_sample as u32
+            + u32::from((ch == 0 && h.mode == 9) || (ch == 1 && matches!(h.mode, 8 | 10)));
+        verify_subframe(
+            &mut b,
+            &mut scratch.expected[ch],
+            &mut scratch.residual,
+            bits,
+            backend,
+        )?;
+    }
+    b.align_zero()?;
+    let length = b.pos / 8;
+    let crc = b.get(16)?;
+    if crate::bits::crc16(&data[..length]) as u32 != crc {
+        return invalid("FLAC frame CRC");
+    }
+    Ok((length + 2, h))
+}
+
+/// `subframe` followed by a comparison with `x`; see [`verify`]. `x` holds
+/// in-range samples of `bits` bits and is consumed (shifted) in place.
+fn verify_subframe(
+    b: &mut Bits<'_>,
+    x: &mut [i32],
+    r: &mut Vec<i32>,
+    bits: u32,
+    backend: Backend,
+) -> Result<()> {
+    if b.get(1)? != 0 {
+        return invalid("FLAC subframe padding");
+    }
+    let mode = b.get(6)?;
+    let wasted = if b.get(1)? != 0 {
+        1 + b.unary(false, bits)?
+    } else {
+        0
+    };
+    if wasted >= bits {
+        return invalid("FLAC wasted bits");
+    }
+    let width = bits - wasted;
+    // `decode` outputs v << wasted for a `width`-bit v, so x must have zero
+    // low bits and v must equal x >> wasted (which is then within `width`).
+    if wasted != 0 {
+        let low = (1i32 << wasted) - 1;
+        let mut bad = 0;
+        for v in x.iter_mut() {
+            bad |= *v & low;
+            *v >>= wasted;
+        }
+        if bad != 0 {
+            return invalid("FLAC verified wasted bits");
+        }
+    }
+    let x = &*x;
+    let mismatch = || invalid("lossless frame verification");
+    match mode {
+        0 => {
+            let value = b.signed(width)?;
+            if x.iter().any(|&v| v != value) {
+                return mismatch();
+            }
+        }
+        1 => {
+            for &v in x {
+                if b.signed(width)? != v {
+                    return mismatch();
+                }
+            }
+        }
+        8..=12 | 32..=63 => {
+            let order = if mode < 32 {
+                (mode - 8) as usize
+            } else {
+                (mode - 31) as usize
+            };
+            if order > x.len() {
+                return invalid("FLAC predictor order");
+            }
+            for &v in &x[..order] {
+                if b.signed(width)? != v {
+                    return mismatch();
+                }
+            }
+            let mut coeff = [0i32; 32];
+            let mut shift = 0;
+            if mode >= 32 {
+                let precision = b.get(4)?;
+                if precision == 15 {
+                    return invalid("FLAC LPC precision");
+                }
+                shift = b.signed(5)?;
+                for c in &mut coeff[..order] {
+                    *c = b.signed(precision + 1)?;
+                }
+            }
+            r.resize(x.len(), 0);
+            residual(b, r, order)?;
+            let ok = if mode >= 32 {
+                let c = &coeff[..order];
+                match order {
+                    1 => check_lpc::<1>(x, r, c, shift, backend),
+                    2 => check_lpc::<2>(x, r, c, shift, backend),
+                    3 => check_lpc::<3>(x, r, c, shift, backend),
+                    4 => check_lpc::<4>(x, r, c, shift, backend),
+                    5 => check_lpc::<5>(x, r, c, shift, backend),
+                    6 => check_lpc::<6>(x, r, c, shift, backend),
+                    7 => check_lpc::<7>(x, r, c, shift, backend),
+                    8 => check_lpc::<8>(x, r, c, shift, backend),
+                    _ => check_lpc::<0>(x, r, c, shift, backend),
+                }
+            } else {
+                check_fixed(x, r, order, backend)
+            };
+            if !ok {
+                return mismatch();
+            }
+        }
+        _ => return invalid("FLAC subframe mode"),
+    }
+    Ok(())
+}
+
+/// True when `restore_fixed` on residuals `r` would reproduce `x` (whose
+/// first `order` values are the verified warm-up). `restore_fixed` forms a
+/// wrapping i32 prediction from its (by induction equal) history and adds
+/// the residual in i64; an in-range result equal to `x[i]` is exactly
+/// `pred + r[i] == x[i]` in i64 because `x[i]` is in range.
+fn check_fixed(x: &[i32], r: &[i32], order: usize, backend: Backend) -> bool {
+    macro_rules! dispatch {
+        ($n:literal) => {{
+            #[cfg(target_arch = "x86_64")]
+            if backend == Backend::Avx2 {
+                // SAFETY: the backend was checked available by the encoder;
+                // the generic body is bounds-checked safe Rust.
+                return unsafe { check_fixed_avx2::<$n>(x, r) };
+            }
+            check_fixed_body::<$n>(x, r)
+        }};
+    }
+    let _ = backend;
+    match order {
+        0 => r.iter().zip(x).all(|(a, b)| a == b),
+        1 => dispatch!(1),
+        2 => dispatch!(2),
+        3 => dispatch!(3),
+        4 => dispatch!(4),
+        _ => unreachable!(),
+    }
+}
+
+/// `history[N - k]` is x[i - k]; the expressions are those of `restore_fixed`.
+#[inline(always)]
+fn check_fixed_body<const N: usize>(x: &[i32], r: &[i32]) -> bool {
+    let mut bad = false;
+    for (w, &residual) in x.windows(N + 1).zip(&r[N.min(r.len())..]) {
+        let h: &[i32; N] = w[..N].try_into().unwrap();
+        let prediction = match N {
+            1 => h[0],
+            2 => h[1].wrapping_mul(2).wrapping_sub(h[0]),
+            3 => h[2].wrapping_sub(h[1]).wrapping_mul(3).wrapping_add(h[0]),
+            _ => h[3]
+                .wrapping_add(h[1])
+                .wrapping_mul(4)
+                .wrapping_sub(h[2].wrapping_mul(6))
+                .wrapping_sub(h[0]),
+        };
+        bad |= prediction as i64 + residual as i64 != w[N] as i64;
+    }
+    !bad
+}
+
+#[cfg(target_arch = "x86_64")]
+#[target_feature(enable = "avx2")]
+unsafe fn check_fixed_avx2<const N: usize>(x: &[i32], r: &[i32]) -> bool {
+    check_fixed_body::<N>(x, r)
+}
+
+/// True when `restore_lpc` on residuals `r` would reproduce `x`. Each
+/// prediction uses the expected history, so samples are independent.
+/// `restore_lpc` always forms the exact sum (its i32 accumulator is used only
+/// when the bound proves exactness), shifts it like this function and adds the
+/// residual in i64; any exact accumulator therefore gives the same result.
+/// The i32 accumulator here is chosen from the actual sample magnitudes.
+#[inline]
+fn check_lpc<const N: usize>(
+    x: &[i32],
+    r: &[i32],
+    coeff: &[i32],
+    shift: i32,
+    backend: Backend,
+) -> bool {
+    if N == 0 {
+        return check_lpc_wide(x, r, coeff, shift);
+    }
+    let c: [i32; N] = coeff.try_into().unwrap();
+    let largest = c.iter().map(|c| c.unsigned_abs()).max().unwrap_or(0) as u64;
+    let peak = x.iter().fold(0u32, |a, &v| a.max(v.unsigned_abs())) as u64;
+    if !(0..32).contains(&shift) || largest * N as u64 * peak >= 1 << 31 {
+        return check_lpc_wide(x, r, coeff, shift);
+    }
+    #[cfg(target_arch = "x86_64")]
+    if backend == Backend::Avx2 {
+        // SAFETY: the backend was checked available by the encoder; the
+        // generic body is bounds-checked safe Rust.
+        return unsafe { check_lpc_avx2::<N>(x, r, &c, shift) };
+    }
+    let _ = backend;
+    check_lpc_body::<N>(x, r, &c, shift)
+}
+
+/// Exact i32 accumulation, valid when |c| * N * max|x| < 2^31.
+#[inline(always)]
+fn check_lpc_body<const N: usize>(x: &[i32], r: &[i32], c: &[i32; N], shift: i32) -> bool {
+    let mut bad = false;
+    // Window w holds x[i - N..=i]; the residual for x[i] is r[i].
+    for (w, &residual) in x.windows(N + 1).zip(&r[N.min(r.len())..]) {
+        let mut sum = 0i32;
+        for j in 0..N {
+            sum = sum.wrapping_add(c[j].wrapping_mul(w[N - 1 - j]));
+        }
+        bad |= (sum >> shift) as i64 + residual as i64 != w[N] as i64;
+    }
+    !bad
+}
+
+#[cfg(target_arch = "x86_64")]
+#[target_feature(enable = "avx2")]
+unsafe fn check_lpc_avx2<const N: usize>(x: &[i32], r: &[i32], c: &[i32; N], shift: i32) -> bool {
+    check_lpc_body::<N>(x, r, c, shift)
+}
+
+/// Exact i64 accumulation for any order, coefficient size and shift.
+fn check_lpc_wide(x: &[i32], r: &[i32], coeff: &[i32], shift: i32) -> bool {
+    let order = coeff.len();
+    let mut bad = false;
+    for (w, &residual) in x.windows(order + 1).zip(&r[order.min(r.len())..]) {
+        let mut sum = 0i64;
+        for j in 0..order {
+            sum += coeff[j] as i64 * w[order - 1 - j] as i64;
+        }
+        let prediction = if shift >= 0 {
+            sum >> shift.min(63)
+        } else {
+            sum.wrapping_shl(shift.unsigned_abs())
+        };
+        bad |= prediction.wrapping_add(residual as i64) != w[order] as i64;
+    }
+    !bad
+}
+
+/// Undo left/side (8), side/right (9) or mid/side (10) decorrelation and
+/// left-align. The mode is a constant so each loop is branch-free and
+/// vectorizable however the caller is inlined; range failures are
+/// accumulated. Returns true when any sample is out of range.
+#[inline(always)]
+fn decorrelate<const MODE: u32>(
+    a: &[i32],
+    d: &[i32],
+    out: &mut [i32],
+    bound: i32,
+    shift: u32,
+) -> bool {
+    // -bound <= v < bound exactly when (v + bound) as u32 < 2 * bound, a
+    // power of two (bound <= 2^24; v + bound wraps only for v >= 2^31 - bound,
+    // which is out of range too). So OR-accumulating those values and testing
+    // the high bits once keeps every lane 32-bit.
+    let span = 2 * bound as u32;
+    let mut bits = 0u32;
+    for ((dst, &a), &d) in out.as_chunks_mut::<2>().0.iter_mut().zip(a).zip(d) {
+        let (left, right) = match MODE {
+            8 => (a, a - d),
+            9 => (a + d, d),
+            _ => {
+                let mid = (a << 1) | (d & 1);
+                ((mid + d) >> 1, (mid - d) >> 1)
+            }
+        };
+        bits |= left.wrapping_add(bound) as u32 | right.wrapping_add(bound) as u32;
+        dst[0] = left.wrapping_shl(shift);
+        dst[1] = right.wrapping_shl(shift);
+    }
+    bits >= span
+}
+
 impl Decoder {
     pub fn open(mut file: File, limits: &Limits) -> Result<Self> {
         let mut magic = [0; 4];
@@ -628,6 +1001,67 @@ mod tests {
         }
         run::<4>();
         run::<8>();
+    }
+    #[test]
+    fn decorrelation_matches_reference_values_and_range_verdicts() {
+        let mut seed = 7u32;
+        for bits in [16u32, 24] {
+            let bound = 1i32 << (bits - 1);
+            let edges = [
+                -bound - 1,
+                -bound,
+                -1,
+                0,
+                1,
+                bound - 1,
+                bound,
+                2 * bound,
+                i32::MIN / 4,
+                i32::MAX / 4,
+            ];
+            for mode in [8u32, 9, 10] {
+                for case in 0..400 {
+                    let n = 1 + case % 37;
+                    let mut pick = || {
+                        seed = seed.wrapping_mul(1664525).wrapping_add(1013904223);
+                        if case % 3 == 0 {
+                            edges[(seed >> 8) as usize % edges.len()]
+                        } else {
+                            (seed as i32) >> (32 - bits - 1)
+                        }
+                    };
+                    let a: Vec<i32> = (0..n).map(|_| pick()).collect();
+                    let d: Vec<i32> = (0..n).map(|_| pick()).collect();
+                    let shift = 32 - bits;
+                    let mut expected = vec![0; 2 * n];
+                    let mut expected_bad = false;
+                    for i in 0..n {
+                        let (left, right) = match mode {
+                            8 => (a[i], a[i].wrapping_sub(d[i])),
+                            9 => (a[i].wrapping_add(d[i]), d[i]),
+                            _ => {
+                                let mid = (a[i] << 1) | (d[i] & 1);
+                                (mid.wrapping_add(d[i]) >> 1, mid.wrapping_sub(d[i]) >> 1)
+                            }
+                        };
+                        expected_bad |=
+                            left < -bound || left >= bound || right < -bound || right >= bound;
+                        expected[2 * i] = left.wrapping_shl(shift);
+                        expected[2 * i + 1] = right.wrapping_shl(shift);
+                    }
+                    let mut out = vec![0; 2 * n];
+                    let bad = match mode {
+                        8 => decorrelate::<8>(&a, &d, &mut out, bound, shift),
+                        9 => decorrelate::<9>(&a, &d, &mut out, bound, shift),
+                        _ => decorrelate::<10>(&a, &d, &mut out, bound, shift),
+                    };
+                    assert_eq!(bad, expected_bad, "mode={mode} bits={bits} a={a:?} d={d:?}");
+                    if !bad {
+                        assert_eq!(out, expected);
+                    }
+                }
+            }
+        }
     }
     #[test]
     fn all_predictor_orders_escape_residuals_and_truncations() {

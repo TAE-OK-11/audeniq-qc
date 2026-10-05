@@ -1,0 +1,177 @@
+{
+ "ffmpeg_version": "ffmpeg version n8.1.2 Copyright (c) 2000-2026 the FFmpeg developers",
+ "qc": false,
+ "repeats": 0,
+ "binaries": {
+  "native": "ab89d76a747d7ed2f2e860cc625f5878dc468bf20761fc012b0523bfb1b19f98",
+  "baseline": "db3f1bc503debe6126a0eb946f10b6bd6c607dc5c474d1a26c3f48f7d889ca7e"
+ },
+ "cpu": "\t: Intel(R) Xeon(R) Processor @ 2.10GHz",
+ "nproc": 4,
+ "results": [],
+ "pure": [],
+ "concurrency": {
+  "native": [
+   {
+    "workers": 1,
+    "jobs": 24,
+    "failures": 0,
+    "elapsed_s": 16.923423905000163,
+    "audio_s_per_wall_s": 198.83711930218692,
+    "cpu_total_s": 15.964755999999998,
+    "cpu_per_job_s": 0.6651981666666666,
+    "p50_wall_s": 0.6007915669997601,
+    "p95_wall_s": 1.2335893889994622,
+    "peak_total_rss_kib": 4060,
+    "max_child_rss_kib": 4124
+   },
+   {
+    "workers": 2,
+    "jobs": 24,
+    "failures": 0,
+    "elapsed_s": 8.364918409000893,
+    "audio_s_per_wall_s": 402.27587329233927,
+    "cpu_total_s": 15.825364000000004,
+    "cpu_per_job_s": 0.6593901666666666,
+    "p50_wall_s": 0.6085639250013628,
+    "p95_wall_s": 1.205169056000159,
+    "peak_total_rss_kib": 8084,
+    "max_child_rss_kib": 4144
+   },
+   {
+    "workers": 4,
+    "jobs": 24,
+    "failures": 0,
+    "elapsed_s": 5.12350878199868,
+    "audio_s_per_wall_s": 656.7774158644677,
+    "cpu_total_s": 16.085238,
+    "cpu_per_job_s": 0.67021825,
+    "p50_wall_s": 0.6829019990000234,
+    "p95_wall_s": 1.3992238350001571,
+    "peak_total_rss_kib": 15908,
+    "max_child_rss_kib": 4044
+   },
+   {
+    "workers": 8,
+    "jobs": 24,
+    "failures": 0,
+    "elapsed_s": 4.811644905999856,
+    "audio_s_per_wall_s": 699.34604978934,
+    "cpu_total_s": 16.4174,
+    "cpu_per_job_s": 0.6840583333333333,
+    "p50_wall_s": 1.2364313670004776,
+    "p95_wall_s": 2.62485335600104,
+    "peak_total_rss_kib": 31492,
+    "max_child_rss_kib": 3984
+   }
+  ],
+  "baseline": [
+   {
+    "workers": 1,
+    "jobs": 24,
+    "failures": 0,
+    "elapsed_s": 19.59975452300023,
+    "audio_s_per_wall_s": 171.6860715807017,
+    "cpu_total_s": 18.566131,
+    "cpu_per_job_s": 0.7735887916666666,
+    "p50_wall_s": 0.7565446589997009,
+    "p95_wall_s": 1.4451641169998766,
+    "peak_total_rss_kib": 3956,
+    "max_child_rss_kib": 4088
+   },
+   {
+    "workers": 2,
+    "jobs": 24,
+    "failures": 0,
+    "elapsed_s": 10.12255198999992,
+    "audio_s_per_wall_s": 332.42653249144,
+    "cpu_total_s": 18.98783,
+    "cpu_per_job_s": 0.7911595833333332,
+    "p50_wall_s": 0.7436844159983593,
+    "p95_wall_s": 1.4482545849987218,
+    "peak_total_rss_kib": 7632,
+    "max_child_rss_kib": 4004
+   },
+   {
+    "workers": 4,
+    "jobs": 24,
+    "failures": 0,
+    "elapsed_s": 5.592240451998805,
+    "audio_s_per_wall_s": 601.7274984657113,
+    "cpu_total_s": 18.380349,
+    "cpu_per_job_s": 0.765847875,
+    "p50_wall_s": 0.7975526689988328,
+    "p95_wall_s": 1.4301066730004095,
+    "peak_total_rss_kib": 15132,
+    "max_child_rss_kib": 4004
+   },
+   {
+    "workers": 8,
+    "jobs": 24,
+    "failures": 0,
+    "elapsed_s": 5.582063456999094,
+    "audio_s_per_wall_s": 602.8245439920203,
+    "cpu_total_s": 18.864106999999994,
+    "cpu_per_job_s": 0.7860044583333333,
+    "p50_wall_s": 1.5785099170007015,
+    "p95_wall_s": 3.0439405649995024,
+    "peak_total_rss_kib": 30108,
+    "max_child_rss_kib": 3864
+   }
+  ],
+  "ffmpeg": [
+   {
+    "workers": 1,
+    "jobs": 24,
+    "failures": 0,
+    "elapsed_s": 18.854970489999687,
+    "audio_s_per_wall_s": 178.4677870370963,
+    "cpu_total_s": 35.17007799999999,
+    "cpu_per_job_s": 1.4654199166666666,
+    "p50_wall_s": 0.7202467160004744,
+    "p95_wall_s": 1.2550336040003458,
+    "peak_total_rss_kib": 19796,
+    "max_child_rss_kib": 19672
+   },
+   {
+    "workers": 2,
+    "jobs": 24,
+    "failures": 0,
+    "elapsed_s": 11.841005954000138,
+    "audio_s_per_wall_s": 284.18234659051336,
+    "cpu_total_s": 33.624288,
+    "cpu_per_job_s": 1.401012,
+    "p50_wall_s": 0.9441147950001323,
+    "p95_wall_s": 1.5815704630003893,
+    "peak_total_rss_kib": 39152,
+    "max_child_rss_kib": 19680
+   },
+   {
+    "workers": 4,
+    "jobs": 24,
+    "failures": 0,
+    "elapsed_s": 9.528451545998905,
+    "audio_s_per_wall_s": 353.1533787788426,
+    "cpu_total_s": 32.43083599999999,
+    "cpu_per_job_s": 1.3512848333333334,
+    "p50_wall_s": 1.5950317320002796,
+    "p95_wall_s": 2.4617860639991704,
+    "peak_total_rss_kib": 77816,
+    "max_child_rss_kib": 19740
+   },
+   {
+    "workers": 8,
+    "jobs": 24,
+    "failures": 0,
+    "elapsed_s": 9.192578096999569,
+    "audio_s_per_wall_s": 366.0567060179045,
+    "cpu_total_s": 32.866959,
+    "cpu_per_job_s": 1.369456625,
+    "p50_wall_s": 2.7880144150003616,
+    "p95_wall_s": 4.62314376500035,
+    "peak_total_rss_kib": 152976,
+    "max_child_rss_kib": 19716
+   }
+  ]
+ }
+}

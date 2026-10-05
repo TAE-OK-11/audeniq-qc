@@ -12,7 +12,7 @@ pub(crate) struct Decoder {
 fn extend(v: i32, bits: u32) -> i32 {
     v.wrapping_shl(32 - bits) >> (32 - bits)
 }
-#[inline]
+#[inline(always)]
 fn scalar(b: &mut Bits<'_>, k: u32, bits: u32) -> Result<u32> {
     // A complete ALAC code is at most 9 + 32 bits, so after a 56-bit refill
     // the cached fast path in `alac_scalar` always applies.
@@ -20,6 +20,38 @@ fn scalar(b: &mut Bits<'_>, k: u32, bits: u32) -> Result<u32> {
     b.alac_scalar(k, bits)
 }
 fn rice(
+    b: &mut Bits<'_>,
+    out: &mut [i32],
+    bits: u32,
+    initial: u32,
+    mult: u32,
+    limit: u32,
+) -> Result<()> {
+    #[cfg(target_arch = "x86_64")]
+    if crate::kernels::bit_ops() {
+        // SAFETY: LZCNT/BMI1/BMI2 were detected at runtime; same safe code.
+        return unsafe { rice_bit_ops(b, out, bits, initial, mult, limit) };
+    }
+    rice_body(b, out, bits, initial, mult, limit)
+}
+
+/// The adaptive Rice parameter is a serial chain of leading-zero counts and
+/// variable shifts; LZCNT and BMI2 shorten each step.
+#[cfg(target_arch = "x86_64")]
+#[target_feature(enable = "lzcnt,bmi1,bmi2")]
+unsafe fn rice_bit_ops(
+    b: &mut Bits<'_>,
+    out: &mut [i32],
+    bits: u32,
+    initial: u32,
+    mult: u32,
+    limit: u32,
+) -> Result<()> {
+    rice_body(b, out, bits, initial, mult, limit)
+}
+
+#[inline(always)]
+fn rice_body(
     b: &mut Bits<'_>,
     out: &mut [i32],
     bits: u32,

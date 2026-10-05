@@ -1,0 +1,9 @@
+[package]
+name = "crcbench"
+version = "0.1.0"
+edition = "2021"
+[workspace]
+[dependencies]
+crc32fast = "=1.5.2"
+[profile.release]
+opt-level = 3

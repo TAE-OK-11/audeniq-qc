@@ -5,6 +5,8 @@ Symphonia in the default build, plus their conversion/QC consumers. Backend
 integration remains outside this repository's current scope.
 
 Latest fresh three-way rerun: [2026-10-05 KST results](BENCHMARK-THREEWAY-RERUN.md).
+Verified-pipeline optimization with a workload-matched FFmpeg 8.1.2 pipeline,
+real-music corpus and concurrency results: [BENCHMARK-VERIFIED-PIPELINE.md](BENCHMARK-VERIFIED-PIPELINE.md).
 It uses N2 and EPYC 9V74 and preserves this earlier Zen3 dataset separately.
 
 ## Removed work

@@ -1,0 +1,2476 @@
+{
+ "ffmpeg_version": "ffmpeg version n8.1.2 Copyright (c) 2000-2026 the FFmpeg developers",
+ "qc": false,
+ "repeats": 5,
+ "binaries": {
+  "native": "db3f1bc503debe6126a0eb946f10b6bd6c607dc5c474d1a26c3f48f7d889ca7e",
+  "reference": "4d033520f21622df11a804ab2ac8d5c05374f6491b45039871b015e7785d3870"
+ },
+ "cpu": "\t: Intel(R) Xeon(R) Processor @ 2.10GHz",
+ "nproc": 4,
+ "results": [
+  {
+   "input": "album44.wav",
+   "codec": "pcm_s16le",
+   "sample_rate": 44100,
+   "channels": 2,
+   "bits": 16,
+   "duration": 205.35254,
+   "pcm_bytes": 36224188,
+   "pcm_sha256": "c627ffe8ff4db21c156e4092d9f5bcd0719ea2dc2466e579f50f99026e990f81",
+   "flac_bytes": {
+    "native": 17082411,
+    "reference": 17082411,
+    "ffmpeg": 17144474
+   },
+   "flac_ratio": {
+    "native": 0.4715747113503276,
+    "reference": 0.4715747113503276,
+    "ffmpeg": 0.4732880140750153
+   },
+   "median": {
+    "native": {
+     "cpu": 0.725518,
+     "wall": 0.7681387750000113,
+     "rss_kib": 3740,
+     "cpu_per_audio_s": 0.0035330364065621
+    },
+    "reference": {
+     "cpu": 0.827856,
+     "wall": 0.863854376000063,
+     "rss_kib": 5268,
+     "cpu_per_audio_s": 0.004031389141814365
+    },
+    "ffmpeg": {
+     "cpu": 1.502506,
+     "wall": 0.6903672659999529,
+     "rss_kib": 21676,
+     "cpu_per_audio_s": 0.007316714952734453
+    }
+   },
+   "runs": {
+    "native": [
+     {
+      "cpu": 0.671929,
+      "wall": 0.7004547049999701,
+      "rss_kib": 3740,
+      "pcm_sha256": "c627ffe8ff4db21c156e4092d9f5bcd0719ea2dc2466e579f50f99026e990f81"
+     },
+     {
+      "cpu": 0.693313,
+      "wall": 0.7250588330000483,
+      "rss_kib": 3636,
+      "pcm_sha256": "c627ffe8ff4db21c156e4092d9f5bcd0719ea2dc2466e579f50f99026e990f81"
+     },
+     {
+      "cpu": 0.7424719999999999,
+      "wall": 0.782858143999988,
+      "rss_kib": 3836,
+      "pcm_sha256": "c627ffe8ff4db21c156e4092d9f5bcd0719ea2dc2466e579f50f99026e990f81"
+     },
+     {
+      "cpu": 0.725518,
+      "wall": 0.7681387750000113,
+      "rss_kib": 3760,
+      "pcm_sha256": "c627ffe8ff4db21c156e4092d9f5bcd0719ea2dc2466e579f50f99026e990f81"
+     },
+     {
+      "cpu": 0.7377029999999999,
+      "wall": 0.7870356519999859,
+      "rss_kib": 3716,
+      "pcm_sha256": "c627ffe8ff4db21c156e4092d9f5bcd0719ea2dc2466e579f50f99026e990f81"
+     }
+    ],
+    "reference": [
+     {
+      "cpu": 0.809669,
+      "wall": 0.8375552840000182,
+      "rss_kib": 5184,
+      "pcm_sha256": "c627ffe8ff4db21c156e4092d9f5bcd0719ea2dc2466e579f50f99026e990f81"
+     },
+     {
+      "cpu": 0.827856,
+      "wall": 0.8596436919999633,
+      "rss_kib": 5268,
+      "pcm_sha256": "c627ffe8ff4db21c156e4092d9f5bcd0719ea2dc2466e579f50f99026e990f81"
+     },
+     {
+      "cpu": 0.911481,
+      "wall": 0.9729447990000608,
+      "rss_kib": 5312,
+      "pcm_sha256": "c627ffe8ff4db21c156e4092d9f5bcd0719ea2dc2466e579f50f99026e990f81"
+     },
+     {
+      "cpu": 0.871382,
+      "wall": 0.9035294719999456,
+      "rss_kib": 5424,
+      "pcm_sha256": "c627ffe8ff4db21c156e4092d9f5bcd0719ea2dc2466e579f50f99026e990f81"
+     },
+     {
+      "cpu": 0.8146049999999999,
+      "wall": 0.863854376000063,
+      "rss_kib": 5252,
+      "pcm_sha256": "c627ffe8ff4db21c156e4092d9f5bcd0719ea2dc2466e579f50f99026e990f81"
+     }
+    ],
+    "ffmpeg": [
+     {
+      "cpu": 1.369681,
+      "wall": 0.6343571769999699,
+      "rss_kib": 21744,
+      "pcm_sha256": "c627ffe8ff4db21c156e4092d9f5bcd0719ea2dc2466e579f50f99026e990f81"
+     },
+     {
+      "cpu": 1.37906,
+      "wall": 0.6790230960000372,
+      "rss_kib": 21780,
+      "pcm_sha256": "c627ffe8ff4db21c156e4092d9f5bcd0719ea2dc2466e579f50f99026e990f81"
+     },
+     {
+      "cpu": 1.502506,
+      "wall": 0.6903672659999529,
+      "rss_kib": 21652,
+      "pcm_sha256": "c627ffe8ff4db21c156e4092d9f5bcd0719ea2dc2466e579f50f99026e990f81"
+     },
+     {
+      "cpu": 1.552905,
+      "wall": 0.7564750940000522,
+      "rss_kib": 20244,
+      "pcm_sha256": "c627ffe8ff4db21c156e4092d9f5bcd0719ea2dc2466e579f50f99026e990f81"
+     },
+     {
+      "cpu": 1.527756,
+      "wall": 0.7332578350000176,
+      "rss_kib": 21676,
+      "pcm_sha256": "c627ffe8ff4db21c156e4092d9f5bcd0719ea2dc2466e579f50f99026e990f81"
+     }
+    ]
+   }
+  },
+  {
+   "input": "album44.m4a",
+   "codec": "alac",
+   "sample_rate": 44100,
+   "channels": 2,
+   "bits": 16,
+   "duration": 205.35254,
+   "pcm_bytes": 36224188,
+   "pcm_sha256": "c627ffe8ff4db21c156e4092d9f5bcd0719ea2dc2466e579f50f99026e990f81",
+   "flac_bytes": {
+    "native": 17082411,
+    "reference": 17082411,
+    "ffmpeg": 17144474
+   },
+   "flac_ratio": {
+    "native": 0.4715747113503276,
+    "reference": 0.4715747113503276,
+    "ffmpeg": 0.4732880140750153
+   },
+   "median": {
+    "native": {
+     "cpu": 1.2656869999999998,
+     "wall": 1.2927501850000453,
+     "rss_kib": 3764,
+     "cpu_per_audio_s": 0.006163483539088437
+    },
+    "reference": {
+     "cpu": 1.505429,
+     "wall": 1.546656037000048,
+     "rss_kib": 5444,
+     "cpu_per_audio_s": 0.00733094901090583
+    },
+    "ffmpeg": {
+     "cpu": 2.14072,
+     "wall": 1.0869595809999737,
+     "rss_kib": 21156,
+     "cpu_per_audio_s": 0.010424609308460465
+    }
+   },
+   "runs": {
+    "native": [
+     {
+      "cpu": 1.286827,
+      "wall": 1.3208281380000244,
+      "rss_kib": 3856,
+      "pcm_sha256": "c627ffe8ff4db21c156e4092d9f5bcd0719ea2dc2466e579f50f99026e990f81"
+     },
+     {
+      "cpu": 1.2656869999999998,
+      "wall": 1.2927501850000453,
+      "rss_kib": 3824,
+      "pcm_sha256": "c627ffe8ff4db21c156e4092d9f5bcd0719ea2dc2466e579f50f99026e990f81"
+     },
+     {
+      "cpu": 1.256718,
+      "wall": 1.2868586480000204,
+      "rss_kib": 3748,
+      "pcm_sha256": "c627ffe8ff4db21c156e4092d9f5bcd0719ea2dc2466e579f50f99026e990f81"
+     },
+     {
+      "cpu": 1.2333610000000002,
+      "wall": 1.2792704819999017,
+      "rss_kib": 3764,
+      "pcm_sha256": "c627ffe8ff4db21c156e4092d9f5bcd0719ea2dc2466e579f50f99026e990f81"
+     },
+     {
+      "cpu": 1.3035269999999999,
+      "wall": 1.337871793000204,
+      "rss_kib": 3736,
+      "pcm_sha256": "c627ffe8ff4db21c156e4092d9f5bcd0719ea2dc2466e579f50f99026e990f81"
+     }
+    ],
+    "reference": [
+     {
+      "cpu": 1.5413729999999999,
+      "wall": 1.5743772270000136,
+      "rss_kib": 5444,
+      "pcm_sha256": "c627ffe8ff4db21c156e4092d9f5bcd0719ea2dc2466e579f50f99026e990f81"
+     },
+     {
+      "cpu": 1.432419,
+      "wall": 1.4796533539999928,
+      "rss_kib": 5452,
+      "pcm_sha256": "c627ffe8ff4db21c156e4092d9f5bcd0719ea2dc2466e579f50f99026e990f81"
+     },
+     {
+      "cpu": 1.467277,
+      "wall": 1.5031350919999795,
+      "rss_kib": 5492,
+      "pcm_sha256": "c627ffe8ff4db21c156e4092d9f5bcd0719ea2dc2466e579f50f99026e990f81"
+     },
+     {
+      "cpu": 1.5413780000000001,
+      "wall": 1.583884861999877,
+      "rss_kib": 5420,
+      "pcm_sha256": "c627ffe8ff4db21c156e4092d9f5bcd0719ea2dc2466e579f50f99026e990f81"
+     },
+     {
+      "cpu": 1.505429,
+      "wall": 1.546656037000048,
+      "rss_kib": 5428,
+      "pcm_sha256": "c627ffe8ff4db21c156e4092d9f5bcd0719ea2dc2466e579f50f99026e990f81"
+     }
+    ],
+    "ffmpeg": [
+     {
+      "cpu": 2.731573,
+      "wall": 1.4463034430000334,
+      "rss_kib": 21488,
+      "pcm_sha256": "c627ffe8ff4db21c156e4092d9f5bcd0719ea2dc2466e579f50f99026e990f81"
+     },
+     {
+      "cpu": 2.1018269999999997,
+      "wall": 1.0373280939999177,
+      "rss_kib": 21416,
+      "pcm_sha256": "c627ffe8ff4db21c156e4092d9f5bcd0719ea2dc2466e579f50f99026e990f81"
+     },
+     {
+      "cpu": 2.3159609999999997,
+      "wall": 1.147253869999986,
+      "rss_kib": 21108,
+      "pcm_sha256": "c627ffe8ff4db21c156e4092d9f5bcd0719ea2dc2466e579f50f99026e990f81"
+     },
+     {
+      "cpu": 2.14072,
+      "wall": 1.0869595809999737,
+      "rss_kib": 20904,
+      "pcm_sha256": "c627ffe8ff4db21c156e4092d9f5bcd0719ea2dc2466e579f50f99026e990f81"
+     },
+     {
+      "cpu": 2.109318,
+      "wall": 1.0354739409999638,
+      "rss_kib": 21156,
+      "pcm_sha256": "c627ffe8ff4db21c156e4092d9f5bcd0719ea2dc2466e579f50f99026e990f81"
+     }
+    ]
+   }
+  },
+  {
+   "input": "album44.flac",
+   "codec": "flac",
+   "sample_rate": 44100,
+   "channels": 2,
+   "bits": 16,
+   "duration": 205.35254,
+   "pcm_bytes": 36224188,
+   "pcm_sha256": "c627ffe8ff4db21c156e4092d9f5bcd0719ea2dc2466e579f50f99026e990f81",
+   "flac_bytes": {
+    "native": 17082411,
+    "reference": 17082411,
+    "ffmpeg": 17144474
+   },
+   "flac_ratio": {
+    "native": 0.4715747113503276,
+    "reference": 0.4715747113503276,
+    "ffmpeg": 0.4732880140750153
+   },
+   "median": {
+    "native": {
+     "cpu": 0.9385379999999999,
+     "wall": 0.9796588560000146,
+     "rss_kib": 3936,
+     "cpu_per_audio_s": 0.004570374439975273
+    },
+    "reference": {
+     "cpu": 1.0366030000000002,
+     "wall": 1.0809858299999178,
+     "rss_kib": 5564,
+     "cpu_per_audio_s": 0.005047919056662266
+    },
+    "ffmpeg": {
+     "cpu": 1.6230099999999998,
+     "wall": 0.6719979640001839,
+     "rss_kib": 21424,
+     "cpu_per_audio_s": 0.007903530192516732
+    }
+   },
+   "runs": {
+    "native": [
+     {
+      "cpu": 0.9385379999999999,
+      "wall": 0.974498709000045,
+      "rss_kib": 3936,
+      "pcm_sha256": "c627ffe8ff4db21c156e4092d9f5bcd0719ea2dc2466e579f50f99026e990f81"
+     },
+     {
+      "cpu": 0.9375009999999999,
+      "wall": 0.9864473989998714,
+      "rss_kib": 3692,
+      "pcm_sha256": "c627ffe8ff4db21c156e4092d9f5bcd0719ea2dc2466e579f50f99026e990f81"
+     },
+     {
+      "cpu": 0.944826,
+      "wall": 0.9796588560000146,
+      "rss_kib": 3960,
+      "pcm_sha256": "c627ffe8ff4db21c156e4092d9f5bcd0719ea2dc2466e579f50f99026e990f81"
+     },
+     {
+      "cpu": 0.903511,
+      "wall": 0.9399646609999763,
+      "rss_kib": 3964,
+      "pcm_sha256": "c627ffe8ff4db21c156e4092d9f5bcd0719ea2dc2466e579f50f99026e990f81"
+     },
+     {
+      "cpu": 0.952376,
+      "wall": 0.988527693999913,
+      "rss_kib": 3856,
+      "pcm_sha256": "c627ffe8ff4db21c156e4092d9f5bcd0719ea2dc2466e579f50f99026e990f81"
+     }
+    ],
+    "reference": [
+     {
+      "cpu": 1.0366030000000002,
+      "wall": 1.0865168120001272,
+      "rss_kib": 5392,
+      "pcm_sha256": "c627ffe8ff4db21c156e4092d9f5bcd0719ea2dc2466e579f50f99026e990f81"
+     },
+     {
+      "cpu": 1.068598,
+      "wall": 1.1240920850000293,
+      "rss_kib": 5580,
+      "pcm_sha256": "c627ffe8ff4db21c156e4092d9f5bcd0719ea2dc2466e579f50f99026e990f81"
+     },
+     {
+      "cpu": 1.0547199999999999,
+      "wall": 1.0809858299999178,
+      "rss_kib": 5568,
+      "pcm_sha256": "c627ffe8ff4db21c156e4092d9f5bcd0719ea2dc2466e579f50f99026e990f81"
+     },
+     {
+      "cpu": 1.032343,
+      "wall": 1.061246747000041,
+      "rss_kib": 5564,
+      "pcm_sha256": "c627ffe8ff4db21c156e4092d9f5bcd0719ea2dc2466e579f50f99026e990f81"
+     },
+     {
+      "cpu": 1.002823,
+      "wall": 1.0335884060000353,
+      "rss_kib": 5504,
+      "pcm_sha256": "c627ffe8ff4db21c156e4092d9f5bcd0719ea2dc2466e579f50f99026e990f81"
+     }
+    ],
+    "ffmpeg": [
+     {
+      "cpu": 1.6316289999999998,
+      "wall": 0.6719979640001839,
+      "rss_kib": 21424,
+      "pcm_sha256": "c627ffe8ff4db21c156e4092d9f5bcd0719ea2dc2466e579f50f99026e990f81"
+     },
+     {
+      "cpu": 1.75319,
+      "wall": 0.7734910269998636,
+      "rss_kib": 19856,
+      "pcm_sha256": "c627ffe8ff4db21c156e4092d9f5bcd0719ea2dc2466e579f50f99026e990f81"
+     },
+     {
+      "cpu": 1.5594419999999998,
+      "wall": 0.6298913489999904,
+      "rss_kib": 21496,
+      "pcm_sha256": "c627ffe8ff4db21c156e4092d9f5bcd0719ea2dc2466e579f50f99026e990f81"
+     },
+     {
+      "cpu": 1.603199,
+      "wall": 0.6483157269999538,
+      "rss_kib": 21540,
+      "pcm_sha256": "c627ffe8ff4db21c156e4092d9f5bcd0719ea2dc2466e579f50f99026e990f81"
+     },
+     {
+      "cpu": 1.6230099999999998,
+      "wall": 0.6752620429999752,
+      "rss_kib": 21160,
+      "pcm_sha256": "c627ffe8ff4db21c156e4092d9f5bcd0719ea2dc2466e579f50f99026e990f81"
+     }
+    ]
+   }
+  },
+  {
+   "input": "album48.wav",
+   "codec": "pcm_s16le",
+   "sample_rate": 48000,
+   "channels": 2,
+   "bits": 16,
+   "duration": 109.394542,
+   "pcm_bytes": 21003752,
+   "pcm_sha256": "2bb30d6398eb7aaba89c23bad561cb2cc776aa5b2f456f0a74968371ab00b285",
+   "flac_bytes": {
+    "native": 7825952,
+    "reference": 7825952,
+    "ffmpeg": 7841748
+   },
+   "flac_ratio": {
+    "native": 0.3725978101436353,
+    "reference": 0.3725978101436353,
+    "ffmpeg": 0.37334986625246763
+   },
+   "median": {
+    "native": {
+     "cpu": 0.41512,
+     "wall": 0.4409724780000488,
+     "rss_kib": 3692,
+     "cpu_per_audio_s": 0.003794704858310024
+    },
+    "reference": {
+     "cpu": 0.47173,
+     "wall": 0.486036034000108,
+     "rss_kib": 4484,
+     "cpu_per_audio_s": 0.004312189542326527
+    },
+    "ffmpeg": {
+     "cpu": 0.9110259999999999,
+     "wall": 0.44534655999996176,
+     "rss_kib": 21740,
+     "cpu_per_audio_s": 0.008327892629231903
+    }
+   },
+   "runs": {
+    "native": [
+     {
+      "cpu": 0.40577399999999997,
+      "wall": 0.4291008249999777,
+      "rss_kib": 3724,
+      "pcm_sha256": "2bb30d6398eb7aaba89c23bad561cb2cc776aa5b2f456f0a74968371ab00b285"
+     },
+     {
+      "cpu": 0.41512,
+      "wall": 0.4409724780000488,
+      "rss_kib": 3692,
+      "pcm_sha256": "2bb30d6398eb7aaba89c23bad561cb2cc776aa5b2f456f0a74968371ab00b285"
+     },
+     {
+      "cpu": 0.43833099999999997,
+      "wall": 0.47358882300000005,
+      "rss_kib": 3808,
+      "pcm_sha256": "2bb30d6398eb7aaba89c23bad561cb2cc776aa5b2f456f0a74968371ab00b285"
+     },
+     {
+      "cpu": 0.406576,
+      "wall": 0.42468870599986985,
+      "rss_kib": 3684,
+      "pcm_sha256": "2bb30d6398eb7aaba89c23bad561cb2cc776aa5b2f456f0a74968371ab00b285"
+     },
+     {
+      "cpu": 0.43673599999999996,
+      "wall": 0.46271920799995314,
+      "rss_kib": 3676,
+      "pcm_sha256": "2bb30d6398eb7aaba89c23bad561cb2cc776aa5b2f456f0a74968371ab00b285"
+     }
+    ],
+    "reference": [
+     {
+      "cpu": 0.486001,
+      "wall": 0.5008011019999685,
+      "rss_kib": 4484,
+      "pcm_sha256": "2bb30d6398eb7aaba89c23bad561cb2cc776aa5b2f456f0a74968371ab00b285"
+     },
+     {
+      "cpu": 0.48214,
+      "wall": 0.49795377300006294,
+      "rss_kib": 4488,
+      "pcm_sha256": "2bb30d6398eb7aaba89c23bad561cb2cc776aa5b2f456f0a74968371ab00b285"
+     },
+     {
+      "cpu": 0.46475999999999995,
+      "wall": 0.4786835269999301,
+      "rss_kib": 4520,
+      "pcm_sha256": "2bb30d6398eb7aaba89c23bad561cb2cc776aa5b2f456f0a74968371ab00b285"
+     },
+     {
+      "cpu": 0.47173,
+      "wall": 0.486036034000108,
+      "rss_kib": 4376,
+      "pcm_sha256": "2bb30d6398eb7aaba89c23bad561cb2cc776aa5b2f456f0a74968371ab00b285"
+     },
+     {
+      "cpu": 0.445845,
+      "wall": 0.4743333259998508,
+      "rss_kib": 4416,
+      "pcm_sha256": "2bb30d6398eb7aaba89c23bad561cb2cc776aa5b2f456f0a74968371ab00b285"
+     }
+    ],
+    "ffmpeg": [
+     {
+      "cpu": 0.903057,
+      "wall": 0.4355231219999496,
+      "rss_kib": 21624,
+      "pcm_sha256": "2bb30d6398eb7aaba89c23bad561cb2cc776aa5b2f456f0a74968371ab00b285"
+     },
+     {
+      "cpu": 0.9110259999999999,
+      "wall": 0.44534655999996176,
+      "rss_kib": 21740,
+      "pcm_sha256": "2bb30d6398eb7aaba89c23bad561cb2cc776aa5b2f456f0a74968371ab00b285"
+     },
+     {
+      "cpu": 0.9174119999999999,
+      "wall": 0.45940600799985987,
+      "rss_kib": 21636,
+      "pcm_sha256": "2bb30d6398eb7aaba89c23bad561cb2cc776aa5b2f456f0a74968371ab00b285"
+     },
+     {
+      "cpu": 0.9762739999999999,
+      "wall": 0.49921648500003357,
+      "rss_kib": 21772,
+      "pcm_sha256": "2bb30d6398eb7aaba89c23bad561cb2cc776aa5b2f456f0a74968371ab00b285"
+     },
+     {
+      "cpu": 0.86517,
+      "wall": 0.4358179989999371,
+      "rss_kib": 21888,
+      "pcm_sha256": "2bb30d6398eb7aaba89c23bad561cb2cc776aa5b2f456f0a74968371ab00b285"
+     }
+    ]
+   }
+  },
+  {
+   "input": "album48.m4a",
+   "codec": "alac",
+   "sample_rate": 48000,
+   "channels": 2,
+   "bits": 16,
+   "duration": 109.394542,
+   "pcm_bytes": 21003752,
+   "pcm_sha256": "2bb30d6398eb7aaba89c23bad561cb2cc776aa5b2f456f0a74968371ab00b285",
+   "flac_bytes": {
+    "native": 7825952,
+    "reference": 7825952,
+    "ffmpeg": 7841748
+   },
+   "flac_ratio": {
+    "native": 0.3725978101436353,
+    "reference": 0.3725978101436353,
+    "ffmpeg": 0.37334986625246763
+   },
+   "median": {
+    "native": {
+     "cpu": 0.7201029999999999,
+     "wall": 0.7439050960001623,
+     "rss_kib": 3748,
+     "cpu_per_audio_s": 0.006582622741818325
+    },
+    "reference": {
+     "cpu": 0.885774,
+     "wall": 0.9175325440000961,
+     "rss_kib": 4616,
+     "cpu_per_audio_s": 0.008097058443738444
+    },
+    "ffmpeg": {
+     "cpu": 1.203307,
+     "wall": 0.6472831930000211,
+     "rss_kib": 21072,
+     "cpu_per_audio_s": 0.010999698686978367
+    }
+   },
+   "runs": {
+    "native": [
+     {
+      "cpu": 0.7049979999999999,
+      "wall": 0.727549179999869,
+      "rss_kib": 3748,
+      "pcm_sha256": "2bb30d6398eb7aaba89c23bad561cb2cc776aa5b2f456f0a74968371ab00b285"
+     },
+     {
+      "cpu": 0.718328,
+      "wall": 0.7439050960001623,
+      "rss_kib": 3804,
+      "pcm_sha256": "2bb30d6398eb7aaba89c23bad561cb2cc776aa5b2f456f0a74968371ab00b285"
+     },
+     {
+      "cpu": 0.7201029999999999,
+      "wall": 0.7400320960000499,
+      "rss_kib": 3736,
+      "pcm_sha256": "2bb30d6398eb7aaba89c23bad561cb2cc776aa5b2f456f0a74968371ab00b285"
+     },
+     {
+      "cpu": 0.739038,
+      "wall": 0.7683475799999542,
+      "rss_kib": 3748,
+      "pcm_sha256": "2bb30d6398eb7aaba89c23bad561cb2cc776aa5b2f456f0a74968371ab00b285"
+     },
+     {
+      "cpu": 0.743363,
+      "wall": 0.7762569129999974,
+      "rss_kib": 3748,
+      "pcm_sha256": "2bb30d6398eb7aaba89c23bad561cb2cc776aa5b2f456f0a74968371ab00b285"
+     }
+    ],
+    "reference": [
+     {
+      "cpu": 0.894609,
+      "wall": 0.9376703950001684,
+      "rss_kib": 4692,
+      "pcm_sha256": "2bb30d6398eb7aaba89c23bad561cb2cc776aa5b2f456f0a74968371ab00b285"
+     },
+     {
+      "cpu": 0.838849,
+      "wall": 0.8559122080000634,
+      "rss_kib": 4616,
+      "pcm_sha256": "2bb30d6398eb7aaba89c23bad561cb2cc776aa5b2f456f0a74968371ab00b285"
+     },
+     {
+      "cpu": 0.885774,
+      "wall": 0.9007055720001063,
+      "rss_kib": 4632,
+      "pcm_sha256": "2bb30d6398eb7aaba89c23bad561cb2cc776aa5b2f456f0a74968371ab00b285"
+     },
+     {
+      "cpu": 0.810437,
+      "wall": 0.9268954070000746,
+      "rss_kib": 4416,
+      "pcm_sha256": "2bb30d6398eb7aaba89c23bad561cb2cc776aa5b2f456f0a74968371ab00b285"
+     },
+     {
+      "cpu": 0.903097,
+      "wall": 0.9175325440000961,
+      "rss_kib": 4604,
+      "pcm_sha256": "2bb30d6398eb7aaba89c23bad561cb2cc776aa5b2f456f0a74968371ab00b285"
+     }
+    ],
+    "ffmpeg": [
+     {
+      "cpu": 1.197937,
+      "wall": 0.6472831930000211,
+      "rss_kib": 21072,
+      "pcm_sha256": "2bb30d6398eb7aaba89c23bad561cb2cc776aa5b2f456f0a74968371ab00b285"
+     },
+     {
+      "cpu": 1.329095,
+      "wall": 0.672505110999964,
+      "rss_kib": 21348,
+      "pcm_sha256": "2bb30d6398eb7aaba89c23bad561cb2cc776aa5b2f456f0a74968371ab00b285"
+     },
+     {
+      "cpu": 1.2124949999999999,
+      "wall": 0.6094075160001466,
+      "rss_kib": 21072,
+      "pcm_sha256": "2bb30d6398eb7aaba89c23bad561cb2cc776aa5b2f456f0a74968371ab00b285"
+     },
+     {
+      "cpu": 1.083551,
+      "wall": 0.5886077139998633,
+      "rss_kib": 20648,
+      "pcm_sha256": "2bb30d6398eb7aaba89c23bad561cb2cc776aa5b2f456f0a74968371ab00b285"
+     },
+     {
+      "cpu": 1.203307,
+      "wall": 0.6711550149998402,
+      "rss_kib": 20900,
+      "pcm_sha256": "2bb30d6398eb7aaba89c23bad561cb2cc776aa5b2f456f0a74968371ab00b285"
+     }
+    ]
+   }
+  },
+  {
+   "input": "album48.flac",
+   "codec": "flac",
+   "sample_rate": 48000,
+   "channels": 2,
+   "bits": 16,
+   "duration": 109.394542,
+   "pcm_bytes": 21003752,
+   "pcm_sha256": "2bb30d6398eb7aaba89c23bad561cb2cc776aa5b2f456f0a74968371ab00b285",
+   "flac_bytes": {
+    "native": 7825952,
+    "reference": 7825952,
+    "ffmpeg": 7841748
+   },
+   "flac_ratio": {
+    "native": 0.3725978101436353,
+    "reference": 0.3725978101436353,
+    "ffmpeg": 0.37334986625246763
+   },
+   "median": {
+    "native": {
+     "cpu": 0.5549299999999999,
+     "wall": 0.5788693740000781,
+     "rss_kib": 3896,
+     "cpu_per_audio_s": 0.005072739369391939
+    },
+    "reference": {
+     "cpu": 0.630035,
+     "wall": 0.6466396840000925,
+     "rss_kib": 4924,
+     "cpu_per_audio_s": 0.005759290989124485
+    },
+    "ffmpeg": {
+     "cpu": 1.0146739999999999,
+     "wall": 0.4462406360000841,
+     "rss_kib": 21216,
+     "cpu_per_audio_s": 0.009275362202256854
+    }
+   },
+   "runs": {
+    "native": [
+     {
+      "cpu": 0.5549299999999999,
+      "wall": 0.5788693740000781,
+      "rss_kib": 3968,
+      "pcm_sha256": "2bb30d6398eb7aaba89c23bad561cb2cc776aa5b2f456f0a74968371ab00b285"
+     },
+     {
+      "cpu": 0.5862350000000001,
+      "wall": 0.6021944490000806,
+      "rss_kib": 3716,
+      "pcm_sha256": "2bb30d6398eb7aaba89c23bad561cb2cc776aa5b2f456f0a74968371ab00b285"
+     },
+     {
+      "cpu": 0.533019,
+      "wall": 0.5524590140000782,
+      "rss_kib": 3940,
+      "pcm_sha256": "2bb30d6398eb7aaba89c23bad561cb2cc776aa5b2f456f0a74968371ab00b285"
+     },
+     {
+      "cpu": 0.5432089999999999,
+      "wall": 0.577602952999996,
+      "rss_kib": 3788,
+      "pcm_sha256": "2bb30d6398eb7aaba89c23bad561cb2cc776aa5b2f456f0a74968371ab00b285"
+     },
+     {
+      "cpu": 0.5568179999999999,
+      "wall": 0.5818095100000846,
+      "rss_kib": 3896,
+      "pcm_sha256": "2bb30d6398eb7aaba89c23bad561cb2cc776aa5b2f456f0a74968371ab00b285"
+     }
+    ],
+    "reference": [
+     {
+      "cpu": 0.598348,
+      "wall": 0.6154896349999035,
+      "rss_kib": 5004,
+      "pcm_sha256": "2bb30d6398eb7aaba89c23bad561cb2cc776aa5b2f456f0a74968371ab00b285"
+     },
+     {
+      "cpu": 0.6127069999999999,
+      "wall": 0.6466396840000925,
+      "rss_kib": 4864,
+      "pcm_sha256": "2bb30d6398eb7aaba89c23bad561cb2cc776aa5b2f456f0a74968371ab00b285"
+     },
+     {
+      "cpu": 0.66431,
+      "wall": 0.6875373100001525,
+      "rss_kib": 4892,
+      "pcm_sha256": "2bb30d6398eb7aaba89c23bad561cb2cc776aa5b2f456f0a74968371ab00b285"
+     },
+     {
+      "cpu": 0.630035,
+      "wall": 0.6443165549999321,
+      "rss_kib": 4924,
+      "pcm_sha256": "2bb30d6398eb7aaba89c23bad561cb2cc776aa5b2f456f0a74968371ab00b285"
+     },
+     {
+      "cpu": 0.681671,
+      "wall": 0.7009573150000961,
+      "rss_kib": 4976,
+      "pcm_sha256": "2bb30d6398eb7aaba89c23bad561cb2cc776aa5b2f456f0a74968371ab00b285"
+     }
+    ],
+    "ffmpeg": [
+     {
+      "cpu": 0.9032709999999999,
+      "wall": 0.36446737300002496,
+      "rss_kib": 21200,
+      "pcm_sha256": "2bb30d6398eb7aaba89c23bad561cb2cc776aa5b2f456f0a74968371ab00b285"
+     },
+     {
+      "cpu": 0.915616,
+      "wall": 0.37164873999995507,
+      "rss_kib": 21140,
+      "pcm_sha256": "2bb30d6398eb7aaba89c23bad561cb2cc776aa5b2f456f0a74968371ab00b285"
+     },
+     {
+      "cpu": 1.047788,
+      "wall": 0.46381307100000413,
+      "rss_kib": 21300,
+      "pcm_sha256": "2bb30d6398eb7aaba89c23bad561cb2cc776aa5b2f456f0a74968371ab00b285"
+     },
+     {
+      "cpu": 1.0146739999999999,
+      "wall": 0.45387989599998946,
+      "rss_kib": 21576,
+      "pcm_sha256": "2bb30d6398eb7aaba89c23bad561cb2cc776aa5b2f456f0a74968371ab00b285"
+     },
+     {
+      "cpu": 1.037957,
+      "wall": 0.4462406360000841,
+      "rss_kib": 21216,
+      "pcm_sha256": "2bb30d6398eb7aaba89c23bad561cb2cc776aa5b2f456f0a74968371ab00b285"
+     }
+    ]
+   }
+  },
+  {
+   "input": "album96.wav",
+   "codec": "pcm_s24le",
+   "sample_rate": 96000,
+   "channels": 2,
+   "bits": 24,
+   "duration": 40.734521,
+   "pcm_bytes": 23463084,
+   "pcm_sha256": "be123dbab4eccead47da7c04f1b744bf4773afb7350c8e6161e5561bcb29312c",
+   "flac_bytes": {
+    "native": 16463997,
+    "reference": 16463997,
+    "ffmpeg": 16474306
+   },
+   "flac_ratio": {
+    "native": 0.7016979097888411,
+    "reference": 0.7016979097888411,
+    "ffmpeg": 0.7021372808450926
+   },
+   "median": {
+    "native": {
+     "cpu": 0.31914899999999996,
+     "wall": 0.3412194869999894,
+     "rss_kib": 3772,
+     "cpu_per_audio_s": 0.007834853391304146
+    },
+    "reference": {
+     "cpu": 0.400869,
+     "wall": 0.42600073899984636,
+     "rss_kib": 6368,
+     "cpu_per_audio_s": 0.009841014210035757
+    },
+    "ffmpeg": {
+     "cpu": 0.6041780000000001,
+     "wall": 0.30539202199997817,
+     "rss_kib": 24160,
+     "cpu_per_audio_s": 0.014832087997303322
+    }
+   },
+   "runs": {
+    "native": [
+     {
+      "cpu": 0.31535199999999997,
+      "wall": 0.34085715199989863,
+      "rss_kib": 3772,
+      "pcm_sha256": "be123dbab4eccead47da7c04f1b744bf4773afb7350c8e6161e5561bcb29312c"
+     },
+     {
+      "cpu": 0.319674,
+      "wall": 0.3412194869999894,
+      "rss_kib": 3632,
+      "pcm_sha256": "be123dbab4eccead47da7c04f1b744bf4773afb7350c8e6161e5561bcb29312c"
+     },
+     {
+      "cpu": 0.317941,
+      "wall": 0.34023091900007785,
+      "rss_kib": 3780,
+      "pcm_sha256": "be123dbab4eccead47da7c04f1b744bf4773afb7350c8e6161e5561bcb29312c"
+     },
+     {
+      "cpu": 0.34561000000000003,
+      "wall": 0.3707793229998515,
+      "rss_kib": 3808,
+      "pcm_sha256": "be123dbab4eccead47da7c04f1b744bf4773afb7350c8e6161e5561bcb29312c"
+     },
+     {
+      "cpu": 0.31914899999999996,
+      "wall": 0.34235329000011916,
+      "rss_kib": 3760,
+      "pcm_sha256": "be123dbab4eccead47da7c04f1b744bf4773afb7350c8e6161e5561bcb29312c"
+     }
+    ],
+    "reference": [
+     {
+      "cpu": 0.408388,
+      "wall": 0.4353157169998667,
+      "rss_kib": 6460,
+      "pcm_sha256": "be123dbab4eccead47da7c04f1b744bf4773afb7350c8e6161e5561bcb29312c"
+     },
+     {
+      "cpu": 0.400869,
+      "wall": 0.42600073899984636,
+      "rss_kib": 6336,
+      "pcm_sha256": "be123dbab4eccead47da7c04f1b744bf4773afb7350c8e6161e5561bcb29312c"
+     },
+     {
+      "cpu": 0.393375,
+      "wall": 0.42287266100015586,
+      "rss_kib": 6368,
+      "pcm_sha256": "be123dbab4eccead47da7c04f1b744bf4773afb7350c8e6161e5561bcb29312c"
+     },
+     {
+      "cpu": 0.414763,
+      "wall": 0.44535067399988293,
+      "rss_kib": 6480,
+      "pcm_sha256": "be123dbab4eccead47da7c04f1b744bf4773afb7350c8e6161e5561bcb29312c"
+     },
+     {
+      "cpu": 0.39331799999999995,
+      "wall": 0.41898869900001046,
+      "rss_kib": 6368,
+      "pcm_sha256": "be123dbab4eccead47da7c04f1b744bf4773afb7350c8e6161e5561bcb29312c"
+     }
+    ],
+    "ffmpeg": [
+     {
+      "cpu": 0.583588,
+      "wall": 0.29447058699997797,
+      "rss_kib": 24288,
+      "pcm_sha256": "be123dbab4eccead47da7c04f1b744bf4773afb7350c8e6161e5561bcb29312c"
+     },
+     {
+      "cpu": 0.567365,
+      "wall": 0.30075787200007653,
+      "rss_kib": 24160,
+      "pcm_sha256": "be123dbab4eccead47da7c04f1b744bf4773afb7350c8e6161e5561bcb29312c"
+     },
+     {
+      "cpu": 0.6041780000000001,
+      "wall": 0.30539202199997817,
+      "rss_kib": 24024,
+      "pcm_sha256": "be123dbab4eccead47da7c04f1b744bf4773afb7350c8e6161e5561bcb29312c"
+     },
+     {
+      "cpu": 0.6773480000000001,
+      "wall": 0.34226553700000295,
+      "rss_kib": 24080,
+      "pcm_sha256": "be123dbab4eccead47da7c04f1b744bf4773afb7350c8e6161e5561bcb29312c"
+     },
+     {
+      "cpu": 0.71205,
+      "wall": 0.37965570000005755,
+      "rss_kib": 24368,
+      "pcm_sha256": "be123dbab4eccead47da7c04f1b744bf4773afb7350c8e6161e5561bcb29312c"
+     }
+    ]
+   }
+  },
+  {
+   "input": "album96.m4a",
+   "codec": "alac",
+   "sample_rate": 96000,
+   "channels": 2,
+   "bits": 24,
+   "duration": 40.734521,
+   "pcm_bytes": 23463084,
+   "pcm_sha256": "be123dbab4eccead47da7c04f1b744bf4773afb7350c8e6161e5561bcb29312c",
+   "flac_bytes": {
+    "native": 16463997,
+    "reference": 16463997,
+    "ffmpeg": 16474306
+   },
+   "flac_ratio": {
+    "native": 0.7016979097888411,
+    "reference": 0.7016979097888411,
+    "ffmpeg": 0.7021372808450926
+   },
+   "median": {
+    "native": {
+     "cpu": 0.545457,
+     "wall": 0.5715023870000095,
+     "rss_kib": 4024,
+     "cpu_per_audio_s": 0.013390534284176312
+    },
+    "reference": {
+     "cpu": 0.705738,
+     "wall": 0.7291552279998541,
+     "rss_kib": 6468,
+     "cpu_per_audio_s": 0.017325304991311914
+    },
+    "ffmpeg": {
+     "cpu": 0.910072,
+     "wall": 0.4761463550000826,
+     "rss_kib": 21696,
+     "cpu_per_audio_s": 0.02234154171102196
+    }
+   },
+   "runs": {
+    "native": [
+     {
+      "cpu": 0.545457,
+      "wall": 0.5715023870000095,
+      "rss_kib": 4024,
+      "pcm_sha256": "be123dbab4eccead47da7c04f1b744bf4773afb7350c8e6161e5561bcb29312c"
+     },
+     {
+      "cpu": 0.597863,
+      "wall": 0.6237897020000673,
+      "rss_kib": 4000,
+      "pcm_sha256": "be123dbab4eccead47da7c04f1b744bf4773afb7350c8e6161e5561bcb29312c"
+     },
+     {
+      "cpu": 0.6203799999999999,
+      "wall": 0.6517326219998267,
+      "rss_kib": 3872,
+      "pcm_sha256": "be123dbab4eccead47da7c04f1b744bf4773afb7350c8e6161e5561bcb29312c"
+     },
+     {
+      "cpu": 0.520707,
+      "wall": 0.5425922440001614,
+      "rss_kib": 4088,
+      "pcm_sha256": "be123dbab4eccead47da7c04f1b744bf4773afb7350c8e6161e5561bcb29312c"
+     },
+     {
+      "cpu": 0.531321,
+      "wall": 0.5650570860000244,
+      "rss_kib": 4064,
+      "pcm_sha256": "be123dbab4eccead47da7c04f1b744bf4773afb7350c8e6161e5561bcb29312c"
+     }
+    ],
+    "reference": [
+     {
+      "cpu": 0.6753809999999999,
+      "wall": 0.7002884349999476,
+      "rss_kib": 6484,
+      "pcm_sha256": "be123dbab4eccead47da7c04f1b744bf4773afb7350c8e6161e5561bcb29312c"
+     },
+     {
+      "cpu": 0.760757,
+      "wall": 0.7999619229999553,
+      "rss_kib": 6464,
+      "pcm_sha256": "be123dbab4eccead47da7c04f1b744bf4773afb7350c8e6161e5561bcb29312c"
+     },
+     {
+      "cpu": 0.7470469999999999,
+      "wall": 0.8025124830001005,
+      "rss_kib": 6468,
+      "pcm_sha256": "be123dbab4eccead47da7c04f1b744bf4773afb7350c8e6161e5561bcb29312c"
+     },
+     {
+      "cpu": 0.705738,
+      "wall": 0.7291552279998541,
+      "rss_kib": 6524,
+      "pcm_sha256": "be123dbab4eccead47da7c04f1b744bf4773afb7350c8e6161e5561bcb29312c"
+     },
+     {
+      "cpu": 0.684545,
+      "wall": 0.711383602999831,
+      "rss_kib": 6468,
+      "pcm_sha256": "be123dbab4eccead47da7c04f1b744bf4773afb7350c8e6161e5561bcb29312c"
+     }
+    ],
+    "ffmpeg": [
+     {
+      "cpu": 0.910072,
+      "wall": 0.4819195140000829,
+      "rss_kib": 21696,
+      "pcm_sha256": "be123dbab4eccead47da7c04f1b744bf4773afb7350c8e6161e5561bcb29312c"
+     },
+     {
+      "cpu": 0.8707599999999999,
+      "wall": 0.4387080960000276,
+      "rss_kib": 21728,
+      "pcm_sha256": "be123dbab4eccead47da7c04f1b744bf4773afb7350c8e6161e5561bcb29312c"
+     },
+     {
+      "cpu": 0.962812,
+      "wall": 0.4761463550000826,
+      "rss_kib": 21560,
+      "pcm_sha256": "be123dbab4eccead47da7c04f1b744bf4773afb7350c8e6161e5561bcb29312c"
+     },
+     {
+      "cpu": 0.914034,
+      "wall": 0.4907485969999925,
+      "rss_kib": 22096,
+      "pcm_sha256": "be123dbab4eccead47da7c04f1b744bf4773afb7350c8e6161e5561bcb29312c"
+     },
+     {
+      "cpu": 0.8620300000000001,
+      "wall": 0.42867590700006986,
+      "rss_kib": 21536,
+      "pcm_sha256": "be123dbab4eccead47da7c04f1b744bf4773afb7350c8e6161e5561bcb29312c"
+     }
+    ]
+   }
+  },
+  {
+   "input": "album96.flac",
+   "codec": "flac",
+   "sample_rate": 96000,
+   "channels": 2,
+   "bits": 24,
+   "duration": 40.734521,
+   "pcm_bytes": 23463084,
+   "pcm_sha256": "be123dbab4eccead47da7c04f1b744bf4773afb7350c8e6161e5561bcb29312c",
+   "flac_bytes": {
+    "native": 16463997,
+    "reference": 16463997,
+    "ffmpeg": 16474306
+   },
+   "flac_ratio": {
+    "native": 0.7016979097888411,
+    "reference": 0.7016979097888411,
+    "ffmpeg": 0.7021372808450926
+   },
+   "median": {
+    "native": {
+     "cpu": 0.461537,
+     "wall": 0.4896615010000005,
+     "rss_kib": 4016,
+     "cpu_per_audio_s": 0.011330365220202294
+    },
+    "reference": {
+     "cpu": 0.51222,
+     "wall": 0.5353839439999319,
+     "rss_kib": 6532,
+     "cpu_per_audio_s": 0.01257459244457545
+    },
+    "ffmpeg": {
+     "cpu": 0.658644,
+     "wall": 0.2948543790000713,
+     "rss_kib": 22604,
+     "cpu_per_audio_s": 0.016169184854291033
+    }
+   },
+   "runs": {
+    "native": [
+     {
+      "cpu": 0.470141,
+      "wall": 0.4985019459998057,
+      "rss_kib": 3972,
+      "pcm_sha256": "be123dbab4eccead47da7c04f1b744bf4773afb7350c8e6161e5561bcb29312c"
+     },
+     {
+      "cpu": 0.464725,
+      "wall": 0.4896615010000005,
+      "rss_kib": 3884,
+      "pcm_sha256": "be123dbab4eccead47da7c04f1b744bf4773afb7350c8e6161e5561bcb29312c"
+     },
+     {
+      "cpu": 0.44343899999999997,
+      "wall": 0.4674304029999803,
+      "rss_kib": 4044,
+      "pcm_sha256": "be123dbab4eccead47da7c04f1b744bf4773afb7350c8e6161e5561bcb29312c"
+     },
+     {
+      "cpu": 0.449647,
+      "wall": 0.47179321299995536,
+      "rss_kib": 4016,
+      "pcm_sha256": "be123dbab4eccead47da7c04f1b744bf4773afb7350c8e6161e5561bcb29312c"
+     },
+     {
+      "cpu": 0.461537,
+      "wall": 0.49770472099999097,
+      "rss_kib": 4056,
+      "pcm_sha256": "be123dbab4eccead47da7c04f1b744bf4773afb7350c8e6161e5561bcb29312c"
+     }
+    ],
+    "reference": [
+     {
+      "cpu": 0.5271509999999999,
+      "wall": 0.554435470000044,
+      "rss_kib": 6480,
+      "pcm_sha256": "be123dbab4eccead47da7c04f1b744bf4773afb7350c8e6161e5561bcb29312c"
+     },
+     {
+      "cpu": 0.51222,
+      "wall": 0.5346114290000514,
+      "rss_kib": 6472,
+      "pcm_sha256": "be123dbab4eccead47da7c04f1b744bf4773afb7350c8e6161e5561bcb29312c"
+     },
+     {
+      "cpu": 0.5439869999999999,
+      "wall": 0.5669115619998593,
+      "rss_kib": 6532,
+      "pcm_sha256": "be123dbab4eccead47da7c04f1b744bf4773afb7350c8e6161e5561bcb29312c"
+     },
+     {
+      "cpu": 0.509287,
+      "wall": 0.5353839439999319,
+      "rss_kib": 6652,
+      "pcm_sha256": "be123dbab4eccead47da7c04f1b744bf4773afb7350c8e6161e5561bcb29312c"
+     },
+     {
+      "cpu": 0.512121,
+      "wall": 0.5352506629999425,
+      "rss_kib": 6592,
+      "pcm_sha256": "be123dbab4eccead47da7c04f1b744bf4773afb7350c8e6161e5561bcb29312c"
+     }
+    ],
+    "ffmpeg": [
+     {
+      "cpu": 0.639424,
+      "wall": 0.29355230500004836,
+      "rss_kib": 22892,
+      "pcm_sha256": "be123dbab4eccead47da7c04f1b744bf4773afb7350c8e6161e5561bcb29312c"
+     },
+     {
+      "cpu": 0.66659,
+      "wall": 0.3197228809999615,
+      "rss_kib": 22536,
+      "pcm_sha256": "be123dbab4eccead47da7c04f1b744bf4773afb7350c8e6161e5561bcb29312c"
+     },
+     {
+      "cpu": 0.6762029999999999,
+      "wall": 0.2948543790000713,
+      "rss_kib": 22688,
+      "pcm_sha256": "be123dbab4eccead47da7c04f1b744bf4773afb7350c8e6161e5561bcb29312c"
+     },
+     {
+      "cpu": 0.658644,
+      "wall": 0.30244987300011417,
+      "rss_kib": 22140,
+      "pcm_sha256": "be123dbab4eccead47da7c04f1b744bf4773afb7350c8e6161e5561bcb29312c"
+     },
+     {
+      "cpu": 0.6314,
+      "wall": 0.2845360010001059,
+      "rss_kib": 22604,
+      "pcm_sha256": "be123dbab4eccead47da7c04f1b744bf4773afb7350c8e6161e5561bcb29312c"
+     }
+    ]
+   }
+  },
+  {
+   "input": "album192.wav",
+   "codec": "pcm_s24le",
+   "sample_rate": 192000,
+   "channels": 2,
+   "bits": 24,
+   "duration": 16.002474,
+   "pcm_bytes": 18434850,
+   "pcm_sha256": "b61053d28505f1ef3340a403d83b16f207d3367c7fc8cd2fa08d101bed7191af",
+   "flac_bytes": {
+    "native": 13256263,
+    "reference": 13256263,
+    "ffmpeg": 13262734
+   },
+   "flac_ratio": {
+    "native": 0.7190871094692932,
+    "reference": 0.7190871094692932,
+    "ffmpeg": 0.7194381294124986
+   },
+   "median": {
+    "native": {
+     "cpu": 0.269663,
+     "wall": 0.28906629700009034,
+     "rss_kib": 3796,
+     "cpu_per_audio_s": 0.016851331862810712
+    },
+    "reference": {
+     "cpu": 0.33464199999999994,
+     "wall": 0.3566030860001774,
+     "rss_kib": 5776,
+     "cpu_per_audio_s": 0.020911891498776997
+    },
+    "ffmpeg": {
+     "cpu": 0.48072499999999996,
+     "wall": 0.2629969679999249,
+     "rss_kib": 28780,
+     "cpu_per_audio_s": 0.030040667461793718
+    }
+   },
+   "runs": {
+    "native": [
+     {
+      "cpu": 0.26729200000000003,
+      "wall": 0.28906629700009034,
+      "rss_kib": 3796,
+      "pcm_sha256": "b61053d28505f1ef3340a403d83b16f207d3367c7fc8cd2fa08d101bed7191af"
+     },
+     {
+      "cpu": 0.29612499999999997,
+      "wall": 0.31648359099995105,
+      "rss_kib": 3800,
+      "pcm_sha256": "b61053d28505f1ef3340a403d83b16f207d3367c7fc8cd2fa08d101bed7191af"
+     },
+     {
+      "cpu": 0.269663,
+      "wall": 0.28865098899996156,
+      "rss_kib": 3728,
+      "pcm_sha256": "b61053d28505f1ef3340a403d83b16f207d3367c7fc8cd2fa08d101bed7191af"
+     },
+     {
+      "cpu": 0.27133,
+      "wall": 0.2938819290000083,
+      "rss_kib": 3756,
+      "pcm_sha256": "b61053d28505f1ef3340a403d83b16f207d3367c7fc8cd2fa08d101bed7191af"
+     },
+     {
+      "cpu": 0.26516199999999995,
+      "wall": 0.2848359900001469,
+      "rss_kib": 3812,
+      "pcm_sha256": "b61053d28505f1ef3340a403d83b16f207d3367c7fc8cd2fa08d101bed7191af"
+     }
+    ],
+    "reference": [
+     {
+      "cpu": 0.33464199999999994,
+      "wall": 0.3661389500000496,
+      "rss_kib": 5812,
+      "pcm_sha256": "b61053d28505f1ef3340a403d83b16f207d3367c7fc8cd2fa08d101bed7191af"
+     },
+     {
+      "cpu": 0.348817,
+      "wall": 0.3792631179999262,
+      "rss_kib": 5772,
+      "pcm_sha256": "b61053d28505f1ef3340a403d83b16f207d3367c7fc8cd2fa08d101bed7191af"
+     },
+     {
+      "cpu": 0.320827,
+      "wall": 0.34675633100005143,
+      "rss_kib": 5944,
+      "pcm_sha256": "b61053d28505f1ef3340a403d83b16f207d3367c7fc8cd2fa08d101bed7191af"
+     },
+     {
+      "cpu": 0.337889,
+      "wall": 0.3566030860001774,
+      "rss_kib": 5776,
+      "pcm_sha256": "b61053d28505f1ef3340a403d83b16f207d3367c7fc8cd2fa08d101bed7191af"
+     },
+     {
+      "cpu": 0.317513,
+      "wall": 0.34264553799994246,
+      "rss_kib": 5720,
+      "pcm_sha256": "b61053d28505f1ef3340a403d83b16f207d3367c7fc8cd2fa08d101bed7191af"
+     }
+    ],
+    "ffmpeg": [
+     {
+      "cpu": 0.48072499999999996,
+      "wall": 0.2535107969999899,
+      "rss_kib": 28936,
+      "pcm_sha256": "b61053d28505f1ef3340a403d83b16f207d3367c7fc8cd2fa08d101bed7191af"
+     },
+     {
+      "cpu": 0.49943499999999996,
+      "wall": 0.2629969679999249,
+      "rss_kib": 28780,
+      "pcm_sha256": "b61053d28505f1ef3340a403d83b16f207d3367c7fc8cd2fa08d101bed7191af"
+     },
+     {
+      "cpu": 0.533179,
+      "wall": 0.29549943100005294,
+      "rss_kib": 28828,
+      "pcm_sha256": "b61053d28505f1ef3340a403d83b16f207d3367c7fc8cd2fa08d101bed7191af"
+     },
+     {
+      "cpu": 0.43120899999999995,
+      "wall": 0.22472880199984502,
+      "rss_kib": 27736,
+      "pcm_sha256": "b61053d28505f1ef3340a403d83b16f207d3367c7fc8cd2fa08d101bed7191af"
+     },
+     {
+      "cpu": 0.46490599999999993,
+      "wall": 0.2657570119999946,
+      "rss_kib": 28076,
+      "pcm_sha256": "b61053d28505f1ef3340a403d83b16f207d3367c7fc8cd2fa08d101bed7191af"
+     }
+    ]
+   }
+  },
+  {
+   "input": "album192.m4a",
+   "codec": "alac",
+   "sample_rate": 192000,
+   "channels": 2,
+   "bits": 24,
+   "duration": 16.002474,
+   "pcm_bytes": 18434850,
+   "pcm_sha256": "b61053d28505f1ef3340a403d83b16f207d3367c7fc8cd2fa08d101bed7191af",
+   "flac_bytes": {
+    "native": 13256263,
+    "reference": 13256263,
+    "ffmpeg": 13262734
+   },
+   "flac_ratio": {
+    "native": 0.7190871094692932,
+    "reference": 0.7190871094692932,
+    "ffmpeg": 0.7194381294124986
+   },
+   "median": {
+    "native": {
+     "cpu": 0.42699,
+     "wall": 0.4457490390000203,
+     "rss_kib": 3988,
+     "cpu_per_audio_s": 0.026682749179908056
+    },
+    "reference": {
+     "cpu": 0.536234,
+     "wall": 0.5620679459998428,
+     "rss_kib": 5832,
+     "cpu_per_audio_s": 0.033509443602282994
+    },
+    "ffmpeg": {
+     "cpu": 0.7069789999999999,
+     "wall": 0.34903151100002106,
+     "rss_kib": 22124,
+     "cpu_per_audio_s": 0.04417935626703721
+    }
+   },
+   "runs": {
+    "native": [
+     {
+      "cpu": 0.403515,
+      "wall": 0.4206155629999557,
+      "rss_kib": 3908,
+      "pcm_sha256": "b61053d28505f1ef3340a403d83b16f207d3367c7fc8cd2fa08d101bed7191af"
+     },
+     {
+      "cpu": 0.403113,
+      "wall": 0.4196453600000041,
+      "rss_kib": 4100,
+      "pcm_sha256": "b61053d28505f1ef3340a403d83b16f207d3367c7fc8cd2fa08d101bed7191af"
+     },
+     {
+      "cpu": 0.42699,
+      "wall": 0.4457490390000203,
+      "rss_kib": 3980,
+      "pcm_sha256": "b61053d28505f1ef3340a403d83b16f207d3367c7fc8cd2fa08d101bed7191af"
+     },
+     {
+      "cpu": 0.45257699999999995,
+      "wall": 0.4737827440001183,
+      "rss_kib": 4024,
+      "pcm_sha256": "b61053d28505f1ef3340a403d83b16f207d3367c7fc8cd2fa08d101bed7191af"
+     },
+     {
+      "cpu": 0.436545,
+      "wall": 0.45780681299993375,
+      "rss_kib": 3988,
+      "pcm_sha256": "b61053d28505f1ef3340a403d83b16f207d3367c7fc8cd2fa08d101bed7191af"
+     }
+    ],
+    "reference": [
+     {
+      "cpu": 0.5445059999999999,
+      "wall": 0.5664777050001248,
+      "rss_kib": 5824,
+      "pcm_sha256": "b61053d28505f1ef3340a403d83b16f207d3367c7fc8cd2fa08d101bed7191af"
+     },
+     {
+      "cpu": 0.507103,
+      "wall": 0.5284864669999934,
+      "rss_kib": 5832,
+      "pcm_sha256": "b61053d28505f1ef3340a403d83b16f207d3367c7fc8cd2fa08d101bed7191af"
+     },
+     {
+      "cpu": 0.503487,
+      "wall": 0.5293598439998277,
+      "rss_kib": 5832,
+      "pcm_sha256": "b61053d28505f1ef3340a403d83b16f207d3367c7fc8cd2fa08d101bed7191af"
+     },
+     {
+      "cpu": 0.536234,
+      "wall": 0.5620679459998428,
+      "rss_kib": 5900,
+      "pcm_sha256": "b61053d28505f1ef3340a403d83b16f207d3367c7fc8cd2fa08d101bed7191af"
+     },
+     {
+      "cpu": 0.541806,
+      "wall": 0.5733960760001082,
+      "rss_kib": 5820,
+      "pcm_sha256": "b61053d28505f1ef3340a403d83b16f207d3367c7fc8cd2fa08d101bed7191af"
+     }
+    ],
+    "ffmpeg": [
+     {
+      "cpu": 0.7069789999999999,
+      "wall": 0.34903151100002106,
+      "rss_kib": 22140,
+      "pcm_sha256": "b61053d28505f1ef3340a403d83b16f207d3367c7fc8cd2fa08d101bed7191af"
+     },
+     {
+      "cpu": 0.69592,
+      "wall": 0.3512124030000905,
+      "rss_kib": 22024,
+      "pcm_sha256": "b61053d28505f1ef3340a403d83b16f207d3367c7fc8cd2fa08d101bed7191af"
+     },
+     {
+      "cpu": 0.7770429999999999,
+      "wall": 0.4269978510001238,
+      "rss_kib": 21760,
+      "pcm_sha256": "b61053d28505f1ef3340a403d83b16f207d3367c7fc8cd2fa08d101bed7191af"
+     },
+     {
+      "cpu": 0.672871,
+      "wall": 0.33824576199981493,
+      "rss_kib": 22284,
+      "pcm_sha256": "b61053d28505f1ef3340a403d83b16f207d3367c7fc8cd2fa08d101bed7191af"
+     },
+     {
+      "cpu": 0.71457,
+      "wall": 0.3357003230000828,
+      "rss_kib": 22124,
+      "pcm_sha256": "b61053d28505f1ef3340a403d83b16f207d3367c7fc8cd2fa08d101bed7191af"
+     }
+    ]
+   }
+  },
+  {
+   "input": "syn_tone.wav",
+   "codec": "pcm_s24le",
+   "sample_rate": 48000,
+   "channels": 2,
+   "bits": 24,
+   "duration": 240.0,
+   "pcm_bytes": 69120000,
+   "pcm_sha256": "26cf6f93e903bc9aafb549ccf11626b7bb0bb83278a4288d3f98e3b0ac7e8261",
+   "flac_bytes": {
+    "native": 22895861,
+    "reference": 22895861,
+    "ffmpeg": 32261824
+   },
+   "flac_ratio": {
+    "native": 0.33124798900462965,
+    "reference": 0.33124798900462965,
+    "ffmpeg": 0.46675092592592593
+   },
+   "median": {
+    "native": {
+     "cpu": 0.8980009999999999,
+     "wall": 0.9359309149999717,
+     "rss_kib": 3636,
+     "cpu_per_audio_s": 0.0037416708333333332
+    },
+    "reference": {
+     "cpu": 1.11149,
+     "wall": 1.1511613389998274,
+     "rss_kib": 5376,
+     "cpu_per_audio_s": 0.0046312083333333335
+    },
+    "ffmpeg": {
+     "cpu": 1.982859,
+     "wall": 0.9499096719998761,
+     "rss_kib": 22432,
+     "cpu_per_audio_s": 0.0082619125
+    }
+   },
+   "runs": {
+    "native": [
+     {
+      "cpu": 0.8962939999999999,
+      "wall": 0.9359309149999717,
+      "rss_kib": 3548,
+      "pcm_sha256": "26cf6f93e903bc9aafb549ccf11626b7bb0bb83278a4288d3f98e3b0ac7e8261"
+     },
+     {
+      "cpu": 0.8796269999999999,
+      "wall": 0.9165879089998725,
+      "rss_kib": 3696,
+      "pcm_sha256": "26cf6f93e903bc9aafb549ccf11626b7bb0bb83278a4288d3f98e3b0ac7e8261"
+     },
+     {
+      "cpu": 0.8980009999999999,
+      "wall": 0.934611797999878,
+      "rss_kib": 3608,
+      "pcm_sha256": "26cf6f93e903bc9aafb549ccf11626b7bb0bb83278a4288d3f98e3b0ac7e8261"
+     },
+     {
+      "cpu": 0.918422,
+      "wall": 0.9649217700000463,
+      "rss_kib": 3684,
+      "pcm_sha256": "26cf6f93e903bc9aafb549ccf11626b7bb0bb83278a4288d3f98e3b0ac7e8261"
+     },
+     {
+      "cpu": 1.0002,
+      "wall": 1.0596790370000235,
+      "rss_kib": 3636,
+      "pcm_sha256": "26cf6f93e903bc9aafb549ccf11626b7bb0bb83278a4288d3f98e3b0ac7e8261"
+     }
+    ],
+    "reference": [
+     {
+      "cpu": 1.056838,
+      "wall": 1.0968207990001702,
+      "rss_kib": 5264,
+      "pcm_sha256": "26cf6f93e903bc9aafb549ccf11626b7bb0bb83278a4288d3f98e3b0ac7e8261"
+     },
+     {
+      "cpu": 1.088414,
+      "wall": 1.1314071589999912,
+      "rss_kib": 5392,
+      "pcm_sha256": "26cf6f93e903bc9aafb549ccf11626b7bb0bb83278a4288d3f98e3b0ac7e8261"
+     },
+     {
+      "cpu": 1.118646,
+      "wall": 1.1712459390000731,
+      "rss_kib": 5376,
+      "pcm_sha256": "26cf6f93e903bc9aafb549ccf11626b7bb0bb83278a4288d3f98e3b0ac7e8261"
+     },
+     {
+      "cpu": 1.1936630000000001,
+      "wall": 1.249800223999955,
+      "rss_kib": 5464,
+      "pcm_sha256": "26cf6f93e903bc9aafb549ccf11626b7bb0bb83278a4288d3f98e3b0ac7e8261"
+     },
+     {
+      "cpu": 1.11149,
+      "wall": 1.1511613389998274,
+      "rss_kib": 5264,
+      "pcm_sha256": "26cf6f93e903bc9aafb549ccf11626b7bb0bb83278a4288d3f98e3b0ac7e8261"
+     }
+    ],
+    "ffmpeg": [
+     {
+      "cpu": 1.699986,
+      "wall": 0.7854559960001097,
+      "rss_kib": 22280,
+      "pcm_sha256": "26cf6f93e903bc9aafb549ccf11626b7bb0bb83278a4288d3f98e3b0ac7e8261"
+     },
+     {
+      "cpu": 1.982859,
+      "wall": 0.9499096719998761,
+      "rss_kib": 22432,
+      "pcm_sha256": "26cf6f93e903bc9aafb549ccf11626b7bb0bb83278a4288d3f98e3b0ac7e8261"
+     },
+     {
+      "cpu": 2.03558,
+      "wall": 0.991280598000003,
+      "rss_kib": 22460,
+      "pcm_sha256": "26cf6f93e903bc9aafb549ccf11626b7bb0bb83278a4288d3f98e3b0ac7e8261"
+     },
+     {
+      "cpu": 2.088151,
+      "wall": 1.0189900089999355,
+      "rss_kib": 22644,
+      "pcm_sha256": "26cf6f93e903bc9aafb549ccf11626b7bb0bb83278a4288d3f98e3b0ac7e8261"
+     },
+     {
+      "cpu": 1.953639,
+      "wall": 0.8954501519999667,
+      "rss_kib": 22168,
+      "pcm_sha256": "26cf6f93e903bc9aafb549ccf11626b7bb0bb83278a4288d3f98e3b0ac7e8261"
+     }
+    ]
+   }
+  },
+  {
+   "input": "syn_tone.m4a",
+   "codec": "alac",
+   "sample_rate": 48000,
+   "channels": 2,
+   "bits": 24,
+   "duration": 240.0,
+   "pcm_bytes": 69120000,
+   "pcm_sha256": "26cf6f93e903bc9aafb549ccf11626b7bb0bb83278a4288d3f98e3b0ac7e8261",
+   "flac_bytes": {
+    "native": 22895861,
+    "reference": 22895861,
+    "ffmpeg": 32261824
+   },
+   "flac_ratio": {
+    "native": 0.33124798900462965,
+    "reference": 0.33124798900462965,
+    "ffmpeg": 0.46675092592592593
+   },
+   "median": {
+    "native": {
+     "cpu": 1.512466,
+     "wall": 1.5482171360001757,
+     "rss_kib": 3900,
+     "cpu_per_audio_s": 0.006301941666666667
+    },
+    "reference": {
+     "cpu": 1.847122,
+     "wall": 1.891456271999914,
+     "rss_kib": 5472,
+     "cpu_per_audio_s": 0.007696341666666666
+    },
+    "ffmpeg": {
+     "cpu": 2.7446679999999994,
+     "wall": 1.3196382210001047,
+     "rss_kib": 21972,
+     "cpu_per_audio_s": 0.011436116666666664
+    }
+   },
+   "runs": {
+    "native": [
+     {
+      "cpu": 1.54156,
+      "wall": 1.5901268019999861,
+      "rss_kib": 3940,
+      "pcm_sha256": "26cf6f93e903bc9aafb549ccf11626b7bb0bb83278a4288d3f98e3b0ac7e8261"
+     },
+     {
+      "cpu": 1.455812,
+      "wall": 1.5008331389999512,
+      "rss_kib": 3824,
+      "pcm_sha256": "26cf6f93e903bc9aafb549ccf11626b7bb0bb83278a4288d3f98e3b0ac7e8261"
+     },
+     {
+      "cpu": 1.512466,
+      "wall": 1.5482171360001757,
+      "rss_kib": 3716,
+      "pcm_sha256": "26cf6f93e903bc9aafb549ccf11626b7bb0bb83278a4288d3f98e3b0ac7e8261"
+     },
+     {
+      "cpu": 1.5546849999999999,
+      "wall": 1.6295158269999774,
+      "rss_kib": 3972,
+      "pcm_sha256": "26cf6f93e903bc9aafb549ccf11626b7bb0bb83278a4288d3f98e3b0ac7e8261"
+     },
+     {
+      "cpu": 1.4444059999999999,
+      "wall": 1.512764135999987,
+      "rss_kib": 3900,
+      "pcm_sha256": "26cf6f93e903bc9aafb549ccf11626b7bb0bb83278a4288d3f98e3b0ac7e8261"
+     }
+    ],
+    "reference": [
+     {
+      "cpu": 1.912213,
+      "wall": 1.97467418500014,
+      "rss_kib": 5400,
+      "pcm_sha256": "26cf6f93e903bc9aafb549ccf11626b7bb0bb83278a4288d3f98e3b0ac7e8261"
+     },
+     {
+      "cpu": 1.8967729999999998,
+      "wall": 1.950477641000134,
+      "rss_kib": 5328,
+      "pcm_sha256": "26cf6f93e903bc9aafb549ccf11626b7bb0bb83278a4288d3f98e3b0ac7e8261"
+     },
+     {
+      "cpu": 1.841639,
+      "wall": 1.8903119070000685,
+      "rss_kib": 5632,
+      "pcm_sha256": "26cf6f93e903bc9aafb549ccf11626b7bb0bb83278a4288d3f98e3b0ac7e8261"
+     },
+     {
+      "cpu": 1.847122,
+      "wall": 1.891456271999914,
+      "rss_kib": 5472,
+      "pcm_sha256": "26cf6f93e903bc9aafb549ccf11626b7bb0bb83278a4288d3f98e3b0ac7e8261"
+     },
+     {
+      "cpu": 1.750309,
+      "wall": 1.8017221879999852,
+      "rss_kib": 5504,
+      "pcm_sha256": "26cf6f93e903bc9aafb549ccf11626b7bb0bb83278a4288d3f98e3b0ac7e8261"
+     }
+    ],
+    "ffmpeg": [
+     {
+      "cpu": 2.7446679999999994,
+      "wall": 1.2467956209998192,
+      "rss_kib": 22128,
+      "pcm_sha256": "26cf6f93e903bc9aafb549ccf11626b7bb0bb83278a4288d3f98e3b0ac7e8261"
+     },
+     {
+      "cpu": 2.787235,
+      "wall": 1.3196382210001047,
+      "rss_kib": 21972,
+      "pcm_sha256": "26cf6f93e903bc9aafb549ccf11626b7bb0bb83278a4288d3f98e3b0ac7e8261"
+     },
+     {
+      "cpu": 2.9614139999999995,
+      "wall": 1.4203058570001303,
+      "rss_kib": 22232,
+      "pcm_sha256": "26cf6f93e903bc9aafb549ccf11626b7bb0bb83278a4288d3f98e3b0ac7e8261"
+     },
+     {
+      "cpu": 2.711571,
+      "wall": 1.3476673259999643,
+      "rss_kib": 21832,
+      "pcm_sha256": "26cf6f93e903bc9aafb549ccf11626b7bb0bb83278a4288d3f98e3b0ac7e8261"
+     },
+     {
+      "cpu": 2.692183,
+      "wall": 1.3087889209998593,
+      "rss_kib": 21816,
+      "pcm_sha256": "26cf6f93e903bc9aafb549ccf11626b7bb0bb83278a4288d3f98e3b0ac7e8261"
+     }
+    ]
+   }
+  },
+  {
+   "input": "syn_pink.wav",
+   "codec": "pcm_s24le",
+   "sample_rate": 48000,
+   "channels": 2,
+   "bits": 24,
+   "duration": 240.0,
+   "pcm_bytes": 69120000,
+   "pcm_sha256": "b060a91fab5ecf799cdbc778460f6fbc8bc14ce0112ace06a8da149a14294dba",
+   "flac_bytes": {
+    "native": 54203896,
+    "reference": 54203896,
+    "ffmpeg": 54211179
+   },
+   "flac_ratio": {
+    "native": 0.7841998842592592,
+    "reference": 0.7841998842592592,
+    "ffmpeg": 0.7843052517361111
+   },
+   "median": {
+    "native": {
+     "cpu": 1.0066979999999999,
+     "wall": 1.0782059079999726,
+     "rss_kib": 3724,
+     "cpu_per_audio_s": 0.004194575
+    },
+    "reference": {
+     "cpu": 1.249349,
+     "wall": 1.3286928830000306,
+     "rss_kib": 4576,
+     "cpu_per_audio_s": 0.005205620833333333
+    },
+    "ffmpeg": {
+     "cpu": 1.967882,
+     "wall": 0.9030938490000153,
+     "rss_kib": 22512,
+     "cpu_per_audio_s": 0.008199508333333333
+    }
+   },
+   "runs": {
+    "native": [
+     {
+      "cpu": 1.0066979999999999,
+      "wall": 1.0782438589999401,
+      "rss_kib": 3736,
+      "pcm_sha256": "b060a91fab5ecf799cdbc778460f6fbc8bc14ce0112ace06a8da149a14294dba"
+     },
+     {
+      "cpu": 1.012546,
+      "wall": 1.0955290049998894,
+      "rss_kib": 3744,
+      "pcm_sha256": "b060a91fab5ecf799cdbc778460f6fbc8bc14ce0112ace06a8da149a14294dba"
+     },
+     {
+      "cpu": 0.961268,
+      "wall": 1.0352005490001375,
+      "rss_kib": 3684,
+      "pcm_sha256": "b060a91fab5ecf799cdbc778460f6fbc8bc14ce0112ace06a8da149a14294dba"
+     },
+     {
+      "cpu": 0.999095,
+      "wall": 1.0658494290000817,
+      "rss_kib": 3724,
+      "pcm_sha256": "b060a91fab5ecf799cdbc778460f6fbc8bc14ce0112ace06a8da149a14294dba"
+     },
+     {
+      "cpu": 1.009391,
+      "wall": 1.0782059079999726,
+      "rss_kib": 3724,
+      "pcm_sha256": "b060a91fab5ecf799cdbc778460f6fbc8bc14ce0112ace06a8da149a14294dba"
+     }
+    ],
+    "reference": [
+     {
+      "cpu": 1.331253,
+      "wall": 1.419779755000036,
+      "rss_kib": 4576,
+      "pcm_sha256": "b060a91fab5ecf799cdbc778460f6fbc8bc14ce0112ace06a8da149a14294dba"
+     },
+     {
+      "cpu": 1.250734,
+      "wall": 1.3286928830000306,
+      "rss_kib": 4640,
+      "pcm_sha256": "b060a91fab5ecf799cdbc778460f6fbc8bc14ce0112ace06a8da149a14294dba"
+     },
+     {
+      "cpu": 1.2109919999999998,
+      "wall": 1.2808712370001558,
+      "rss_kib": 4608,
+      "pcm_sha256": "b060a91fab5ecf799cdbc778460f6fbc8bc14ce0112ace06a8da149a14294dba"
+     },
+     {
+      "cpu": 1.249349,
+      "wall": 1.3453848789999938,
+      "rss_kib": 4472,
+      "pcm_sha256": "b060a91fab5ecf799cdbc778460f6fbc8bc14ce0112ace06a8da149a14294dba"
+     },
+     {
+      "cpu": 1.210704,
+      "wall": 1.28123663700012,
+      "rss_kib": 4524,
+      "pcm_sha256": "b060a91fab5ecf799cdbc778460f6fbc8bc14ce0112ace06a8da149a14294dba"
+     }
+    ],
+    "ffmpeg": [
+     {
+      "cpu": 1.982067,
+      "wall": 0.9030938490000153,
+      "rss_kib": 22220,
+      "pcm_sha256": "b060a91fab5ecf799cdbc778460f6fbc8bc14ce0112ace06a8da149a14294dba"
+     },
+     {
+      "cpu": 2.145697,
+      "wall": 1.0351788469999974,
+      "rss_kib": 22512,
+      "pcm_sha256": "b060a91fab5ecf799cdbc778460f6fbc8bc14ce0112ace06a8da149a14294dba"
+     },
+     {
+      "cpu": 1.818951,
+      "wall": 0.8431652080000731,
+      "rss_kib": 22192,
+      "pcm_sha256": "b060a91fab5ecf799cdbc778460f6fbc8bc14ce0112ace06a8da149a14294dba"
+     },
+     {
+      "cpu": 1.8876429999999997,
+      "wall": 0.900941505999981,
+      "rss_kib": 22544,
+      "pcm_sha256": "b060a91fab5ecf799cdbc778460f6fbc8bc14ce0112ace06a8da149a14294dba"
+     },
+     {
+      "cpu": 1.967882,
+      "wall": 0.954521110999849,
+      "rss_kib": 22628,
+      "pcm_sha256": "b060a91fab5ecf799cdbc778460f6fbc8bc14ce0112ace06a8da149a14294dba"
+     }
+    ]
+   }
+  },
+  {
+   "input": "syn_pink.m4a",
+   "codec": "alac",
+   "sample_rate": 48000,
+   "channels": 2,
+   "bits": 24,
+   "duration": 240.0,
+   "pcm_bytes": 69120000,
+   "pcm_sha256": "b060a91fab5ecf799cdbc778460f6fbc8bc14ce0112ace06a8da149a14294dba",
+   "flac_bytes": {
+    "native": 54203896,
+    "reference": 54203896,
+    "ffmpeg": 54211179
+   },
+   "flac_ratio": {
+    "native": 0.7841998842592592,
+    "reference": 0.7841998842592592,
+    "ffmpeg": 0.7843052517361111
+   },
+   "median": {
+    "native": {
+     "cpu": 1.690342,
+     "wall": 1.7565676449999046,
+     "rss_kib": 3860,
+     "cpu_per_audio_s": 0.007043091666666667
+    },
+    "reference": {
+     "cpu": 2.0444959999999996,
+     "wall": 2.134409366,
+     "rss_kib": 4692,
+     "cpu_per_audio_s": 0.008518733333333332
+    },
+    "ffmpeg": {
+     "cpu": 2.8099969999999996,
+     "wall": 1.2928813229998468,
+     "rss_kib": 21840,
+     "cpu_per_audio_s": 0.011708320833333332
+    }
+   },
+   "runs": {
+    "native": [
+     {
+      "cpu": 1.606144,
+      "wall": 1.6750347049999164,
+      "rss_kib": 3848,
+      "pcm_sha256": "b060a91fab5ecf799cdbc778460f6fbc8bc14ce0112ace06a8da149a14294dba"
+     },
+     {
+      "cpu": 1.5597649999999998,
+      "wall": 1.6379022119999718,
+      "rss_kib": 3884,
+      "pcm_sha256": "b060a91fab5ecf799cdbc778460f6fbc8bc14ce0112ace06a8da149a14294dba"
+     },
+     {
+      "cpu": 1.8008889999999997,
+      "wall": 1.90214286000014,
+      "rss_kib": 3840,
+      "pcm_sha256": "b060a91fab5ecf799cdbc778460f6fbc8bc14ce0112ace06a8da149a14294dba"
+     },
+     {
+      "cpu": 1.7028349999999999,
+      "wall": 1.7959635689999232,
+      "rss_kib": 3860,
+      "pcm_sha256": "b060a91fab5ecf799cdbc778460f6fbc8bc14ce0112ace06a8da149a14294dba"
+     },
+     {
+      "cpu": 1.690342,
+      "wall": 1.7565676449999046,
+      "rss_kib": 4024,
+      "pcm_sha256": "b060a91fab5ecf799cdbc778460f6fbc8bc14ce0112ace06a8da149a14294dba"
+     }
+    ],
+    "reference": [
+     {
+      "cpu": 2.2131,
+      "wall": 2.3192512759999317,
+      "rss_kib": 4692,
+      "pcm_sha256": "b060a91fab5ecf799cdbc778460f6fbc8bc14ce0112ace06a8da149a14294dba"
+     },
+     {
+      "cpu": 2.00729,
+      "wall": 2.0897022809999726,
+      "rss_kib": 4680,
+      "pcm_sha256": "b060a91fab5ecf799cdbc778460f6fbc8bc14ce0112ace06a8da149a14294dba"
+     },
+     {
+      "cpu": 2.0444959999999996,
+      "wall": 2.134409366,
+      "rss_kib": 4800,
+      "pcm_sha256": "b060a91fab5ecf799cdbc778460f6fbc8bc14ce0112ace06a8da149a14294dba"
+     },
+     {
+      "cpu": 2.077813,
+      "wall": 2.158941905999882,
+      "rss_kib": 4696,
+      "pcm_sha256": "b060a91fab5ecf799cdbc778460f6fbc8bc14ce0112ace06a8da149a14294dba"
+     },
+     {
+      "cpu": 2.009594,
+      "wall": 2.091264655000032,
+      "rss_kib": 4540,
+      "pcm_sha256": "b060a91fab5ecf799cdbc778460f6fbc8bc14ce0112ace06a8da149a14294dba"
+     }
+    ],
+    "ffmpeg": [
+     {
+      "cpu": 2.795763,
+      "wall": 1.2729906950000895,
+      "rss_kib": 21836,
+      "pcm_sha256": "b060a91fab5ecf799cdbc778460f6fbc8bc14ce0112ace06a8da149a14294dba"
+     },
+     {
+      "cpu": 2.711075,
+      "wall": 1.253938982000136,
+      "rss_kib": 21944,
+      "pcm_sha256": "b060a91fab5ecf799cdbc778460f6fbc8bc14ce0112ace06a8da149a14294dba"
+     },
+     {
+      "cpu": 2.8099969999999996,
+      "wall": 1.2928813229998468,
+      "rss_kib": 20272,
+      "pcm_sha256": "b060a91fab5ecf799cdbc778460f6fbc8bc14ce0112ace06a8da149a14294dba"
+     },
+     {
+      "cpu": 3.001424,
+      "wall": 1.4047747179999988,
+      "rss_kib": 21864,
+      "pcm_sha256": "b060a91fab5ecf799cdbc778460f6fbc8bc14ce0112ace06a8da149a14294dba"
+     },
+     {
+      "cpu": 2.9716600000000004,
+      "wall": 1.3630328140000074,
+      "rss_kib": 21840,
+      "pcm_sha256": "b060a91fab5ecf799cdbc778460f6fbc8bc14ce0112ace06a8da149a14294dba"
+     }
+    ]
+   }
+  }
+ ],
+ "pure": [
+  {
+   "input": "album44.wav",
+   "codec": "pcm_s16le",
+   "sample_rate": 44100,
+   "channels": 2,
+   "bits": 16,
+   "duration": 205.35254,
+   "label": "PURE CODEC (not end-to-end)",
+   "median": {
+    "ffmpeg_encode_only": {
+     "cpu": 0.46139600000000003,
+     "wall": 0.36117903499996373,
+     "rss_kib": 20768
+    },
+    "ffmpeg_decode_hash": {
+     "cpu": 0.48170999999999997,
+     "wall": 0.3405466350000097,
+     "rss_kib": 13084
+    },
+    "native_decode_hash": {
+     "cpu": 0.061673,
+     "wall": 0.06443486799992115,
+     "rss_kib": 3016
+    }
+   }
+  },
+  {
+   "input": "album44.m4a",
+   "codec": "alac",
+   "sample_rate": 44100,
+   "channels": 2,
+   "bits": 16,
+   "duration": 205.35254,
+   "label": "PURE CODEC (not end-to-end)",
+   "median": {
+    "ffmpeg_encode_only": {
+     "cpu": 1.1771719999999999,
+     "wall": 0.7797112730002027,
+     "rss_kib": 20516
+    },
+    "ffmpeg_decode_hash": {
+     "cpu": 1.127216,
+     "wall": 0.7143705369999225,
+     "rss_kib": 12692
+    },
+    "native_decode_hash": {
+     "cpu": 0.621981,
+     "wall": 0.6242328679998081,
+     "rss_kib": 3420
+    }
+   }
+  },
+  {
+   "input": "album44.flac",
+   "codec": "flac",
+   "sample_rate": 44100,
+   "channels": 2,
+   "bits": 16,
+   "duration": 205.35254,
+   "label": "PURE CODEC (not end-to-end)",
+   "median": {
+    "ffmpeg_encode_only": {
+     "cpu": 0.648199,
+     "wall": 0.32985144000008404,
+     "rss_kib": 20356
+    },
+    "ffmpeg_decode_hash": {
+     "cpu": 0.668984,
+     "wall": 0.3336366309999903,
+     "rss_kib": 13176
+    },
+    "native_decode_hash": {
+     "cpu": 0.298137,
+     "wall": 0.3005620619999263,
+     "rss_kib": 3356
+    }
+   }
+  },
+  {
+   "input": "album48.wav",
+   "codec": "pcm_s16le",
+   "sample_rate": 48000,
+   "channels": 2,
+   "bits": 16,
+   "duration": 109.394542,
+   "label": "PURE CODEC (not end-to-end)",
+   "median": {
+    "ffmpeg_encode_only": {
+     "cpu": 0.255455,
+     "wall": 0.20596575800004757,
+     "rss_kib": 20832
+    },
+    "ffmpeg_decode_hash": {
+     "cpu": 0.2663,
+     "wall": 0.19380800900012218,
+     "rss_kib": 13064
+    },
+    "native_decode_hash": {
+     "cpu": 0.034719,
+     "wall": 0.03588031299977956,
+     "rss_kib": 3164
+    }
+   }
+  },
+  {
+   "input": "album48.m4a",
+   "codec": "alac",
+   "sample_rate": 48000,
+   "channels": 2,
+   "bits": 16,
+   "duration": 109.394542,
+   "label": "PURE CODEC (not end-to-end)",
+   "median": {
+    "ffmpeg_encode_only": {
+     "cpu": 0.660879,
+     "wall": 0.4344554929998594,
+     "rss_kib": 20400
+    },
+    "ffmpeg_decode_hash": {
+     "cpu": 0.67802,
+     "wall": 0.441107564000049,
+     "rss_kib": 12404
+    },
+    "native_decode_hash": {
+     "cpu": 0.35816699999999996,
+     "wall": 0.3688916240000708,
+     "rss_kib": 3160
+    }
+   }
+  },
+  {
+   "input": "album48.flac",
+   "codec": "flac",
+   "sample_rate": 48000,
+   "channels": 2,
+   "bits": 16,
+   "duration": 109.394542,
+   "label": "PURE CODEC (not end-to-end)",
+   "median": {
+    "ffmpeg_encode_only": {
+     "cpu": 0.36480399999999996,
+     "wall": 0.19442579700012175,
+     "rss_kib": 20248
+    },
+    "ffmpeg_decode_hash": {
+     "cpu": 0.364158,
+     "wall": 0.1815323549999448,
+     "rss_kib": 13024
+    },
+    "native_decode_hash": {
+     "cpu": 0.17299699999999998,
+     "wall": 0.17517202800013365,
+     "rss_kib": 3292
+    }
+   }
+  },
+  {
+   "input": "album96.wav",
+   "codec": "pcm_s24le",
+   "sample_rate": 96000,
+   "channels": 2,
+   "bits": 24,
+   "duration": 40.734521,
+   "label": "PURE CODEC (not end-to-end)",
+   "median": {
+    "ffmpeg_encode_only": {
+     "cpu": 0.201864,
+     "wall": 0.16053985100006685,
+     "rss_kib": 23424
+    },
+    "ffmpeg_decode_hash": {
+     "cpu": 0.18380999999999997,
+     "wall": 0.14114610599995103,
+     "rss_kib": 15528
+    },
+    "native_decode_hash": {
+     "cpu": 0.028544,
+     "wall": 0.03017166199992971,
+     "rss_kib": 3176
+    }
+   }
+  },
+  {
+   "input": "album96.m4a",
+   "codec": "alac",
+   "sample_rate": 96000,
+   "channels": 2,
+   "bits": 24,
+   "duration": 40.734521,
+   "label": "PURE CODEC (not end-to-end)",
+   "median": {
+    "ffmpeg_encode_only": {
+     "cpu": 0.48588,
+     "wall": 0.2936673050000991,
+     "rss_kib": 21292
+    },
+    "ffmpeg_decode_hash": {
+     "cpu": 0.472008,
+     "wall": 0.30949582900007044,
+     "rss_kib": 12900
+    },
+    "native_decode_hash": {
+     "cpu": 0.258995,
+     "wall": 0.26045412500002385,
+     "rss_kib": 3436
+    }
+   }
+  },
+  {
+   "input": "album96.flac",
+   "codec": "flac",
+   "sample_rate": 96000,
+   "channels": 2,
+   "bits": 24,
+   "duration": 40.734521,
+   "label": "PURE CODEC (not end-to-end)",
+   "median": {
+    "ffmpeg_encode_only": {
+     "cpu": 0.289975,
+     "wall": 0.15644219199998588,
+     "rss_kib": 21500
+    },
+    "ffmpeg_decode_hash": {
+     "cpu": 0.24957999999999997,
+     "wall": 0.12109134499996799,
+     "rss_kib": 14360
+    },
+    "native_decode_hash": {
+     "cpu": 0.160003,
+     "wall": 0.16584974000011243,
+     "rss_kib": 3360
+    }
+   }
+  },
+  {
+   "input": "album192.wav",
+   "codec": "pcm_s24le",
+   "sample_rate": 192000,
+   "channels": 2,
+   "bits": 24,
+   "duration": 16.002474,
+   "label": "PURE CODEC (not end-to-end)",
+   "median": {
+    "ffmpeg_encode_only": {
+     "cpu": 0.143695,
+     "wall": 0.11903718500002469,
+     "rss_kib": 26972
+    },
+    "ffmpeg_decode_hash": {
+     "cpu": 0.135381,
+     "wall": 0.108244551000098,
+     "rss_kib": 19816
+    },
+    "native_decode_hash": {
+     "cpu": 0.023665,
+     "wall": 0.0246648049999294,
+     "rss_kib": 3196
+    }
+   }
+  },
+  {
+   "input": "album192.m4a",
+   "codec": "alac",
+   "sample_rate": 192000,
+   "channels": 2,
+   "bits": 24,
+   "duration": 16.002474,
+   "label": "PURE CODEC (not end-to-end)",
+   "median": {
+    "ffmpeg_encode_only": {
+     "cpu": 0.37269699999999994,
+     "wall": 0.23019370900010472,
+     "rss_kib": 21360
+    },
+    "ffmpeg_decode_hash": {
+     "cpu": 0.366411,
+     "wall": 0.21877413200013507,
+     "rss_kib": 12736
+    },
+    "native_decode_hash": {
+     "cpu": 0.18437199999999998,
+     "wall": 0.1856068489998961,
+     "rss_kib": 3324
+    }
+   }
+  },
+  {
+   "input": "syn_tone.wav",
+   "codec": "pcm_s24le",
+   "sample_rate": 48000,
+   "channels": 2,
+   "bits": 24,
+   "duration": 240.0,
+   "label": "PURE CODEC (not end-to-end)",
+   "median": {
+    "ffmpeg_encode_only": {
+     "cpu": 0.632563,
+     "wall": 0.4701931499998864,
+     "rss_kib": 21708
+    },
+    "ffmpeg_decode_hash": {
+     "cpu": 0.54801,
+     "wall": 0.3675608399998964,
+     "rss_kib": 13456
+    },
+    "native_decode_hash": {
+     "cpu": 0.075762,
+     "wall": 0.07684071299991047,
+     "rss_kib": 3084
+    }
+   }
+  },
+  {
+   "input": "syn_tone.m4a",
+   "codec": "alac",
+   "sample_rate": 48000,
+   "channels": 2,
+   "bits": 24,
+   "duration": 240.0,
+   "label": "PURE CODEC (not end-to-end)",
+   "median": {
+    "ffmpeg_encode_only": {
+     "cpu": 1.42837,
+     "wall": 0.8375962120001077,
+     "rss_kib": 21092
+    },
+    "ffmpeg_decode_hash": {
+     "cpu": 1.338983,
+     "wall": 0.8020330899998953,
+     "rss_kib": 12712
+    },
+    "native_decode_hash": {
+     "cpu": 0.659822,
+     "wall": 0.6693503040000905,
+     "rss_kib": 3428
+    }
+   }
+  },
+  {
+   "input": "syn_pink.wav",
+   "codec": "pcm_s24le",
+   "sample_rate": 48000,
+   "channels": 2,
+   "bits": 24,
+   "duration": 240.0,
+   "label": "PURE CODEC (not end-to-end)",
+   "median": {
+    "ffmpeg_encode_only": {
+     "cpu": 0.619286,
+     "wall": 0.4407794030000787,
+     "rss_kib": 21740
+    },
+    "ffmpeg_decode_hash": {
+     "cpu": 0.538401,
+     "wall": 0.36424359399984496,
+     "rss_kib": 13368
+    },
+    "native_decode_hash": {
+     "cpu": 0.078247,
+     "wall": 0.08022096199988482,
+     "rss_kib": 3172
+    }
+   }
+  },
+  {
+   "input": "syn_pink.m4a",
+   "codec": "alac",
+   "sample_rate": 48000,
+   "channels": 2,
+   "bits": 24,
+   "duration": 240.0,
+   "label": "PURE CODEC (not end-to-end)",
+   "median": {
+    "ffmpeg_encode_only": {
+     "cpu": 1.4522469999999998,
+     "wall": 0.8278004680000777,
+     "rss_kib": 21220
+    },
+    "ffmpeg_decode_hash": {
+     "cpu": 1.370406,
+     "wall": 0.8419232200001261,
+     "rss_kib": 12808
+    },
+    "native_decode_hash": {
+     "cpu": 0.700683,
+     "wall": 0.7027643369999623,
+     "rss_kib": 3272
+    }
+   }
+  }
+ ],
+ "concurrency": {}
+}

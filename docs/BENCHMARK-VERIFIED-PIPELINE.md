@@ -361,9 +361,10 @@ crashes, with outcome counts identical to the baseline's.
 
 ## Remaining hotspots (after round 4), ranked by expected ROI
 
-1. **MD5 (~11%) and SHA-256 (~8%)**: required by STREAMINFO and the PCM-hash
-   contract; the md-5 `asm` backend is only ~15% faster (rejected for a C/asm
-   build dependency). A faster pure-Rust MD5 is the only remaining lever.
+1. **MD5 and SHA-256** (round 4): in-repository, fused into one pass, and
+   near the per-step latency floor (MD5 about 4.5 cycles per step; SHA-NI
+   bound by its `sha256rnds2` chain). No further lever without changing the
+   hash definitions.
 2. **FLAC Rice parsing** (~10% of conversion after LZCNT/BMI2): table decoding
    refuted by the k distribution and instruction-count reduction not
    reproducible (round 3); no remaining design with measured headroom.

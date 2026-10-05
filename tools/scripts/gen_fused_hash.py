@@ -79,8 +79,10 @@ def kernel(name, md5_blocks, sha_blocks):
     out.append("    let mut cdgh = _mm_blend_epi16(efgh, cdab, 0xf0);")
     out.append("    let [mut a, mut b, mut c, mut d] = *md5;")
     out.append(f"    for (m, s) in md5_blocks")
-    out.append(f"        .chunks_exact({md5_blocks})")
-    out.append(f"        .zip(sha_blocks.chunks_exact({sha_blocks}))")
+    out.append(f"        .as_chunks::<{md5_blocks}>()")
+    out.append("        .0")
+    out.append("        .iter()")
+    out.append(f"        .zip(sha_blocks.as_chunks::<{sha_blocks}>().0.iter())")
     out.append("    {")
     for blk in range(md5_blocks):
         out.append(f"        let m{blk} = words(&m[{blk}]);")

@@ -114,7 +114,12 @@ pub(crate) unsafe fn md5_1_sha_2(
     let mut abef = _mm_alignr_epi8(cdab, efgh, 8);
     let mut cdgh = _mm_blend_epi16(efgh, cdab, 0xf0);
     let [mut a, mut b, mut c, mut d] = *md5;
-    for (m, s) in md5_blocks.chunks_exact(1).zip(sha_blocks.chunks_exact(2)) {
+    for (m, s) in md5_blocks
+        .as_chunks::<1>()
+        .0
+        .iter()
+        .zip(sha_blocks.as_chunks::<2>().0.iter())
+    {
         let m0 = words(&m[0]);
         let saved = (a, b, c, d);
         ff!(a, b, c, d, m0[0], 0, 7);
@@ -315,7 +320,12 @@ pub(crate) unsafe fn md5_3_sha_4(
     let mut abef = _mm_alignr_epi8(cdab, efgh, 8);
     let mut cdgh = _mm_blend_epi16(efgh, cdab, 0xf0);
     let [mut a, mut b, mut c, mut d] = *md5;
-    for (m, s) in md5_blocks.chunks_exact(3).zip(sha_blocks.chunks_exact(4)) {
+    for (m, s) in md5_blocks
+        .as_chunks::<3>()
+        .0
+        .iter()
+        .zip(sha_blocks.as_chunks::<4>().0.iter())
+    {
         let m0 = words(&m[0]);
         let m1 = words(&m[1]);
         let m2 = words(&m[2]);

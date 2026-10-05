@@ -1,3 +1,4 @@
 /target/
 /fixtures/
 *.partial
+__pycache__/

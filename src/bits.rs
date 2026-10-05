@@ -114,6 +114,8 @@ impl BeWriter {
             left -= take;
         }
     }
+    /// One Rice code; the reference for [`Self::rice_block`] in tests.
+    #[cfg(test)]
     pub fn rice(&mut self, value: u32, k: u32) {
         let zeros = value >> k;
         let n = zeros as u64 + k as u64 + 1;
@@ -126,55 +128,40 @@ impl BeWriter {
             self.put(k, value as u64);
         }
     }
-    /// Keep a whole residual block in a word accumulator. Most Rice codes fit
-    /// in one word, so Vec length/capacity work happens once per eight bytes,
-    /// rather than popping and appending a partial byte for every sample.
+    /// Append the Rice codes of a whole residual block. The exact bit count
+    /// is summed first, so the output is sized (zero-filled) once; then each
+    /// code is ORed into a left-aligned word that is stored as eight bytes
+    /// unconditionally, and the write position advances by whole bytes. No
+    /// branch depends on where codes cross bytes, and the zero quotient bits
+    /// of a long code are already in the buffer, so they are skipped.
     pub fn rice_block(&mut self, residual: &[u32], k: u32) {
         assert!(k <= 30);
-        let mut used = self.used as u32;
-        let mut word = if used == 0 {
+        let quotients: u64 = residual.iter().map(|&u| (u >> k) as u64).sum();
+        let start = self.bytes.len() as u64 * 8 - ((8 - self.used as u64) & 7);
+        let end = start + quotients + residual.len() as u64 * (k as u64 + 1);
+        let length = end.div_ceil(8) as usize;
+        let pos = (start / 8) as usize;
+        let used = (start % 8) as u32;
+        let word = if used == 0 {
             0
         } else {
-            (self.bytes.pop().unwrap() as u64) << 56
+            (self.bytes[pos] as u64) << 56
         };
-        for &value in residual {
-            let n = (value >> k) as u64 + k as u64 + 1;
-            let suffix = (1u64 << k) | (value as u64 & ((1u64 << k) - 1));
-            if n <= 64 {
-                let n = n as u32;
-                let total = used + n;
-                if total < 64 {
-                    word |= suffix << (64 - total);
-                    used = total;
-                } else if total == 64 {
-                    self.bytes.extend_from_slice(&(word | suffix).to_be_bytes());
-                    word = 0;
-                    used = 0;
-                } else {
-                    let remaining = total - 64;
-                    self.bytes
-                        .extend_from_slice(&(word | (suffix >> remaining)).to_be_bytes());
-                    word = suffix << (64 - remaining);
-                    used = remaining;
-                }
-            } else {
-                // A rare large quotient uses the bounded bulk-zero path.
-                self.bytes
-                    .extend_from_slice(&word.to_be_bytes()[..used.div_ceil(8) as usize]);
-                self.used = (used & 7) as u8;
-                self.rice(value, k);
-                used = self.used as u32;
-                word = if used == 0 {
-                    0
-                } else {
-                    (self.bytes.pop().unwrap() as u64) << 56
-                };
-            }
+        self.bytes.resize(length + 8, 0);
+        #[cfg(target_arch = "x86_64")]
+        if crate::kernels::bit_ops() {
+            // SAFETY: LZCNT/BMI1/BMI2 were detected at runtime; the body is
+            // the same safe Rust (variable shifts become SHLX/SHRX).
+            unsafe { rice_codes_bit_ops(&mut self.bytes, residual, k, pos, used, word) };
+        } else {
+            rice_codes(&mut self.bytes, residual, k, pos, used, word);
         }
-        self.bytes
-            .extend_from_slice(&word.to_be_bytes()[..used.div_ceil(8) as usize]);
-        self.used = (used & 7) as u8;
+        #[cfg(not(target_arch = "x86_64"))]
+        rice_codes(&mut self.bytes, residual, k, pos, used, word);
+        self.bytes.truncate(length);
+        self.used = (end % 8) as u8;
     }
+    #[cfg(test)]
     pub fn unary(&mut self, zeros: u32) {
         // Aligned bulk zero fill avoids a loop per residual quotient bit.
         let mut left = zeros;
@@ -191,6 +178,91 @@ impl BeWriter {
         if self.used != 0 {
             self.put((8 - self.used) as u32, 0);
         }
+    }
+}
+
+#[cfg(target_arch = "x86_64")]
+#[target_feature(enable = "lzcnt,bmi1,bmi2")]
+unsafe fn rice_codes_bit_ops(
+    out: &mut [u8],
+    residual: &[u32],
+    k: u32,
+    pos: usize,
+    used: u32,
+    word: u64,
+) {
+    rice_codes(out, residual, k, pos, used, word)
+}
+
+/// The code loop of [`BeWriter::rice_block`]: `word` holds the `used` bits
+/// already written into byte `pos`, left-aligned. Two codes are joined in a
+/// register and stored together when they fit 56 bits (the common case).
+#[inline(always)]
+fn rice_codes(out: &mut [u8], residual: &[u32], k: u32, pos: usize, used: u32, word: u64) {
+    let suffix = 1u64 << k;
+    let mask = suffix - 1;
+    let mut w = Words {
+        out,
+        pos,
+        used,
+        word,
+    };
+    let (pairs, rest) = residual.as_chunks::<2>();
+    for &[a, b] in pairs {
+        let (a, b) = (a as u64, b as u64);
+        let (ca, la) = (suffix | (a & mask), (a >> k) + 1 + k as u64);
+        let (cb, lb) = (suffix | (b & mask), (b >> k) + 1 + k as u64);
+        if la + lb <= 56 {
+            w.put((ca << lb) | cb, la + lb);
+        } else {
+            w.code(a, ca, la, k);
+            w.code(b, cb, lb, k);
+        }
+    }
+    for &u in rest {
+        let u = u as u64;
+        w.code(u, suffix | (u & mask), (u >> k) + 1 + k as u64, k);
+    }
+}
+
+/// Output position of [`rice_codes`]; the buffer is zero-filled with eight
+/// bytes of slack past the last code.
+struct Words<'a> {
+    out: &'a mut [u8],
+    pos: usize,
+    used: u32,
+    word: u64,
+}
+impl Words<'_> {
+    /// Append `len` (at most 56) bits; store the word and advance by the
+    /// whole bytes completed.
+    #[inline(always)]
+    fn put(&mut self, bits: u64, len: u64) {
+        self.word |= bits << (64 - self.used as u64 - len);
+        self.used += len as u32;
+        self.out[self.pos..self.pos + 8].copy_from_slice(&self.word.to_be_bytes());
+        let advance = self.used >> 3;
+        self.pos += advance as usize;
+        self.word <<= advance * 8;
+        self.used &= 7;
+    }
+    /// The Rice code `code` of `len` bits for value `u`.
+    #[inline(always)]
+    fn code(&mut self, u: u64, code: u64, len: u64, k: u32) {
+        if len <= 56 {
+            self.put(code, len);
+            return;
+        }
+        // Store what is pending, skip the zeros (already in the buffer),
+        // then the one and the remainder (at most 31 bits).
+        self.out[self.pos..self.pos + 8].copy_from_slice(&self.word.to_be_bytes());
+        let zeros = self.used as u64 + (u >> k);
+        if zeros >= 8 {
+            self.pos += (zeros / 8) as usize;
+            self.word = 0;
+        }
+        self.used = (zeros % 8) as u32;
+        self.put(code, k as u64 + 1);
     }
 }
 

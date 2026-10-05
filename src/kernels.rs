@@ -180,7 +180,8 @@ impl RiceKernel {
     }
     pub(crate) fn choose(&self, residual: &[u32], overhead: u64) -> (u64, u32) {
         assert!(!residual.is_empty());
-        let mean = residual.iter().map(|&r| r as u64).sum::<u64>() / residual.len() as u64;
+        let sum = residual.iter().map(|&r| r as u64).sum::<u64>();
+        let mean = sum / residual.len() as u64;
         let estimate = if mean == 0 {
             0
         } else {
@@ -188,7 +189,13 @@ impl RiceKernel {
         };
         let first = estimate.saturating_sub(1);
         let count = ((estimate + 1).min(30) - first + 1) as usize;
-        let quotients = (self.0)(residual, first, count);
+        // Every shifted sum is at most the plain sum, so it fits u32 lanes
+        // when that does.
+        let quotients = if sum <= u32::MAX as u64 {
+            rice_narrow(residual, first, count)
+        } else {
+            (self.0)(residual, first, count)
+        };
         (0..count)
             .map(|i| {
                 let k = first + i as u32;
@@ -200,6 +207,30 @@ impl RiceKernel {
             .min_by_key(|&(cost, _)| cost)
             .unwrap()
     }
+}
+/// [`rice_scalar`] for blocks whose plain sum fits u32: the shifted sums
+/// accumulate in u32 lanes (eight per AVX2 vector, four per NEON vector).
+fn rice_narrow(residual: &[u32], first: u32, count: usize) -> [u64; 3] {
+    #[cfg(target_arch = "x86_64")]
+    if std::is_x86_feature_detected!("avx2") {
+        // SAFETY: AVX2 was detected; the body is safe Rust.
+        return unsafe { rice_narrow_avx2(residual, first, count) };
+    }
+    rice_narrow_body(residual, first, count)
+}
+#[cfg(target_arch = "x86_64")]
+#[target_feature(enable = "avx2")]
+unsafe fn rice_narrow_avx2(residual: &[u32], first: u32, count: usize) -> [u64; 3] {
+    rice_narrow_body(residual, first, count)
+}
+#[inline(always)]
+fn rice_narrow_body(residual: &[u32], first: u32, count: usize) -> [u64; 3] {
+    let mut out = [0; 3];
+    for (i, sum) in out[..count].iter_mut().enumerate() {
+        let shift = first + i as u32;
+        *sum = residual.iter().fold(0u32, |a, &r| a + (r >> shift)) as u64;
+    }
+    out
 }
 fn rice_scalar(residual: &[u32], first: u32, count: usize) -> [u64; 3] {
     let mut out = [0; 3];
@@ -550,12 +581,78 @@ impl LpcKernel {
         out: &mut Vec<u32>,
     ) -> Option<()> {
         out.resize(samples.len() - N, 0);
+        let narrow = fits_i32(samples, coefficients);
         #[cfg(target_arch = "x86_64")]
         if self.0 == Backend::Avx2 {
-            // SAFETY: AVX2 selected at construction; the body is safe Rust.
-            return unsafe { lpc_store_avx2::<N>(samples, coefficients, shift, out) }.then_some(());
+            // SAFETY: AVX2 selected at construction; the bodies are safe Rust.
+            return unsafe {
+                if narrow {
+                    lpc_store_narrow_avx2::<N>(samples, coefficients, shift, out);
+                    true
+                } else {
+                    lpc_store_avx2::<N>(samples, coefficients, shift, out)
+                }
+            }
+            .then_some(());
+        }
+        if narrow {
+            lpc_store_narrow::<N>(samples, coefficients, shift, out);
+            return Some(());
         }
         lpc_store::<N>(samples, coefficients, shift, out).then_some(())
+    }
+}
+
+/// Whether every LPC prediction sum over `samples` is below 2^30 in
+/// magnitude: sum |c| times the largest |x|. Then the sums are exact in i32
+/// and every residual x - (sum >> shift) is too (|x| < 2^30 as well), so
+/// none can be out of range.
+fn fits_i32(samples: &[i32], coefficients: &[i32]) -> bool {
+    let total: u64 = coefficients.iter().map(|&c| c.unsigned_abs() as u64).sum();
+    let largest = samples.iter().fold(0u32, |m, &x| m.max(x.unsigned_abs())) as u64;
+    total * largest < 1 << 30 && largest < 1 << 30
+}
+
+/// [`lpc_store`] with i32 arithmetic, for blocks where [`fits_i32`] holds:
+/// the same residuals, eight lanes per AVX2 multiply instead of four.
+#[inline(always)]
+fn lpc_store_narrow<const N: usize>(
+    samples: &[i32],
+    coefficients: &[i32],
+    shift: u32,
+    out: &mut [u32],
+) {
+    let mut c = [0i32; N];
+    c.copy_from_slice(&coefficients[..N]);
+    for ((window, &x), o) in samples.windows(N).zip(&samples[N..]).zip(out.iter_mut()) {
+        let window: &[i32; N] = window.try_into().unwrap();
+        let mut prediction = 0i32;
+        for j in 0..N {
+            prediction = prediction.wrapping_add(c[j].wrapping_mul(window[N - 1 - j]));
+        }
+        let r = x.wrapping_sub(prediction >> shift);
+        *o = ((r << 1) ^ (r >> 31)) as u32;
+    }
+}
+
+#[cfg(target_arch = "x86_64")]
+#[target_feature(enable = "avx2")]
+unsafe fn lpc_store_narrow_avx2<const N: usize>(
+    samples: &[i32],
+    coefficients: &[i32],
+    shift: u32,
+    out: &mut [u32],
+) {
+    lpc_store_narrow::<N>(samples, coefficients, shift, out)
+}
+
+/// Per-partition sums of stored folded residuals (`residual[i]` belongs to
+/// sample `order + i`), excluding the warm-up samples.
+fn sums_from_residual(residual: &[u32], order: usize, size: usize, sums: &mut [u64]) {
+    for (p, sum) in sums.iter_mut().enumerate() {
+        let start = (p * size).max(order) - order;
+        let end = (p + 1) * size - order;
+        *sum = residual[start..end].iter().map(|&v| v as u64).sum();
     }
 }
 
@@ -599,42 +696,13 @@ unsafe fn lpc_store_avx2<const N: usize>(
 }
 
 impl LpcKernel {
-    /// Per-partition sums of folded LPC residuals without storing them, for
-    /// ranking models. `sums[p]` covers samples `p * size..(p + 1) * size`,
-    /// excluding the first `order` warm-up samples. Returns false when any
-    /// residual is outside i32 (FLAC cannot code that model).
-    pub(crate) fn partition_sums(
-        &self,
-        samples: &[i32],
-        coefficients: &[i32],
-        shift: u32,
-        size: usize,
-        sums: &mut [u64],
-    ) -> bool {
-        assert!(shift <= 15 && size > coefficients.len());
-        assert!(sums.len() * size <= samples.len());
-        assert!(coefficients.iter().all(|&c| (-16384..=16383).contains(&c)));
-        macro_rules! dispatch {
-            ($($n:literal)*) => {
-                match coefficients.len() {
-                    $($n => {
-                        #[cfg(target_arch = "x86_64")]
-                        if self.0 == Backend::Avx2 {
-                            // SAFETY: AVX2 selected at construction; the generic
-                            // body is bounds-checked safe Rust.
-                            return unsafe { lpc_sums_avx2::<$n>(samples, coefficients, shift, size, sums) };
-                        }
-                        lpc_sums::<$n>(samples, coefficients, shift, size, sums)
-                    })*
-                    _ => unreachable!("unsupported LPC order"),
-                }
-            };
-        }
-        dispatch!(1 2 3 4 5 6 7 8)
-    }
-    /// [`Self::partition_sums`] that also stores the folded residuals for
-    /// samples `order..` in `out`, exactly as [`Self::residual_into`] would,
-    /// so the winning model need not be recomputed when it is written.
+    /// Per-partition sums of folded LPC residuals, for ranking models.
+    /// `sums[p]` covers samples `p * size..(p + 1) * size`, excluding the
+    /// first `order` warm-up samples; the folded residuals of samples
+    /// `order..` are left in `out`, exactly as [`Self::residual_into`] stores
+    /// them, so the winning model need not be recomputed when it is written.
+    /// Returns false when any residual is outside i32 (FLAC cannot code that
+    /// model).
     pub(crate) fn partition_sums_into(
         &self,
         samples: &[i32],
@@ -646,122 +714,15 @@ impl LpcKernel {
     ) -> bool {
         assert!(shift <= 15 && size > coefficients.len());
         assert!(sums.len() * size == samples.len());
-        assert!(coefficients.iter().all(|&c| (-16384..=16383).contains(&c)));
-        out.resize(samples.len() - coefficients.len(), 0);
-        macro_rules! dispatch {
-            ($($n:literal)*) => {
-                match coefficients.len() {
-                    $($n => {
-                        #[cfg(target_arch = "x86_64")]
-                        if self.0 == Backend::Avx2 {
-                            // SAFETY: AVX2 selected at construction; the generic
-                            // body is bounds-checked safe Rust.
-                            return unsafe { lpc_sums_into_avx2::<$n>(samples, coefficients, shift, size, sums, out) };
-                        }
-                        lpc_sums_into::<$n>(samples, coefficients, shift, size, sums, out)
-                    })*
-                    _ => unreachable!("unsupported LPC order"),
-                }
-            };
-        }
-        dispatch!(1 2 3 4 5 6 7 8)
-    }
-}
-
-#[inline(always)]
-fn lpc_sums_into<const N: usize>(
-    samples: &[i32],
-    coefficients: &[i32],
-    shift: u32,
-    size: usize,
-    sums: &mut [u64],
-    out: &mut [u32],
-) -> bool {
-    let mut c = [0i64; N];
-    for (c, &x) in c.iter_mut().zip(coefficients) {
-        *c = x as i64;
-    }
-    let mut bad = 0u64;
-    for (p, sum) in sums.iter_mut().enumerate() {
-        let start = (p * size).max(N);
-        let end = (p + 1) * size;
-        let mut total = 0u64;
-        for ((window, &x), o) in samples[start - N..end - 1]
-            .windows(N)
-            .zip(&samples[start..end])
-            .zip(&mut out[start - N..end - N])
+        if self
+            .residual_into(samples, coefficients, shift, out)
+            .is_none()
         {
-            let window: &[i32; N] = window.try_into().unwrap();
-            let mut prediction = 0i64;
-            for j in 0..N {
-                prediction += c[j] * window[N - 1 - j] as i64;
-            }
-            let r = x as i64 - (prediction >> shift);
-            bad |= (r.wrapping_add(1 << 31) as u64) >> 32;
-            let folded = ((r << 1) ^ (r >> 63)) as u64;
-            total += folded;
-            *o = folded as u32;
+            return false;
         }
-        *sum = total;
+        sums_from_residual(out, coefficients.len(), size, sums);
+        true
     }
-    bad == 0
-}
-
-#[cfg(target_arch = "x86_64")]
-#[target_feature(enable = "avx2")]
-unsafe fn lpc_sums_into_avx2<const N: usize>(
-    samples: &[i32],
-    coefficients: &[i32],
-    shift: u32,
-    size: usize,
-    sums: &mut [u64],
-    out: &mut [u32],
-) -> bool {
-    lpc_sums_into::<N>(samples, coefficients, shift, size, sums, out)
-}
-
-#[inline(always)]
-fn lpc_sums<const N: usize>(
-    samples: &[i32],
-    coefficients: &[i32],
-    shift: u32,
-    size: usize,
-    sums: &mut [u64],
-) -> bool {
-    let mut c = [0i64; N];
-    for (c, &x) in c.iter_mut().zip(coefficients) {
-        *c = x as i64;
-    }
-    let mut bad = 0u64;
-    for (p, sum) in sums.iter_mut().enumerate() {
-        let start = (p * size).max(N);
-        let end = (p + 1) * size;
-        let mut total = 0u64;
-        for i in start..end {
-            let window: &[i32; N] = samples[i - N..i].try_into().unwrap();
-            let mut prediction = 0i64;
-            for j in 0..N {
-                prediction += c[j] * window[N - 1 - j] as i64;
-            }
-            let r = samples[i] as i64 - (prediction >> shift);
-            bad |= (r.wrapping_add(1 << 31) as u64) >> 32;
-            total += ((r << 1) ^ (r >> 63)) as u64;
-        }
-        *sum = total;
-    }
-    bad == 0
-}
-
-#[cfg(target_arch = "x86_64")]
-#[target_feature(enable = "avx2")]
-unsafe fn lpc_sums_avx2<const N: usize>(
-    samples: &[i32],
-    coefficients: &[i32],
-    shift: u32,
-    size: usize,
-    sums: &mut [u64],
-) -> bool {
-    lpc_sums::<N>(samples, coefficients, shift, size, sums)
 }
 
 impl Dot64Kernel {
@@ -1136,25 +1097,21 @@ mod tests {
                         let stored = kernel
                             .residual_into(&samples, &coefficients, shift, &mut residual)
                             .is_some();
+                        // The partition variant agrees on the verdict and,
+                        // when valid, every stored residual and every sum.
                         let mut sums = vec![u64::MAX; samples.len() / size];
-                        let ok =
-                            kernel.partition_sums(&samples, &coefficients, shift, size, &mut sums);
-                        assert_eq!(ok, stored, "order {order} shift {shift}");
-                        // The storing variant agrees on the verdict, the sums
-                        // and, when valid, every stored residual.
-                        let mut into_sums = vec![u64::MAX; samples.len() / size];
                         let mut into = vec![7u32; 3];
                         let into_ok = kernel.partition_sums_into(
                             &samples,
                             &coefficients,
                             shift,
                             size,
-                            &mut into_sums,
+                            &mut sums,
                             &mut into,
                         );
-                        assert_eq!(into_ok, ok, "into order {order} shift {shift}");
+                        let ok = into_ok;
+                        assert_eq!(ok, stored, "order {order} shift {shift}");
                         if ok {
-                            assert_eq!(into_sums, sums);
                             assert_eq!(into, residual);
                         }
                         if ok {
@@ -1164,6 +1121,63 @@ mod tests {
                                 let expected: u64 =
                                     residual[start..end].iter().map(|&r| r as u64).sum();
                                 assert_eq!(sum, expected);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    /// Blocks within the i32 bound (small amplitudes, every order, shift
+    /// and coefficient extreme) give the residuals of the i64 definition.
+    #[test]
+    fn narrow_lpc_residuals_match_wide_definition() {
+        let mut seed = 99u32;
+        for amplitude in [1i32, 3, 255, 2047, 32767] {
+            let samples: Vec<i32> = (0..700)
+                .map(|_| {
+                    seed = seed.wrapping_mul(1664525).wrapping_add(1013904223);
+                    (seed as i32) % (amplitude + 1)
+                })
+                .collect();
+            for order in 1..=8usize {
+                for shift in [0u32, 3, 9, 15] {
+                    for set in 0..3 {
+                        let coefficients: Vec<i32> = (0..order)
+                            .map(|j| match set {
+                                0 => [16383, -16384, 1, -1, 0, 2, -2, 3][j],
+                                1 => j as i32 * 37 - 100,
+                                _ => -16384,
+                            })
+                            .collect();
+                        let total: i64 = coefficients.iter().map(|&c| (c as i64).abs()).sum();
+                        let expected: Option<Vec<u32>> = (order..samples.len())
+                            .map(|i| {
+                                let p: i64 = (0..order)
+                                    .map(|j| coefficients[j] as i64 * samples[i - j - 1] as i64)
+                                    .sum();
+                                let r = samples[i] as i64 - (p >> shift);
+                                i32::try_from(r).ok()?;
+                                Some(((r << 1) ^ (r >> 63)) as u32)
+                            })
+                            .collect();
+                        for backend in [Backend::Scalar, Backend::detect()] {
+                            let mut out = Vec::new();
+                            let ok = LpcKernel::new(backend).residual_into(
+                                &samples,
+                                &coefficients,
+                                shift,
+                                &mut out,
+                            );
+                            if total * (amplitude as i64) < 1 << 30 {
+                                assert!(fits_i32(&samples, &coefficients));
+                            }
+                            assert_eq!(ok.is_some(), expected.is_some());
+                            if let Some(expected) = &expected {
+                                assert_eq!(
+                                    &out, expected,
+                                    "amp {amplitude} order {order} shift {shift}"
+                                );
                             }
                         }
                     }

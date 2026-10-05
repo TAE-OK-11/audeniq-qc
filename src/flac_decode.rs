@@ -471,25 +471,26 @@ fn verify_subframe(
                     *c = b.signed(precision + 1)?;
                 }
             }
+            // The residuals that make the decoder reproduce x exactly; the
+            // stream must hold exactly their codes.
             r.resize(x.len(), 0);
-            residual(b, r, order)?;
-            let ok = if mode >= 32 {
+            let fits = if mode >= 32 {
                 let c = &coeff[..order];
                 match order {
-                    1 => check_lpc::<1>(x, r, c, shift, backend),
-                    2 => check_lpc::<2>(x, r, c, shift, backend),
-                    3 => check_lpc::<3>(x, r, c, shift, backend),
-                    4 => check_lpc::<4>(x, r, c, shift, backend),
-                    5 => check_lpc::<5>(x, r, c, shift, backend),
-                    6 => check_lpc::<6>(x, r, c, shift, backend),
-                    7 => check_lpc::<7>(x, r, c, shift, backend),
-                    8 => check_lpc::<8>(x, r, c, shift, backend),
-                    _ => check_lpc::<0>(x, r, c, shift, backend),
+                    1 => expected_lpc::<1>(x, c, shift, r, backend),
+                    2 => expected_lpc::<2>(x, c, shift, r, backend),
+                    3 => expected_lpc::<3>(x, c, shift, r, backend),
+                    4 => expected_lpc::<4>(x, c, shift, r, backend),
+                    5 => expected_lpc::<5>(x, c, shift, r, backend),
+                    6 => expected_lpc::<6>(x, c, shift, r, backend),
+                    7 => expected_lpc::<7>(x, c, shift, r, backend),
+                    8 => expected_lpc::<8>(x, c, shift, r, backend),
+                    _ => expected_lpc::<0>(x, c, shift, r, backend),
                 }
             } else {
-                check_fixed(x, r, order, backend)
+                expected_fixed(x, order, r, backend)
             };
-            if !ok {
+            if !fits || !verify_residual(b, r, order)? {
                 return mismatch();
             }
         }
@@ -498,26 +499,29 @@ fn verify_subframe(
     Ok(())
 }
 
-/// True when `restore_fixed` on residuals `r` would reproduce `x` (whose
-/// first `order` values are the verified warm-up). `restore_fixed` forms a
-/// wrapping i32 prediction from its (by induction equal) history and adds
-/// the residual in i64; an in-range result equal to `x[i]` is exactly
-/// `pred + r[i] == x[i]` in i64 because `x[i]` is in range.
-fn check_fixed(x: &[i32], r: &[i32], order: usize, backend: Backend) -> bool {
+/// `e[i] = x[i] - prediction` for i >= order, the residual with which
+/// `restore_fixed` turns the (by induction equal) history x[..i] into x[i]:
+/// it forms a wrapping i32 prediction and adds the residual in i64, so that
+/// residual exists exactly when this difference fits i32. Returns false
+/// otherwise (no FLAC stream then reproduces x).
+fn expected_fixed(x: &[i32], order: usize, e: &mut [i32], backend: Backend) -> bool {
     macro_rules! dispatch {
         ($n:literal) => {{
             #[cfg(target_arch = "x86_64")]
             if backend == Backend::Avx2 {
                 // SAFETY: the backend was checked available by the encoder;
                 // the generic body is bounds-checked safe Rust.
-                return unsafe { check_fixed_avx2::<$n>(x, r) };
+                return unsafe { expected_fixed_avx2::<$n>(x, e) };
             }
-            check_fixed_body::<$n>(x, r)
+            expected_fixed_body::<$n>(x, e)
         }};
     }
     let _ = backend;
     match order {
-        0 => r.iter().zip(x).all(|(a, b)| a == b),
+        0 => {
+            e.copy_from_slice(x);
+            true
+        }
         1 => dispatch!(1),
         2 => dispatch!(2),
         3 => dispatch!(3),
@@ -526,11 +530,11 @@ fn check_fixed(x: &[i32], r: &[i32], order: usize, backend: Backend) -> bool {
     }
 }
 
-/// `history[N - k]` is x[i - k]; the expressions are those of `restore_fixed`.
+/// `h[N - k]` is x[i - k]; the expressions are those of `restore_fixed`.
 #[inline(always)]
-fn check_fixed_body<const N: usize>(x: &[i32], r: &[i32]) -> bool {
-    let mut bad = false;
-    for (w, &residual) in x.windows(N + 1).zip(&r[N.min(r.len())..]) {
+fn expected_fixed_body<const N: usize>(x: &[i32], e: &mut [i32]) -> bool {
+    let mut out = 0u64;
+    for (w, e) in x.windows(N + 1).zip(&mut e[N..]) {
         let h: &[i32; N] = w[..N].try_into().unwrap();
         let prediction = match N {
             1 => h[0],
@@ -542,76 +546,85 @@ fn check_fixed_body<const N: usize>(x: &[i32], r: &[i32]) -> bool {
                 .wrapping_sub(h[2].wrapping_mul(6))
                 .wrapping_sub(h[0]),
         };
-        bad |= prediction as i64 + residual as i64 != w[N] as i64;
+        let v = w[N] as i64 - prediction as i64;
+        out |= (v.wrapping_add(1 << 31) as u64) >> 32;
+        *e = v as i32;
     }
-    !bad
+    out == 0
 }
 
 #[cfg(target_arch = "x86_64")]
 #[target_feature(enable = "avx2")]
-unsafe fn check_fixed_avx2<const N: usize>(x: &[i32], r: &[i32]) -> bool {
-    check_fixed_body::<N>(x, r)
+unsafe fn expected_fixed_avx2<const N: usize>(x: &[i32], e: &mut [i32]) -> bool {
+    expected_fixed_body::<N>(x, e)
 }
 
-/// True when `restore_lpc` on residuals `r` would reproduce `x`. Each
-/// prediction uses the expected history, so samples are independent.
-/// `restore_lpc` always forms the exact sum (its i32 accumulator is used only
-/// when the bound proves exactness), shifts it like this function and adds the
-/// residual in i64; any exact accumulator therefore gives the same result.
-/// The i32 accumulator here is chosen from the actual sample magnitudes.
+/// [`expected_fixed`] for LPC: the residuals with which `restore_lpc`
+/// reproduces x. `restore_lpc` always forms the exact sum (its i32
+/// accumulator is used only when its bound proves exactness), shifts it as
+/// here and adds the residual in i64; any exact accumulator therefore gives
+/// the same residuals. The i32 accumulator here is chosen from the actual
+/// sample magnitudes.
 #[inline]
-fn check_lpc<const N: usize>(
+fn expected_lpc<const N: usize>(
     x: &[i32],
-    r: &[i32],
     coeff: &[i32],
     shift: i32,
+    e: &mut [i32],
     backend: Backend,
 ) -> bool {
     if N == 0 {
-        return check_lpc_wide(x, r, coeff, shift);
+        return expected_lpc_wide(x, coeff, shift, e);
     }
     let c: [i32; N] = coeff.try_into().unwrap();
     let largest = c.iter().map(|c| c.unsigned_abs()).max().unwrap_or(0) as u64;
     let peak = x.iter().fold(0u32, |a, &v| a.max(v.unsigned_abs())) as u64;
     if !(0..32).contains(&shift) || largest * N as u64 * peak >= 1 << 31 {
-        return check_lpc_wide(x, r, coeff, shift);
+        return expected_lpc_wide(x, coeff, shift, e);
     }
     #[cfg(target_arch = "x86_64")]
     if backend == Backend::Avx2 {
         // SAFETY: the backend was checked available by the encoder; the
         // generic body is bounds-checked safe Rust.
-        return unsafe { check_lpc_avx2::<N>(x, r, &c, shift) };
+        return unsafe { expected_lpc_avx2::<N>(x, &c, shift, e) };
     }
     let _ = backend;
-    check_lpc_body::<N>(x, r, &c, shift)
+    expected_lpc_body::<N>(x, &c, shift, e)
 }
 
 /// Exact i32 accumulation, valid when |c| * N * max|x| < 2^31.
 #[inline(always)]
-fn check_lpc_body<const N: usize>(x: &[i32], r: &[i32], c: &[i32; N], shift: i32) -> bool {
-    let mut bad = false;
-    // Window w holds x[i - N..=i]; the residual for x[i] is r[i].
-    for (w, &residual) in x.windows(N + 1).zip(&r[N.min(r.len())..]) {
+fn expected_lpc_body<const N: usize>(x: &[i32], c: &[i32; N], shift: i32, e: &mut [i32]) -> bool {
+    let mut out = 0u64;
+    // Window w holds x[i - N..=i].
+    for (w, e) in x.windows(N + 1).zip(&mut e[N..]) {
         let mut sum = 0i32;
         for j in 0..N {
             sum = sum.wrapping_add(c[j].wrapping_mul(w[N - 1 - j]));
         }
-        bad |= (sum >> shift) as i64 + residual as i64 != w[N] as i64;
+        let v = w[N] as i64 - (sum >> shift) as i64;
+        out |= (v.wrapping_add(1 << 31) as u64) >> 32;
+        *e = v as i32;
     }
-    !bad
+    out == 0
 }
 
 #[cfg(target_arch = "x86_64")]
 #[target_feature(enable = "avx2")]
-unsafe fn check_lpc_avx2<const N: usize>(x: &[i32], r: &[i32], c: &[i32; N], shift: i32) -> bool {
-    check_lpc_body::<N>(x, r, c, shift)
+unsafe fn expected_lpc_avx2<const N: usize>(
+    x: &[i32],
+    c: &[i32; N],
+    shift: i32,
+    e: &mut [i32],
+) -> bool {
+    expected_lpc_body::<N>(x, c, shift, e)
 }
 
 /// Exact i64 accumulation for any order, coefficient size and shift.
-fn check_lpc_wide(x: &[i32], r: &[i32], coeff: &[i32], shift: i32) -> bool {
+fn expected_lpc_wide(x: &[i32], coeff: &[i32], shift: i32, e: &mut [i32]) -> bool {
     let order = coeff.len();
-    let mut bad = false;
-    for (w, &residual) in x.windows(order + 1).zip(&r[order.min(r.len())..]) {
+    let mut out = 0u64;
+    for (w, e) in x.windows(order + 1).zip(&mut e[order..]) {
         let mut sum = 0i64;
         for j in 0..order {
             sum += coeff[j] as i64 * w[order - 1 - j] as i64;
@@ -621,9 +634,138 @@ fn check_lpc_wide(x: &[i32], r: &[i32], coeff: &[i32], shift: i32) -> bool {
         } else {
             sum.wrapping_shl(shift.unsigned_abs())
         };
-        bad |= prediction.wrapping_add(residual as i64) != w[order] as i64;
+        // restore_lpc computes prediction.wrapping_add(r) for an i32 r.
+        let v = (w[order] as i64).wrapping_sub(prediction);
+        out |= (v.wrapping_add(1 << 31) as u64) >> 32;
+        *e = v as i32;
     }
-    !bad
+    out == 0
+}
+
+/// Parse a residual section exactly as `residual` does (coding method,
+/// partition order, parameters, escapes) and report whether it holds exactly
+/// the residuals `e[order..]`. Rice codes are not decoded one after another:
+/// each value's code has a known length, so its position follows from the
+/// expected values, and the bits there are compared with the code (see
+/// [`rice_codes_at`]). A decoder reading the same bits takes the same codes,
+/// in the same places, by induction over the values.
+fn verify_residual(b: &mut Bits<'_>, e: &[i32], order: usize) -> Result<bool> {
+    let _profile = crate::profile::scope(crate::profile::Stage::FlacResidual);
+    let method = b.get(2)?;
+    let partition = b.get(4)?;
+    let partitions = 1usize << partition;
+    if method > 1 || !e.len().is_multiple_of(partitions) {
+        return invalid("FLAC Rice partition");
+    }
+    let size = e.len() / partitions;
+    if size < order {
+        return invalid("FLAC residual predictor order");
+    }
+    let width = 4 + method;
+    let escape = (1 << width) - 1;
+    let mut ok = true;
+    for i in 0..partitions {
+        let k = b.get(width)?;
+        let begin = if i == 0 { order } else { i * size };
+        let values = &e[begin..(i + 1) * size];
+        if k == escape {
+            let bits = b.get(5)?;
+            for &v in values {
+                ok &= b.signed(bits)? == v;
+            }
+        } else {
+            match rice_codes_at(b.data(), b.pos, k, values) {
+                Some(end) => b.seek(end)?,
+                None => return Ok(false),
+            }
+        }
+    }
+    Ok(ok)
+}
+
+/// Whether the bits of `data` from bit `pos` are exactly the FLAC Rice codes
+/// with parameter `k` (the quotient in unary as zeros, a one, then the low
+/// `k` bits) of the folded `values`, all within `data`. Returns the position
+/// after the last code. Codes of up to 57 bits are compared with one 8-byte
+/// load; longer ones and those in the last bytes bit by bit.
+fn rice_codes_at(data: &[u8], pos: usize, k: u32, values: &[i32]) -> Option<usize> {
+    #[cfg(target_arch = "x86_64")]
+    if crate::kernels::bit_ops() {
+        // SAFETY: LZCNT/BMI1/BMI2 were detected at runtime; the body is the
+        // same bounds-checked safe Rust (variable shifts become SHLX/SHRX).
+        return unsafe { rice_codes_bit_ops(data, pos, k, values) };
+    }
+    rice_codes_body(data, pos, k, values)
+}
+
+#[cfg(target_arch = "x86_64")]
+#[target_feature(enable = "lzcnt,bmi1,bmi2")]
+unsafe fn rice_codes_bit_ops(data: &[u8], pos: usize, k: u32, values: &[i32]) -> Option<usize> {
+    rice_codes_body(data, pos, k, values)
+}
+
+#[inline(always)]
+fn rice_codes_body(data: &[u8], mut pos: usize, k: u32, values: &[i32]) -> Option<usize> {
+    let suffix = 1u64 << k;
+    let mask = suffix - 1;
+    let mut diff = 0u64;
+    let fold = |v: i32| ((v << 1) ^ (v >> 31)) as u32 as u64;
+    // Compare `len` (at most 57) bits at `pos` with `code`, or bit by bit.
+    let compare = |pos: usize, code: u64, len: u64, u: u64, diff: &mut u64| match data
+        .get(pos >> 3..(pos >> 3) + 8)
+    {
+        Some(bytes) if len <= 57 => {
+            let word = u64::from_be_bytes(bytes.try_into().unwrap()) << (pos & 7);
+            *diff |= (word >> (64 - len)) ^ code;
+            Some(())
+        }
+        _ => rice_code_bits(data, pos, k, u)?.then_some(()),
+    };
+    // Two consecutive codes are one bit string: compare them together
+    // when they fit 57 bits.
+    let (pairs, rest) = values.as_chunks::<2>();
+    for &[a, b] in pairs {
+        let (a, b) = (fold(a), fold(b));
+        let (ca, la) = (suffix | (a & mask), (a >> k) + 1 + k as u64);
+        let (cb, lb) = (suffix | (b & mask), (b >> k) + 1 + k as u64);
+        let joined = data.get(pos >> 3..(pos >> 3) + 8);
+        if let (Some(bytes), true) = (joined, la + lb <= 57) {
+            let word = u64::from_be_bytes(bytes.try_into().unwrap()) << (pos & 7);
+            diff |= (word >> (64 - (la + lb))) ^ ((ca << lb) | cb);
+        } else {
+            compare(pos, ca, la, a, &mut diff)?;
+            compare(pos + la as usize, cb, lb, b, &mut diff)?;
+        }
+        pos += (la + lb) as usize;
+    }
+    for &v in rest {
+        let u = fold(v);
+        let len = (u >> k) + 1 + k as u64;
+        compare(pos, suffix | (u & mask), len, u, &mut diff)?;
+        pos += len as usize;
+    }
+    (diff == 0 && pos <= data.len() * 8).then_some(pos)
+}
+
+/// One Rice code compared bit by bit; None when it extends past `data`.
+#[cold]
+fn rice_code_bits(data: &[u8], pos: usize, k: u32, u: u64) -> Option<bool> {
+    let bit = |p: usize| data.get(p / 8).map(|b| (b >> (7 - p % 8)) & 1);
+    let q = (u >> k) as usize;
+    for i in 0..q {
+        if bit(pos + i)? != 0 {
+            return Some(false);
+        }
+    }
+    if bit(pos + q)? != 1 {
+        return Some(false);
+    }
+    for i in 0..k as usize {
+        if bit(pos + q + 1 + i)? as u64 != (u >> (k as usize - 1 - i)) & 1 {
+            return Some(false);
+        }
+    }
+    Some(true)
 }
 
 /// Undo left/side (8), side/right (9) or mid/side (10) decorrelation and

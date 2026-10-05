@@ -18,12 +18,24 @@ pub(crate) enum Stage {
     Qc,
     OutputVerify,
     FrameVerify,
+    EncoderStereo,
+    EncoderFixed,
+    EncoderAutocorr,
+    EncoderLevinson,
+    EncoderLpcCost,
+    EncoderRiceChoice,
+    EncoderRiceWrite,
 }
 pub(crate) struct Guard {
     #[cfg(feature = "profile-native")]
     stage: usize,
     #[cfg(feature = "profile-native")]
     start: std::time::Instant,
+}
+impl Guard {
+    /// End the stage here rather than at the end of the scope.
+    #[inline(always)]
+    pub(crate) fn end(self) {}
 }
 #[inline(always)]
 pub(crate) fn scope(_stage: Stage) -> Guard {
@@ -70,7 +82,7 @@ static ALAC_SAMPLES: [std::sync::atomic::AtomicU64; 32] =
 static COUNTERS: [std::sync::atomic::AtomicU64; 7] =
     [const { std::sync::atomic::AtomicU64::new(0) }; 7];
 #[cfg(feature = "profile-native")]
-const COUNT: usize = 15;
+const COUNT: usize = 22;
 #[cfg(feature = "profile-native")]
 static NS: [std::sync::atomic::AtomicU64; COUNT] =
     [const { std::sync::atomic::AtomicU64::new(0) }; COUNT];
@@ -104,6 +116,13 @@ pub fn report() -> crate::json::Value {
         "qc",
         "output_verify",
         "frame_verify",
+        "encoder_stereo",
+        "encoder_fixed",
+        "encoder_autocorr",
+        "encoder_levinson",
+        "encoder_lpc_cost",
+        "encoder_rice_choice",
+        "encoder_rice_write",
     ];
     let stages: crate::json::Map = names
         .iter()

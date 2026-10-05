@@ -453,6 +453,7 @@ impl Encoder {
         // 10 = mid/side; side carries one extra bit. As in FFmpeg's flacenc,
         // second-order fixed residual sums estimate all four pairs, and only
         // the two subframes of the cheapest pair are planned.
+        let stereo = crate::profile::scope(crate::profile::Stage::EncoderStereo);
         let (assignment, subframes) = if channels == 1 {
             (0u64, [Some((0, depth)), None])
         } else {
@@ -490,6 +491,7 @@ impl Encoder {
                 _ => (10, [Some((2, depth)), Some((3, depth + 1))]),
             }
         };
+        stereo.end();
         let mut bw = BeWriter::reuse(std::mem::take(&mut self.frame_buffer));
         bw.put(16, 0xfff8);
         bw.put(4, 7);
@@ -627,8 +629,12 @@ fn rice_estimate(sum: u64, count: u64) -> (u32, u64) {
 /// Largest searched partition order for an n-sample block: partitions must
 /// tile the block exactly and each must exceed the predictor order (<= 8).
 fn max_partition_order(n: usize, level: u8) -> u32 {
+    // Level 5 (the default) stops at order 6: on the test corpus orders 7
+    // and 8 changed 4 of 55 files by 292 bytes in total (1 ppm) while they
+    // multiply the partition search (and its sums) by four.
     let mut order = n.trailing_zeros().min(match level {
         0..=2 => 3,
+        3..=5 => 6,
         _ => MAX_PARTITION_ORDER,
     });
     while order > 0 && n >> order < 16 {
@@ -726,7 +732,14 @@ fn fixed_sum(x: &[i32], order: usize, start: usize, end: usize) -> u64 {
 /// formed as repeated differences of the same samples, which equal the
 /// direct fixed-predictor formulas as integers (no intermediate exceeds the
 /// order-4 residual bound), so every sum and planning decision is unchanged.
-fn fixed_partition_sums(x: &[i32], size: usize, parts: usize, sums: &mut [[u64; PARTITIONS]]) {
+fn fixed_partition_sums(
+    x: &[i32],
+    depth: u32,
+    size: usize,
+    parts: usize,
+    sums: &mut [[u64; PARTITIONS]],
+) {
+    let narrow = (size as u64) << (depth + 4) <= u32::MAX as u64;
     for i in 0..parts {
         let (lo, hi) = (i * size, (i + 1) * size);
         let mut acc = [0u64; 5];
@@ -737,6 +750,32 @@ fn fixed_partition_sums(x: &[i32], size: usize, parts: usize, sums: &mut [[u64; 
             if lo.max(order) < start {
                 *acc = fixed_sum(x, order, lo.max(order), start);
             }
+        }
+        if narrow {
+            // Each folded order-k residual is below 2^(depth + k), so a
+            // partition's sums fit u32: eight lanes per vector, not four.
+            let mut lanes = [0u32; 5];
+            let [a0, a1, a2, a3, a4] = &mut lanes;
+            for ((((&a, &b), &c), &d), &e) in x[start..hi]
+                .iter()
+                .zip(&x[start - 1..hi - 1])
+                .zip(&x[start - 2..hi - 2])
+                .zip(&x[start - 3..hi - 3])
+                .zip(&x[start - 4..hi - 4])
+            {
+                let (d1, d1b, d1c, d1d) = (a - b, b - c, c - d, d - e);
+                let (d2, d2b, d2c) = (d1 - d1b, d1b - d1c, d1c - d1d);
+                let (d3, d3b) = (d2 - d2b, d2b - d2c);
+                *a0 += fold(a);
+                *a1 += fold(d1);
+                *a2 += fold(d2);
+                *a3 += fold(d3);
+                *a4 += fold(d3 - d3b);
+            }
+            for (sums, (total, lane)) in sums.iter_mut().zip(acc.iter().zip(lanes)) {
+                sums[i] = total + lane as u64;
+            }
+            continue;
         }
         let [a0, a1, a2, a3, a4] = &mut acc;
         for ((((&a, &b), &c), &d), &e) in x[start..hi]
@@ -823,18 +862,42 @@ fn sampled_lpc_cost(samples: &[i32], coefficients: &[i32], shift: u32, depth: u3
     let count = 128.min(samples.len() - order);
     let mut sampled = [0u32; 128];
     let residual = &mut sampled[..count];
-    for (point, value) in residual.iter_mut().enumerate() {
-        let i = order + point * (samples.len() - order - 1) / (count - 1).max(1);
-        let prediction: i64 = coefficients
-            .iter()
-            .enumerate()
-            .map(|(j, &c)| c as i64 * samples[i - j - 1] as i64)
-            .sum();
-        let delta = samples[i] as i64 - (prediction >> shift);
-        if i32::try_from(delta).is_err() {
-            return u64::MAX;
-        }
-        *value = ((delta << 1) ^ (delta >> 63)) as u32;
+    // Sample index order + floor(point * span / steps), stepped without a
+    // division per point.
+    let span = samples.len() - order - 1;
+    let steps = (count - 1).max(1);
+    let (whole, part) = (span / steps, span % steps);
+    let (mut i, mut remainder) = (order, 0);
+    macro_rules! sample {
+        ($($n:literal)*) => {
+            match order {
+                $($n => {
+                    let c: [i64; $n] = std::array::from_fn(|j| coefficients[j] as i64);
+                    let mut out = 0u64;
+                    for value in residual.iter_mut() {
+                        let window: &[i32; $n] = samples[i - $n..i].try_into().unwrap();
+                        let mut prediction = 0i64;
+                        for j in 0..$n {
+                            prediction += c[j] * window[$n - 1 - j] as i64;
+                        }
+                        let delta = samples[i] as i64 - (prediction >> shift);
+                        out |= (delta.wrapping_add(1 << 31) as u64) >> 32;
+                        *value = ((delta << 1) ^ (delta >> 63)) as u32;
+                        i += whole;
+                        remainder += part;
+                        if remainder >= steps {
+                            remainder -= steps;
+                            i += 1;
+                        }
+                    }
+                    out
+                })*
+                _ => unreachable!("LPC order"),
+            }
+        };
+    }
+    if sample!(1 2 3 4 5 6 7 8) != 0 {
+        return u64::MAX;
     }
     let mean = residual.iter().map(|&r| r as u64).sum::<u64>() / count as u64;
     let estimate = if mean == 0 {
@@ -888,9 +951,10 @@ impl Plan {
         let size = n >> finest;
         let parts = 1usize << finest;
         planner.sums.resize(parts, 0);
+        let fixed_stage = crate::profile::scope(crate::profile::Stage::EncoderFixed);
         let fused = profile.fixed == 4 && size > 4;
         if fused {
-            fixed_partition_sums(samples, size, parts, &mut planner.fixed_sums);
+            fixed_partition_sums(samples, depth, size, parts, &mut planner.fixed_sums);
         }
         for order in 0..=profile.fixed.min(n - 1) {
             if size <= order {
@@ -922,7 +986,9 @@ impl Plan {
         }
         // Welch-tapered autocorrelation and Levinson-Durbin, limited to order
         // eight. Integer residual costs decide; no lossy reconstruction.
+        fixed_stage.end();
         if n > 16 && profile.lpc > 0 {
+            let autocorr = crate::profile::scope(crate::profile::Stage::EncoderAutocorr);
             if planner.window.len() != n {
                 planner.window = (0..n)
                     .map(|i| {
@@ -940,6 +1006,8 @@ impl Plan {
             for (lag, energy) in r[..=profile.lpc].iter_mut().enumerate() {
                 *energy = ctx.dot.apply(&windowed[lag..], &windowed[..n - lag]);
             }
+            autocorr.end();
+            let levinson = crate::profile::scope(crate::profile::Stage::EncoderLevinson);
             let mut a = [0.0f64; 8];
             let mut error = r[0];
             let mut candidates: [Option<LpcCandidate>; 8] = Default::default();
@@ -1015,6 +1083,8 @@ impl Plan {
             // model as ascending evaluation with strict comparisons (lowest
             // order among equal costs; LPC must beat fixed/verbatim
             // strictly). At most one residual buffer is held per subframe.
+            levinson.end();
+            let _cost = crate::profile::scope(crate::profile::Stage::EncoderLpcCost);
             let mut stored = false;
             for candidate in candidates.iter_mut().rev() {
                 let Some(LpcCandidate {
@@ -1028,32 +1098,23 @@ impl Plan {
                 };
                 let coefficients_used = &coefficients[..order];
                 let mut residual = None;
-                let valid = if stored {
-                    ctx.lpc.partition_sums(
-                        samples,
-                        coefficients_used,
-                        shift,
-                        size,
-                        &mut planner.sums,
-                    )
-                } else {
+                // The first (highest) order keeps its residual for the writer;
+                // the others only need the sums.
+                let mut buffer = planner.residual();
+                let valid = ctx.lpc.partition_sums_into(
+                    samples,
+                    coefficients_used,
+                    shift,
+                    size,
+                    &mut planner.sums[..parts],
+                    &mut buffer,
+                );
+                if valid && !stored {
                     stored = true;
-                    let mut buffer = planner.residual();
-                    let valid = ctx.lpc.partition_sums_into(
-                        samples,
-                        coefficients_used,
-                        shift,
-                        size,
-                        &mut planner.sums[..parts],
-                        &mut buffer,
-                    );
-                    if valid {
-                        residual = Some(buffer);
-                    } else {
-                        planner.recycle(buffer);
-                    }
-                    valid
-                };
+                    residual = Some(buffer);
+                } else {
+                    planner.recycle(buffer);
+                }
                 if !valid {
                     continue;
                 }
@@ -1188,6 +1249,7 @@ fn write_residual(
     let size = n >> rice.order;
     let mut params = [0u8; PARTITIONS];
     let mut wide = false;
+    let choice = crate::profile::scope(crate::profile::Stage::EncoderRiceChoice);
     for (i, param) in params[..parts].iter_mut().enumerate() {
         let start = (i * size).max(predictor) - predictor;
         let slice = &residual[start..(i + 1) * size - predictor];
@@ -1198,6 +1260,8 @@ fn write_residual(
         };
         wide |= *param > 14;
     }
+    choice.end();
+    let _write = crate::profile::scope(crate::profile::Stage::EncoderRiceWrite);
     bw.put(2, u64::from(wide));
     bw.put(4, rice.order as u64);
     for (i, &param) in params[..parts].iter().enumerate() {
@@ -1325,7 +1389,7 @@ mod tests {
                         })
                         .collect();
                     let mut sums = vec![[0u64; PARTITIONS]; 5];
-                    fixed_partition_sums(&x, size, parts, &mut sums);
+                    fixed_partition_sums(&x, bits, size, parts, &mut sums);
                     for (order, sums) in sums.iter().enumerate() {
                         for (i, &sum) in sums[..parts].iter().enumerate() {
                             let start = (i * size).max(order);

@@ -16,7 +16,7 @@ claim of measured speedup from dependency removal. Backend integration is deferr
 | LUFS / true peak / peak / clipping / silence | `meter.rs`, `resample.rs`, `kernels.rs` | No |
 | Fingerprint mono downmix / sinc resampling | `resample.rs`, `kernels.rs` | No |
 | FLAC CRC8 / CRC16 | `bits.rs`: native tables, CRC16 slicing-by-eight | No |
-| SHA-256, MD5, IEEE CRC32 | RustCrypto / crc32fast crates | Yes, primitives rather than codecs |
+| SHA-256, MD5, IEEE CRC32 | `sha256.rs`, `md5.rs`, `crc32.rs` (in-repository since round four) | No |
 | JPEG / PNG cover decode | `probe.rs::cover` calls `image::Reader::decode` | Yes |
 | JSON reports | serde / serde_json | Yes |
 
@@ -43,7 +43,7 @@ Its proc-macro subtree is compile-time tooling, not a set of runtime parsers.
 | --- | --- | --- | --- |
 | FLAC PCM MD5 | md-5 0.10.6 | Specialized bounded streaming MD5, shared encoder/decoder primitive; process canonical 16/24-bit PCM through reusable chunk scratch rather than a full second block buffer where beneficial | First external primitive candidate for audio; time packing and compression separately |
 | PCM SHA-256 | sha2 0.11.0 | Keep only SHA-256 streaming state, software fallback, AArch64 SHA2 and x86 SHA-NI dispatch | Second; retain existing hardware acceleration and streaming/unaligned correctness |
-| IEEE CRC32 | crc32fast 1.5.2 | Native IEEE primitive for TTA and a future native PNG validator; ARM CRC instructions, x86 PCLMUL/eligible wider folding, scalar fallback | Small primitive scope, but not a WAV/ALAC conversion bottleneck |
+| IEEE CRC32 | Done: `src/crc32.rs` (crc32fast 1.5.2 kept as test oracle; still linked through PNG) | AVX-512/AVX2 VPCLMUL, PCLMUL, AArch64 PMULL folding with tree lane reduction; slicing-by-8 fallback | Measured, see BENCHMARK-VERIFIED-PIPELINE.md round five |
 | PNG cover validation | image 0.24.9 → png 0.17.16 → fdeflate / flate2 / miniz_oxide / Adler and CRC | Native chunks, zlib/DEFLATE, unfiltering and complete supported image validation; bounded row/pass buffers | Separate cover RAM work; no demonstrated benefit to ALAC encoding CPU |
 | JPEG cover validation | image 0.24.9 → jpeg-decoder 0.3.2 | Native markers/tables/entropy decoding and required reconstruction; baseline row/MCU work, explicit progressive compatibility | Later, larger scope; progressive scans may require image-sized coefficient state |
 | Fixed JSON output | serde 1.0.219 + serde_json 1.0.140 | Purpose-specific writer for fixed reports, correct escaping/finite number handling, stable API schema | Last for audio speed; serialization occurs outside sample processing |

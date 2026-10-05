@@ -359,6 +359,56 @@ release tests (34 + 11; reference 18 + 11), qualification 596/596, codec
 stress 288/288, standards pass. The 1,600-case mutation fuzz found no
 crashes, with outcome counts identical to the baseline's.
 
+## Round 5: in-repository IEEE CRC-32 (`src/crc32.rs`)
+
+crc32fast was already well optimized (AVX-512/AVX2 VPCLMUL, 3-way AArch64
+CRC instructions), so the acceptance rule was: keep the replacement only if
+it is at least as fast in the real pipeline on every measured CPU; a 1-2%
+pipeline slowdown would reject it. CRC-32 is used by the verified FLAC
+frame copy (once over the frames as written and once over the re-read
+published file) and by TTA header/frame checks.
+
+Design: carry-less-multiply folding with four accumulators (16 lanes with
+AVX-512 VPCLMULQDQ, 8 with AVX2 VPCLMULQDQ, 4 with PCLMULQDQ or PMULL),
+XORs fused with `vpternlogq` on AVX-512, and the lanes combined in a tree of
+independent folds (crc32fast folds its 16 lanes one after another). The
+final 128 bits are reduced with Barrett (x86) or the CRC32 instructions
+(AArch64); inputs under 64 bytes use slicing-by-8. Tests compare every
+engine with a bitwise definition and crc32fast for all lengths 0..1199,
+offsets, every split point and large sizes; aarch64 was tested under QEMU
+with and without SHA3.
+
+Microbenchmark vs `crc32fast::hash`, GB/s (raw:
+[round5-crc32.txt](verified-pipeline/round5-crc32.txt)):
+
+| CPU (engine) | 200 B | 1 KB | 4 KB | 12 KB | 64 KB | 1 MB |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| Intel Xeon 6 (AVX-512) | 30.3 vs 11.5 | 69.2 vs 40.9 | 110.5 vs 92.5 | 112.2 vs 92.1 | 94.5 vs 93.6 | 95.1 vs 95.9 |
+| AMD EPYC 7763 (AVX2) | 8.4 vs 6.8 | 22.3 vs 15.7 | 25.0 vs 24.0 | 25.5 vs 24.5 | 25.6 vs 25.5 | 25.6 vs 25.5 |
+| Neoverse N2 (PMULL) | 20.3 vs 12.9 | 21.2 vs 22.2 | 21.8 vs 9.7 | 21.7 vs 13.4 | 21.6 vs 23.2 | 21.3 vs 26.6 |
+
+On N2 the PMULL loop is bound by PMULL throughput: SHA3 `EOR3` and eight
+accumulators both measured slower (18.1 GB/s) and were rejected. crc32fast
+is faster there from 64 KB up (3-way CRC instructions), but its combine
+step makes it 2x slower at FLAC frame sizes, which dominate the frame log.
+
+Verified frame copy, paired CPU-time difference (new vs crc32fast):
+
+| CPU | 16-bit 44.1 kHz | 24-bit 96 kHz |
+| --- | ---: | ---: |
+| AMD EPYC 7763 (2 runs) | -3.2%, -3.3% | -1.7%, -1.8% |
+| Neoverse N2 (final) | -0.33% | -0.05% |
+| Intel Xeon 6 | -0.35% | +0.45% |
+| Local Xeon, real albums (3) | +0.43%, +0.68%, -0.03% (all CIs include 0) | |
+
+The 16-bit file runs CRC-32 over about 38 MB (frames written, then the
+re-read file): roughly 0.2% (Xeon 6), 0.5% (EPYC) and 1% (N2) of its
+frame-copy CPU. Differences beyond that share (the EPYC -3%, the Xeon 6
++0.45% where the new code is faster at every size) are code placement
+rather than CRC throughput. No CPU shows a slowdown attributable
+to CRC-32; the replacement is kept. crc32fast stays in the build as a
+transitive dependency of the PNG stack and as a test oracle.
+
 ## Remaining hotspots (after round 4), ranked by expected ROI
 
 1. **MD5 and SHA-256** (round 4): in-repository, fused into one pass, and

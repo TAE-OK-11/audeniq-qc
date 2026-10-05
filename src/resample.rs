@@ -128,6 +128,11 @@ pub(crate) const TP_COEFFICIENTS: [[f32; 4]; 12] = [
         0.001708984375,
     ],
 ];
+/// Outputs per true-peak bound check.
+const PEAK_SPAN: usize = 256;
+/// Largest per-phase L1 norm of `TP_COEFFICIENTS` (2.0228...), with margin
+/// for the f32 rounding of a 12-term sum.
+const TP_L1_BOUND: f64 = 2.0228271484375 * 1.0001;
 /// BS.1770 4x true-peak interpolation over whole PCM chunks. Each channel
 /// keeps its previous 11 samples ahead of the chunk, and the kernel computes
 /// every output phase with the original per-output order (oldest tap first,
@@ -154,16 +159,38 @@ impl TruePeak {
     }
     /// Push one channel's next samples; call once per channel per chunk.
     pub fn push_channel(&mut self, ch: usize, samples: &[f32]) {
-        let peak = samples.iter().fold(0.0f32, |m, &x| m.max(x.abs()));
+        // For non-NaN floats, |x| orders like its bit pattern, so this
+        // integer maximum (which vectorizes) is the largest |x|.
+        let peak = f32::from_bits(
+            samples
+                .iter()
+                .fold(0u32, |m, &x| m.max(x.to_bits() & 0x7fff_ffff)),
+        );
         self.peak = self.peak.max(peak as f64);
         if !self.interpolate || samples.is_empty() {
             return;
         }
         let buffer = &mut self.history[ch];
         buffer.extend_from_slice(samples);
-        self.peak = self
-            .peak
-            .max(self.kernel.apply(buffer, &TP_COEFFICIENTS) as f64);
+        // Every output is a 12-tap sum, so |output| <= max|x| * L1 (largest
+        // per-phase coefficient L1 norm); the f32 sum's rounding adds under
+        // 1e-6 relative. A span whose bound is below the running maximum
+        // cannot raise it and is skipped; the result is unchanged.
+        let outputs = buffer.len() - 11;
+        let mut start = 0;
+        while start < outputs {
+            let end = (start + PEAK_SPAN).min(outputs);
+            let window = &buffer[start..end + 11];
+            let largest = window
+                .iter()
+                .fold(0u32, |m, &x| m.max(x.to_bits() & 0x7fff_ffff));
+            if (f32::from_bits(largest) as f64) * TP_L1_BOUND >= self.peak {
+                self.peak = self
+                    .peak
+                    .max(self.kernel.apply(window, &TP_COEFFICIENTS) as f64);
+            }
+            start = end;
+        }
         let keep = buffer.len() - 11;
         buffer.copy_within(keep.., 0);
         buffer.truncate(11);
@@ -275,5 +302,67 @@ impl FingerprintTap {
             self.push(0.0);
         }
         self.windows
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn l1_bound_covers_every_phase() {
+        for p in 0..4 {
+            let l1: f64 = TP_COEFFICIENTS.iter().map(|c| c[p].abs() as f64).sum();
+            assert!(l1 * 1.0001 <= TP_L1_BOUND, "phase {p}: {l1}");
+        }
+    }
+
+    /// Span skipping never changes the true peak: compare with one
+    /// unskipped pass over the whole signal, for signals whose level rises
+    /// and falls, any chunking and every backend.
+    #[test]
+    fn skipped_spans_leave_true_peak_unchanged() {
+        let mut seed = 0x2468_ace1u32;
+        let mut next = move || {
+            seed ^= seed << 13;
+            seed ^= seed >> 17;
+            seed ^= seed << 5;
+            seed as i32 as f32 / 2147483648.0
+        };
+        for case in 0..24 {
+            let len = 3000 + case * 517;
+            let signal: Vec<f32> = (0..len)
+                .map(|i| {
+                    let envelope = match (i / (200 + case * 37)) % 4 {
+                        0 => 0.01,
+                        1 => 0.9,
+                        2 => 0.3,
+                        _ => 0.05,
+                    };
+                    next() * envelope
+                })
+                .collect();
+            let mut padded = vec![0.0f32; 11];
+            padded.extend_from_slice(&signal);
+            padded.extend_from_slice(&[0.0; 12]);
+            let sample_peak = signal.iter().fold(0.0f32, |m, &x| m.max(x.abs()));
+            let interpolated = crate::kernels::PeakKernel::new(Backend::Scalar, true)
+                .apply(&padded, &TP_COEFFICIENTS);
+            let expected = (sample_peak as f64).max(interpolated as f64);
+            for backend in [Backend::Scalar, Backend::detect()] {
+                for chunk in [1, 7, 256, 300, 4096] {
+                    let mut tp = TruePeak::new(48000, 1, backend);
+                    for part in signal.chunks(chunk) {
+                        tp.push_channel(0, part);
+                    }
+                    tp.finish();
+                    assert_eq!(
+                        tp.peak.to_bits(),
+                        expected.to_bits(),
+                        "case {case} chunk {chunk}"
+                    );
+                }
+            }
+        }
     }
 }

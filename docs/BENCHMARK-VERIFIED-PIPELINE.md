@@ -744,6 +744,10 @@ CPU is neutral (whole corpus, eight alternating runs: 11.48 s before,
 
 ## Round 13: FLAC low levels and level-5 LPC search
 
+> Superseded in part by round 14: round 13 used LPC orders above 12 at
+> 44.1-48 kHz, which is valid FLAC but outside the streamable subset. Round
+> 14 restores subset compliance; its tables are the current results.
+
 Goal: levels 0-4 compressed worse than FFmpeg at the same number, and level 5
 should get smaller, faster and no larger in memory, with Arm (Graviton) as the
 deployment target. Every change below was a hypothesis measured before it was
@@ -827,6 +831,55 @@ binary's outputs at levels 0/3/5/8 decode in FFmpeg with CRC checking to the
 source PCM. Tests now cover LPC orders 1-32 (residual kernels against the
 i64 definition, i32/i64 boundaries) and the autocorrelation kernel against
 its definition for 1-33 lags. [Raw](verified-pipeline/round13-encoder.txt).
+
+## Round 14: streamable subset, stereo estimate and block size
+
+Same corpus, harness and comparator as round 13 (FFmpeg 6.1.1). Upper bounds
+were measured first with exact costing; only cheap approximations of the
+promising ones were built.
+
+**Compatibility fix.** The FLAC streamable subset, which hardware decoders
+and FFmpeg's default encoder follow, allows LPC orders up to 12 and blocks
+up to 4608 frames at 48 kHz and below (32 and 16384 above). Round 13 used
+order 16 (level 5) and 32 (levels 6-8) at 44.1-48 kHz. Every level is now
+capped per sample rate, and a test checks all levels and rates.
+
+### Hypotheses
+
+| # | Hypothesis | Measurement (level 5 unless noted) | Verdict |
+|---|---|---|---|
+| U1 | Upper bounds of further search | exact 2 / 4 stereo trials -0.229% / -0.242%; precisions 12-15 -0.049%; estimated order +-1 -0.039%; partition order 8 -0.001%; five windows (Welch, Tukey, partial and punch-out Tukey) chosen by estimate +0.15%, each costed exactly -0.14% at 2.3x CPU | Stereo choice is the largest lever |
+| E1 | The stereo assignment is ranked by second-order fixed residual sums, a poor proxy for LPC-coded channels; the Levinson estimate of each channel ranks better | Order 2/3/4/8/16: -0.09/-0.11/-0.15/-0.16/-0.17% (63-73% of exact two-trial gain); order 4 on the central half block -0.125% for about +7 ms encoder per 205 s album (stereo stage 9 -> 16 ms); every level 0-6 improves 0.06-0.15% | Kept (order 4, half block) |
+| E2 | A rule can pick the coefficient precision per subframe | 13,087 subframes costed at 11-15: oracle -0.069%; best rule from order and bits per sample -0.023%; would push high orders off the i32 verification path | Rejected |
+| E3 | Variable block size | Oracle from exact frame sizes: 2048..8192 tree -0.49%, 1024..16384 -0.68%; needs several encodings per block and variable-blocksize streams, which some decoders and ingest systems handle poorly | Not built; decision for the product owner |
+| E4 | One fixed block size per file | Oracle -0.31%: 88.2 kHz and above prefers 8192-16384, 44.1/48 kHz around 4096. Rule "8192 above 48 kHz": -0.10..-0.16% of the high-resolution files, +250 KiB peak RSS (album96 3.64 -> 3.93 MiB) | Kept for levels 6-8 only; level 5 keeps 4096 and its memory |
+| E5 | Autocorrelation lag groups of 4 + 2 instead of one pass of 8 for five or six lags | Same sums, fewer operations for the stereo estimate and order-4 LPC | Kept |
+
+### Result
+
+| Level | Round 12 bytes | Round 14 bytes | Change | FFmpeg 6.1 | vs FFmpeg | Round 12 CPU s | Round 14 CPU s | Round 12 RSS KiB | Round 14 RSS KiB |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| 0 | 98,442,777 | 71,700,400 | -27.17% | 73,909,130 | -2.99% | 0.793 | 0.835 | 3512 | 3840 |
+| 1 | 79,056,344 | 71,628,179 | -9.40% | 72,199,900 | -0.79% | 0.754 | 0.891 | 3516 | 3836 |
+| 2 | 73,483,284 | 68,619,943 | -6.62% | 72,127,350 | -4.86% | 0.780 | 0.942 | 3528 | 3844 |
+| 3 | 71,893,208 | 67,627,433 | -5.93% | 68,574,784 | -1.38% | 0.846 | 1.020 | 3516 | 3840 |
+| 4 | 68,698,832 | 67,349,714 | -1.96% | 68,295,424 | -1.38% | 1.050 | 1.128 | 3852 | 3848 |
+| **5** | 67,718,241 | **67,325,634** | **-0.58%** | 68,251,657 | -1.36% | 1.238 | **1.129** | 3824 | 3852 |
+| 6 | 67,700,212 | 67,223,444 | -0.70% | 68,226,043 | -1.47% | 1.846 | 1.253 | 3848 | 4100 |
+| 7 | 67,561,958 | 67,137,764 | -0.63% | 68,224,152 | -1.59% | 2.553 | 1.892 | 3980 | 4340 |
+| 8 | 67,552,497 | 67,123,667 | -0.63% | 67,939,273 | -1.20% | 2.658 | 2.750 | 3980 | 4284 |
+
+Level 5 on the albums against round 12: paired median CPU (21 interleaved
+runs) -8.5% (album44, 16-bit) and -8.3% (album96, 24-bit); instructions
+-2.8% / -8.2% (album44 without SHA-256: -6.5%); peak RSS unchanged.
+
+Correctness: tests (x86, reference codecs, aarch64 under QEMU) including the
+subset test; `qualify` 596, `codec-stress` 288 and `standards` passed; all
+441 x86 outputs and the aarch64 outputs at levels 5 and 8 decode in FFmpeg
+with CRC checking to the source PCM. Real Arm timing: the workflow
+`flac-levels.yml` runs [`flac_level_bench.py`](../tools/scripts/flac_level_bench.py)
+on the same corpus for round 12, this engine and FFmpeg on x86 and Arm
+runners. [Raw](verified-pipeline/round14-encoder.txt).
 
 ## Remaining hotspots (after round 10), ranked by expected ROI
 

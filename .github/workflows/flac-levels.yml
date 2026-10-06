@@ -1,0 +1,51 @@
+name: FLAC levels on the IETF corpus
+on:
+  push:
+    paths:
+      - src/flac.rs
+      - src/flac_decode.rs
+      - src/kernels.rs
+      - tools/scripts/flac_level_bench.py
+      - .github/workflows/flac-levels.yml
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  levels:
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [ubuntu-24.04, ubuntu-24.04-arm]
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - name: Engine before the level and LPC search changes (round 12)
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: 5257cac3bc6dab9a33a36b4be08db32a8d05c1e1
+          path: round12
+      - name: Toolchain, development oracle and time
+        run: |
+          rustc --version
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq ffmpeg time
+          grep -m4 -E "model name|CPU implementer|CPU part" /proc/cpuinfo || true
+      - run: cargo build --release --locked
+      - run: cargo build --manifest-path round12/Cargo.toml --release --locked --target-dir round12/target
+      - name: CC0 corpus (IETF CELLAR FLAC test files, supported formats) as WAV
+        run: |
+          git clone --depth 1 https://github.com/ietf-wg-cellar/flac-test-files corpus-src
+          mkdir corpus
+          for f in corpus-src/subset/*.flac; do
+            n=$(basename "$f"); n=${n%% -*}
+            IFS=, read ch sr bits <<< "$(ffprobe -v error -select_streams a:0 -show_entries stream=channels,sample_rate,bits_per_raw_sample -of csv=p=0 "$f" | awk -F, '{print $2","$1","$3}')"
+            if [ "$ch" -le 2 ] && { [ "$bits" = 16 ] || [ "$bits" = 24 ]; } && [ "$sr" -ge 44100 ] && [ "$sr" -le 192000 ]; then
+              ffmpeg -nostdin -v error -i "$f" -map 0:a -c:a pcm_s${bits}le -map_metadata -1 "corpus/t$n.wav"
+            fi
+          done
+          ls corpus | wc -l
+      - name: Levels 0-8, three interleaved repeats, every output cross-decoded
+        run: |
+          python3 tools/scripts/flac_level_bench.py corpus flac-levels.json \
+            round12=round12/target/release/audeniq-qc new=target/release/audeniq-qc --ffmpeg --repeats 3

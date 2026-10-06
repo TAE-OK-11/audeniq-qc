@@ -50,7 +50,8 @@ jobs:
             set -- $spec
             list=$(for f in corpus/*.wav; do
               v=$(ffprobe -v error -show_entries stream=sample_rate,channels,bits_per_sample -of csv=p=0 "$f")
-              [ "$v" = "$1,2,$2" ] && echo "$f"; done)
+              if [ "$v" = "$1,2,$2" ]; then echo "$f"; fi
+            done)
             n=$(echo "$list" | wc -l)
             ffmpeg -nostdin -v error $(for f in $list; do echo -i $f; done) -filter_complex "concat=n=$n:v=0:a=1" -c:a pcm_s${2}le album$1.wav
             ffmpeg -nostdin -v error -stream_loop 3 -i album$1.wav -c:a pcm_s${2}le long$1.wav

@@ -518,17 +518,16 @@ fn verify_subframe(
             r.resize(x.len(), 0);
             let fits = if let Some((shift, coeff)) = lpc {
                 let c = &coeff[..order];
-                match order {
-                    1 => expected_lpc::<1>(x, c, shift, r, backend),
-                    2 => expected_lpc::<2>(x, c, shift, r, backend),
-                    3 => expected_lpc::<3>(x, c, shift, r, backend),
-                    4 => expected_lpc::<4>(x, c, shift, r, backend),
-                    5 => expected_lpc::<5>(x, c, shift, r, backend),
-                    6 => expected_lpc::<6>(x, c, shift, r, backend),
-                    7 => expected_lpc::<7>(x, c, shift, r, backend),
-                    8 => expected_lpc::<8>(x, c, shift, r, backend),
-                    _ => expected_lpc::<0>(x, c, shift, r, backend),
+                macro_rules! orders {
+                    ($($n:literal)*) => {
+                        match order {
+                            $($n => expected_lpc::<$n>(x, c, shift, r, backend),)*
+                            // Any higher order (see `expected_lpc_any`).
+                            _ => expected_lpc::<0>(x, c, shift, r, backend),
+                        }
+                    };
                 }
+                orders!(1 2 3 4 5 6 7 8)
             } else {
                 expected_fixed(x, order, r, backend)
             };
@@ -614,15 +613,35 @@ fn expected_lpc<const N: usize>(
     e: &mut [i32],
     backend: Backend,
 ) -> bool {
-    if N == 0 {
+    let total = coeff.iter().map(|c| c.unsigned_abs() as u64).sum::<u64>();
+    let peak = x.iter().fold(0u32, |a, &v| a.max(v.unsigned_abs())) as u64;
+    if !(0..32).contains(&shift) {
         return expected_lpc_wide(x, coeff, shift, e);
+    }
+    let narrow = total * peak < 1 << 31;
+    #[cfg(target_arch = "aarch64")]
+    if backend == Backend::Neon && !narrow {
+        return expected_lpc_wide_neon(x, coeff, shift, e);
+    }
+    if N == 0 || !narrow {
+        #[cfg(target_arch = "x86_64")]
+        if backend == Backend::Avx2 {
+            // SAFETY: as below.
+            return unsafe {
+                if narrow {
+                    expected_lpc_any_avx2::<true>(x, coeff, shift, e)
+                } else {
+                    expected_lpc_any_avx2::<false>(x, coeff, shift, e)
+                }
+            };
+        }
+        return if narrow {
+            expected_lpc_any::<true>(x, coeff, shift, e)
+        } else {
+            expected_lpc_any::<false>(x, coeff, shift, e)
+        };
     }
     let c: [i32; N] = coeff.try_into().unwrap();
-    let largest = c.iter().map(|c| c.unsigned_abs()).max().unwrap_or(0) as u64;
-    let peak = x.iter().fold(0u32, |a, &v| a.max(v.unsigned_abs())) as u64;
-    if !(0..32).contains(&shift) || largest * N as u64 * peak >= 1 << 31 {
-        return expected_lpc_wide(x, coeff, shift, e);
-    }
     #[cfg(target_arch = "x86_64")]
     if backend == Backend::Avx2 {
         // SAFETY: the backend was checked available by the encoder; the
@@ -633,7 +652,8 @@ fn expected_lpc<const N: usize>(
     expected_lpc_body::<N>(x, &c, shift, e)
 }
 
-/// Exact i32 accumulation, valid when |c| * N * max|x| < 2^31.
+/// Exact i32 accumulation, valid when sum |c| * max|x| < 2^31: every partial
+/// sum is then below 2^31 in magnitude.
 #[inline(always)]
 fn expected_lpc_body<const N: usize>(x: &[i32], c: &[i32; N], shift: i32, e: &mut [i32]) -> bool {
     let mut out = 0u64;
@@ -659,6 +679,99 @@ unsafe fn expected_lpc_avx2<const N: usize>(
     e: &mut [i32],
 ) -> bool {
     expected_lpc_body::<N>(x, c, shift, e)
+}
+
+/// Predictions accumulated together by [`expected_lpc_any`].
+const ANY_GROUP: usize = 16;
+
+/// [`expected_lpc_body`] (`NARROW`, under its bound) or
+/// [`expected_lpc_wide`] (exact i64 sums, shift 0..32) for any order: the
+/// sums of `ANY_GROUP` consecutive samples accumulate side by side, each
+/// coefficient broadcast once per group, which vectorizes for every order
+/// and for 24-bit material; the remaining samples take the same exact sum
+/// one at a time.
+#[inline(always)]
+fn expected_lpc_any<const NARROW: bool>(x: &[i32], c: &[i32], shift: i32, e: &mut [i32]) -> bool {
+    let order = c.len();
+    let n = x.len();
+    let mut out = 0u64;
+    let mut i = order;
+    while i + ANY_GROUP <= n {
+        let v: &[i32; ANY_GROUP] = x[i..i + ANY_GROUP].try_into().unwrap();
+        let e: &mut [i32; ANY_GROUP] = (&mut e[i..i + ANY_GROUP]).try_into().unwrap();
+        if NARROW {
+            let mut acc = [0i32; ANY_GROUP];
+            for (j, &c) in c.iter().enumerate() {
+                let h: &[i32; ANY_GROUP] = x[i - 1 - j..i - 1 - j + ANY_GROUP].try_into().unwrap();
+                for (a, &h) in acc.iter_mut().zip(h) {
+                    *a = a.wrapping_add(c.wrapping_mul(h));
+                }
+            }
+            for ((e, &v), &a) in e.iter_mut().zip(v).zip(&acc) {
+                let d = v as i64 - (a >> shift) as i64;
+                out |= (d.wrapping_add(1 << 31) as u64) >> 32;
+                *e = d as i32;
+            }
+        } else {
+            let mut acc = [0i64; ANY_GROUP];
+            for (j, &c) in c.iter().enumerate() {
+                let h: &[i32; ANY_GROUP] = x[i - 1 - j..i - 1 - j + ANY_GROUP].try_into().unwrap();
+                for (a, &h) in acc.iter_mut().zip(h) {
+                    *a += c as i64 * h as i64;
+                }
+            }
+            for ((e, &v), &a) in e.iter_mut().zip(v).zip(&acc) {
+                let d = (v as i64).wrapping_sub(a >> shift);
+                out |= (d.wrapping_add(1 << 31) as u64) >> 32;
+                *e = d as i32;
+            }
+        }
+        i += ANY_GROUP;
+    }
+    for i in i..n {
+        let mut sum = 0i64;
+        for (j, &c) in c.iter().enumerate() {
+            sum += c as i64 * x[i - 1 - j] as i64;
+        }
+        let d = (x[i] as i64).wrapping_sub(sum >> shift);
+        out |= (d.wrapping_add(1 << 31) as u64) >> 32;
+        e[i] = d as i32;
+    }
+    out == 0
+}
+
+#[cfg(target_arch = "x86_64")]
+#[target_feature(enable = "avx2")]
+unsafe fn expected_lpc_any_avx2<const NARROW: bool>(
+    x: &[i32],
+    c: &[i32],
+    shift: i32,
+    e: &mut [i32],
+) -> bool {
+    expected_lpc_any::<NARROW>(x, c, shift, e)
+}
+
+/// [`expected_lpc_wide`] for shifts 0..32 on NEON: whole groups of 16 with
+/// widening multiply-accumulates (see `kernels::lpc_wide_groups_neon`), the
+/// remaining samples one at a time with the same exact sums.
+#[cfg(target_arch = "aarch64")]
+fn expected_lpc_wide_neon(x: &[i32], c: &[i32], shift: i32, e: &mut [i32]) -> bool {
+    let order = c.len();
+    // SAFETY: NEON was selected by the caller (AArch64 baseline); the
+    // kernel asserts its bounds.
+    let (done, high) =
+        unsafe { crate::kernels::lpc_wide_groups_neon(x, c, shift as u32, &mut e[order..]) };
+    let mut out = u64::from(high);
+    for i in done..x.len() {
+        let mut sum = 0i64;
+        for (j, &c) in c.iter().enumerate() {
+            sum += c as i64 * x[i - 1 - j] as i64;
+        }
+        let d = (x[i] as i64).wrapping_sub(sum >> shift);
+        out |= (d.wrapping_add(1 << 31) as u64) >> 32;
+        e[i] = d as i32;
+    }
+    out == 0
 }
 
 /// Exact i64 accumulation for any order, coefficient size and shift.

@@ -742,6 +742,92 @@ CPU is neutral (whole corpus, eight alternating runs: 11.48 s before,
 11.50 s after) and peak RSS unchanged; levels 6-8 use about 1.6 MiB less.
 [Raw](verified-pipeline/round12-encoder.txt).
 
+## Round 13: FLAC low levels and level-5 LPC search
+
+Goal: levels 0-4 compressed worse than FFmpeg at the same number, and level 5
+should get smaller, faster and no larger in memory, with Arm (Graviton) as the
+deployment target. Every change below was a hypothesis measured before it was
+kept; refuted ones were removed again.
+
+Conditions: 4-vCPU Intel Xeon VM (AVX2), FFmpeg **6.1.1** (Ubuntu package,
+`-threads 1`, encode only) as comparator. Corpus: the 49 supported tracks of the
+IETF CELLAR FLAC test files (CC0; 44.1/48 kHz 16-bit stereo, 96/134.56/192 kHz
+24-bit stereo, mono 16/24-bit), decoded to WAV. Bytes are corpus totals; CPU is
+user+system summed over the corpus (min of 3), RSS is the largest peak RSS of
+any one process, from `wait4` in a small C runner. The VM is noisy (+-10%), so
+album CPU is also given as instruction counts (valgrind, SHA-256 excluded
+because valgrind lacks SHA-NI) and as the paired median of 21 interleaved runs.
+Arm code was cross-built (aarch64 musl) and run under QEMU for correctness
+only; Arm timing comes from the repository's Arm CI.
+
+### Result
+
+| Level | Before bytes | After bytes | Change | FFmpeg 6.1 | After vs FFmpeg | Before CPU s | After CPU s |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| 0 | 98,442,777 | 71,739,018 | -27.13% | 73,909,130 | -2.94% | 0.793 | 0.809 |
+| 1 | 79,056,344 | 71,667,680 | -9.35% | 72,199,900 | -0.74% | 0.754 | 0.914 |
+| 2 | 73,483,284 | 68,697,644 | -6.51% | 72,127,350 | -4.75% | 0.780 | 0.955 |
+| 3 | 71,893,208 | 67,710,085 | -5.82% | 68,574,784 | -1.26% | 0.846 | 1.006 |
+| 4 | 68,698,832 | 67,436,173 | -1.84% | 68,295,424 | -1.26% | 1.050 | 1.090 |
+| **5** | 67,718,241 | **67,310,249** | **-0.60%** | 68,251,657 | -1.38% | 1.238 | **1.182** |
+| 6 | 67,700,212 | 67,108,721 | -0.87% | 68,226,043 | -1.64% | 1.846 | 1.408 |
+| 7 | 67,561,958 | 66,933,180 | -0.93% | 68,224,152 | -1.89% | 2.553 | 2.138 |
+| 8 | 67,552,497 | 66,907,684 | -0.95% | 67,939,273 | -1.52% | 2.658 | 3.295 |
+
+FFmpeg 6.1 needed 6.5-8.3 s of CPU per level on the same corpus. Peak RSS at
+level 5: 3,824 KiB before, 3,856 KiB after (run-to-run spread is about
++-150 KiB); the binary's text is 988,798 bytes (before 1,006,730).
+
+Level 5 by format (bytes before -> after, FFmpeg 6.1 level 5):
+
+| Rate/bits/channels | Files | Before | After | Change | FFmpeg |
+|---|---:|---:|---:|---:|---:|
+| 44100/16/2 | 27 | 24,504,807 | 24,254,381 | -1.02% | 24,847,045 |
+| 48000/16/2 | 10 | 8,386,367 | 8,345,316 | -0.49% | 8,474,757 |
+| 96000/24/2 | 5 | 16,467,044 | 16,405,859 | -0.37% | 16,509,847 |
+| 134560/24/2 | 1 | 4,605,520 | 4,594,978 | -0.23% | 4,611,838 |
+| 192000/24/2 | 2 | 13,260,895 | 13,237,647 | -0.18% | 13,270,397 |
+| 44100/16/1 | 3 | 252,062 | 239,273 | -5.07% | 279,366 |
+| 44100/24/1 | 1 | 241,546 | 232,795 | -3.62% | 258,407 |
+
+Level 5 on albums (album44 = 25 tracks, 205 s 16-bit; album96 = 5 tracks,
+41 s 24-bit): encoder stage time 265 -> 215 ms and 141 -> 117 ms (min of 7,
+profile build); instructions without SHA-256 -5.6% / -8.0%; paired whole-
+process CPU -3.3% / -11.1%.
+
+### Hypotheses
+
+| # | Hypothesis | Measurement | Verdict |
+|---|---|---|---|
+| L1 | Low levels lose because they restrict fixed orders (level 0: none, 1: order 1) although the fused pass computes orders 0-4 at once | All levels with orders 0-4: level 0 98.4 -> 71.7 MB at equal CPU | Kept |
+| L2 | 1024/2048-frame blocks at levels 0-1 cost more than they save | 4096 blocks smaller (level 0: 71.74 vs 71.86 MB) | Kept |
+| L3 | FFmpeg's level 3-4 lead comes from LPC (order 6), which fixed predictors cannot reach | Best fixed-only setting 71.67 MB vs FFmpeg level 3 68.57 MB; LPC order 4 68.70, order 8 67.71 | Kept: LPC from level 2 |
+| P1 | A maximum LPC order of 8 limits level 5 | Order 12 -0.39%, 16 -0.56%, 20 -0.66%, 32 -0.76% (old order search) | Kept (16 at level 5, 32 from level 6) |
+| P2 | 15-bit coefficients are wider than useful | Per format best 12-15; 13 within 0.003% of best everywhere, 15 +0.03% at order 12-16; keeps 16-bit verification sums in i32 to order 16 | Kept (13) |
+| P3 | Ranking orders by 128-point sampled costs is unnecessary: the Levinson error with the coefficient overhead estimates the best order (raw error alone, measured in round 10, always prefers the top order) | Order 16: 67,310,394 vs 67,312,943 with sampled ranking + 2 exact; order 8 within 0.004%; one exact residual, no sampled costs | Kept |
+| P4 | Costing only the highest order is enough | +0.03% (order 12) / +0.07% (order 16) | Rejected |
+| P5 | Fewer sampled points (32/64) | +0.005% | Superseded by P3 |
+| P6 | Tukey(0.5)/(0.25), Hann or sqrt-Welch window instead of Welch | -0.003% / 0.000% / +0.03% / +0.06% | Rejected (noise level) |
+| P7 | Blocks 3072/3584/4608/8192 | All larger than 4096 | Rejected |
+| P8 | Weight the estimate's coefficient overhead by 0.25-0.75 | Best (0.6) -0.03% for +6-10% CPU | Rejected for level 5 |
+| P9 | Skip fixed predictors at LPC levels | +0.04% | Rejected |
+| P10 | f32 autocorrelation (twice the SIMD lanes, important on Arm) | +0.32% (level 5), +0.46% (level 6) | Rejected: f64 stays |
+| P11 | Level 8 exhaustive search over 32 orders | -0.09% vs level 7 for 5x its CPU (11.9 s); estimate +-2 and the top order: 72% of that gain at 30% of the CPU | Kept: +-2 |
+| P12 | Partition order 8 at levels 6-8 silently capped LPC at order 15 (warm-up must fit the finest partition) | Per-order partition limit: level 6 67.35 -> 67.11 MB | Fixed |
+| S1 | One fused autocorrelation pass (all lags of a group per sample load) beats a dot product per lag | First version slower at order 8 (16 lags computed for 9); with group widths 8/4/2 (AVX2) and 16/8/4/2 FMA chains (NEON): 25 -> 20 ms at order 8, 41 -> 33 at 16, 77 -> 58 at 32 | Kept |
+| S2 | Frame verification of orders above 8 falls to the generic scalar i64 loop | 64 -> 126 ms at order 12; bound sum\|c\| max\|x\| (was max\|c\| N max\|x\|) and a vectorized any-order kernel | Kept |
+| R1 | Peak RSS follows binary size (fault-around maps nearly all text: 940 of 1,006 KB resident) and one instantiation per order 1-32 adds 400 KB of text | Constant-order kernels only to order 8; one any-order kernel (16 predictions per coefficient broadcast) for 9-32: text 1,348,302 -> 988,798 bytes, RSS back to before | Kept |
+| A1 | On aarch64 the generic i64 LPC loops stay scalar (SMADDL; baseline NEON has no 64-bit multiply), so 24-bit material does not vectorize | Disassembly confirmed; explicit NEON SMLAL/SMLAL2 kernel for encoder and verification at every order when the i32 bound fails | Kept; Arm timing from CI |
+| A2 | The same i64 grouping speeds x86 24-bit verification | album96 verification 48 -> 28 ms (before this round: 36) | Kept |
+
+Correctness: unit, regression and reference-codec tests (x86, and aarch64
+under QEMU); `qualify` (596 checks), `codec-stress` (288) and `standards`
+passed; all 441 corpus outputs (49 tracks x 9 levels) and the aarch64
+binary's outputs at levels 0/3/5/8 decode in FFmpeg with CRC checking to the
+source PCM. Tests now cover LPC orders 1-32 (residual kernels against the
+i64 definition, i32/i64 boundaries) and the autocorrelation kernel against
+its definition for 1-33 lags. [Raw](verified-pipeline/round13-encoder.txt).
+
 ## Remaining hotspots (after round 10), ranked by expected ROI
 
 0. **Conversion after round 10**: the fused MD5/SHA-256 pass is now the

@@ -944,16 +944,17 @@ fn autocorr_scalar(w: &[f64], n: usize, out: &mut [f64]) {
     }
 }
 /// Lag-group widths: the widest group that is still filled, so at most
-/// one partly used group (of at most 3 unused lags) per block.
+/// one partly used group (of at most 1 or 3 unused lags) per block.
 #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 #[inline(always)]
 fn autocorr_groups(lags: usize, widest: usize, mut group: impl FnMut(usize, usize)) {
     let mut first = 0;
     while first < lags {
         let left = lags - first;
+        // Five or six lags: 4 + 2 costs less than one pass of 8.
         let width = if left >= widest {
             widest
-        } else if left > 4 {
+        } else if left > 6 {
             8.min(widest)
         } else if left > 2 {
             4

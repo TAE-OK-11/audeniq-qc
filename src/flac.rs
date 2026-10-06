@@ -71,6 +71,28 @@ impl Profile {
             stereo_trials,
         })
     }
+    /// Keep every level inside the FLAC streamable subset, which hardware
+    /// decoders and FFmpeg's default encoder rely on: up to 48 kHz, LPC
+    /// orders up to 12 and blocks up to 4608 frames; above, orders up to 32
+    /// and blocks up to 16384. Above 48 kHz, levels 6-8 use blocks of 8192
+    /// frames (the duration of 4096 at 44.1-48 kHz): 0.10-0.16% smaller
+    /// high-resolution files for about 250 KiB more peak RSS, which level 5
+    /// does not spend; 16384 saved little more for twice the buffers.
+    fn for_rate(self, sample_rate: u32) -> Self {
+        if sample_rate <= 48000 {
+            Self {
+                lpc: self.lpc.min(12),
+                ..self
+            }
+        } else if self.level >= 6 {
+            Self {
+                block: 8192,
+                ..self
+            }
+        } else {
+            self
+        }
+    }
 }
 pub struct Conversion {
     pub spec: AudioSpec,
@@ -390,6 +412,7 @@ impl Encoder {
     ) -> Result<Self> {
         file.write_all(b"fLaC\x80\x00\x00\x22")?;
         file.write_all(&[0u8; 34])?;
+        let profile = profile.for_rate(spec.sample_rate);
         let capacity = profile.block * spec.channels as usize;
         let raw_capacity = capacity * (spec.bits_per_sample / 8) as usize;
         Ok(Self {
@@ -474,10 +497,11 @@ impl Encoder {
             profile: self.profile,
         };
         // FLAC channel assignment: 1 = L/R, 8 = left/side, 9 = side/right,
-        // 10 = mid/side; side carries one extra bit. Second-order fixed
-        // residual sums rank the four pairs. Levels up to 6 plan only the
-        // best-ranked pair; level 7 plans the channels of the two best and
-        // level 8 all four channels, and the smallest exact pair wins.
+        // 10 = mid/side; side carries one extra bit. An order-4 Levinson
+        // estimate of each channel ranks the four pairs (see
+        // `stereo_estimate`). Levels up to 6 plan only the best-ranked pair;
+        // level 7 plans the channels of the two best and level 8 all four
+        // channels, and the smallest exact pair wins.
         let stereo = crate::profile::scope(crate::profile::Stage::EncoderStereo);
         // Indices into channel_buffers: left, right, mid, side.
         const PAIRS: [(u64, [usize; 2]); 4] = [(1, [0, 1]), (8, [0, 3]), (9, [3, 1]), (10, [2, 3])];
@@ -495,23 +519,13 @@ impl Encoder {
                 *m = (a + b) >> 1;
                 *d = a - b;
             }
-            let estimate = |sum: u64| {
-                if n < 3 {
-                    return 0;
-                }
-                rice_estimate(sum, n as u64 - 2).1
-            };
-            let sums = second_order_sums([left, right, mid, side], depth + 1);
-            let (l, r, m, d) = (
-                estimate(sums[0]),
-                estimate(sums[1]),
-                estimate(sums[2]),
-                estimate(sums[3]),
-            );
+            let planner = &mut self.planner;
+            let [l, r, m, d] = [&*left, &*right, &*mid, &*side]
+                .map(|x| stereo_estimate(x, depth, &self.autocorr, planner));
             let costs = [l + r, l + d, d + r, m + d];
             let mut ranked = [0, 1, 2, 3];
             // Stable: equal estimates keep the assignment order.
-            ranked.sort_by_key(|&i| costs[i]);
+            ranked.sort_by(|&a, &b| costs[a].total_cmp(&costs[b]));
             Some(ranked)
         };
         stereo.end();
@@ -877,39 +891,60 @@ fn fixed_partition_sums(
     }
 }
 
-/// `fixed_sum(x, 2, 2, x.len())` for four equally long channels of at most
-/// `depth` bits, in one pass. Each folded second-order residual is below
-/// 2^(depth + 2), so runs of 2^(30 - depth) samples sum in u32 lanes.
-fn second_order_sums(x: [&[i32]; 4], depth: u32) -> [u64; 4] {
-    let n = x[0].len();
-    let mut totals = [0u64; 4];
-    if n < 3 {
-        return totals;
+/// Order of the Levinson estimate that ranks stereo assignments. On the
+/// test corpus orders 2/3/4/8/16 saved 0.09/0.11/0.15/0.16/0.17% at level 5
+/// against second-order fixed residual sums (exactly planning the two best
+/// pairs saves 0.23% for about 35% more encoder time). Estimating on the
+/// central half of the block kept 89% of the order-4 gain at half the cost.
+const STEREO_ESTIMATE_ORDER: usize = 4;
+
+/// Estimated bits of one channel for ranking stereo assignments: the
+/// smallest Levinson estimate up to `STEREO_ESTIMATE_ORDER` (the per-order
+/// formula of LPC planning, on the absolute windowed error so channels
+/// compare). Only the ranking matters; the chosen channels are planned
+/// exactly. `depth` is the left/right depth; mid and side are estimated
+/// alike (side's extra warm-up bit is immaterial for ranking).
+fn stereo_estimate(x: &[i32], depth: u32, kernel: &AutocorrKernel, planner: &mut Planner) -> f64 {
+    let x = if x.len() >= 64 {
+        &x[x.len() / 4..x.len() / 4 + x.len() / 2]
+    } else {
+        x
+    };
+    let n = x.len();
+    if n < 2 {
+        return 0.0;
     }
-    if depth > 22 {
-        for (total, x) in totals.iter_mut().zip(x) {
-            *total = fixed_sum(x, 2, 2, n);
+    let max_order = STEREO_ESTIMATE_ORDER.min(n - 1);
+    let mut r = [0.0f64; STEREO_ESTIMATE_ORDER + 1];
+    let window = std::mem::take(&mut planner.stereo_window);
+    planner.stereo_window = planner.autocorrelate(x, window, kernel, &mut r[..=max_order]);
+    // Silence and near-silence have no meaningful logarithm; below about
+    // 0.01 per sample every channel costs the same.
+    let floor = 1e-2 * n as f64;
+    let mut best = 0.5 * n as f64 * r[0].max(floor).log2();
+    let mut a = [0.0f64; STEREO_ESTIMATE_ORDER];
+    let mut error = r[0];
+    for index in 0..max_order {
+        if error <= r[0] * 1e-12 || !error.is_finite() {
+            break;
         }
-        return totals;
-    }
-    let run = 1usize << (30 - depth);
-    let mut start = 2;
-    while start < n {
-        let end = n.min(start + run);
-        for (total, x) in totals.iter_mut().zip(x) {
-            let mut sum = 0u32;
-            for ((&a, &b), &c) in x[start..end]
-                .iter()
-                .zip(&x[start - 1..end - 1])
-                .zip(&x[start - 2..end - 2])
-            {
-                sum += fold(a - 2 * b + c);
-            }
-            *total += sum as u64;
+        let reflection =
+            (r[index + 1] - (0..index).map(|j| a[j] * r[index - j]).sum::<f64>()) / error;
+        if !reflection.is_finite() || reflection.abs() >= 1.0 {
+            break;
         }
-        start = end;
+        let old = a;
+        for j in 0..index {
+            a[j] = old[j] - reflection * old[index - j - 1];
+        }
+        a[index] = reflection;
+        error *= 1.0 - reflection * reflection;
+        let order = index + 1;
+        let estimate = 0.5 * (n - order) as f64 * error.max(floor).log2()
+            + (order as u32 * (LPC_PRECISION + depth)) as f64;
+        best = best.min(estimate);
     }
-    totals
+    best
 }
 
 #[derive(Clone)]
@@ -939,12 +974,43 @@ struct Plan {
 #[derive(Default)]
 struct Planner {
     window: Vec<f64>,
+    /// Window of the central half block for the stereo estimate.
+    stereo_window: Vec<f64>,
     windowed: Vec<f64>,
     residuals: Vec<Vec<u32>>,
     sums: Vec<u64>,
     fixed_sums: Vec<[u64; PARTITIONS]>,
 }
 impl Planner {
+    /// Welch-windowed autocorrelation of `x` for lags `0..r.len()`, with
+    /// `window` (recomputed when its length differs) handed back to the
+    /// caller's cache.
+    fn autocorrelate(
+        &mut self,
+        x: &[i32],
+        mut window: Vec<f64>,
+        kernel: &AutocorrKernel,
+        r: &mut [f64],
+    ) -> Vec<f64> {
+        let n = x.len();
+        if window.len() != n {
+            window = (0..n)
+                .map(|i| {
+                    let d = 2.0 * i as f64 / (n - 1) as f64 - 1.0;
+                    1.0 - d * d
+                })
+                .collect();
+        }
+        let windowed = &mut self.windowed;
+        // Zero padding around the block; the block itself is overwritten.
+        windowed.resize(2 * AUTOCORR_PAD + n, 0.0);
+        windowed[AUTOCORR_PAD + n..].fill(0.0);
+        for ((v, &x), &w) in windowed[AUTOCORR_PAD..].iter_mut().zip(x).zip(&window) {
+            *v = x as f64 * w;
+        }
+        kernel.apply(windowed, n, r);
+        window
+    }
     fn residual(&mut self) -> Vec<u32> {
         if let Some(buffer) = self.residuals.pop() {
             crate::profile::count(crate::profile::Counter::EncoderResidualReused, 1);
@@ -1055,27 +1121,10 @@ impl Plan {
         let max_order = profile.lpc.min(n - 1);
         if n > 16 && max_order > 0 {
             let autocorr = crate::profile::scope(crate::profile::Stage::EncoderAutocorr);
-            if planner.window.len() != n {
-                planner.window = (0..n)
-                    .map(|i| {
-                        let d = 2.0 * i as f64 / (n - 1) as f64 - 1.0;
-                        1.0 - d * d
-                    })
-                    .collect();
-            }
-            let windowed = &mut planner.windowed;
-            // Zero padding around the block; the block itself is overwritten.
-            windowed.resize(2 * AUTOCORR_PAD + n, 0.0);
-            windowed[AUTOCORR_PAD + n..].fill(0.0);
-            for ((v, &x), &w) in windowed[AUTOCORR_PAD..]
-                .iter_mut()
-                .zip(samples)
-                .zip(&planner.window)
-            {
-                *v = x as f64 * w;
-            }
             let mut r = [0.0f64; MAX_LPC_ORDER + 1];
-            ctx.autocorr.apply(windowed, n, &mut r[..=max_order]);
+            let window = std::mem::take(&mut planner.window);
+            planner.window =
+                planner.autocorrelate(samples, window, ctx.autocorr, &mut r[..=max_order]);
             autocorr.end();
             let levinson = crate::profile::scope(crate::profile::Stage::EncoderLevinson);
             // Levinson-Durbin keeps the predictor of every order. A Laplacian
@@ -1418,6 +1467,23 @@ mod tests {
             .is_ok_and(|(length, _)| length == frame.len())
     }
 
+    /// Every level stays inside the FLAC streamable subset at every rate.
+    #[test]
+    fn profiles_stay_in_the_streamable_subset() {
+        const { assert!(LPC_PRECISION <= 15) };
+        for level in 0..=8 {
+            for rate in [8000, 44100, 48000, 48001, 96000, 192000] {
+                let p = Profile::new(level).unwrap().for_rate(rate);
+                if rate <= 48000 {
+                    assert!(p.lpc <= 12 && p.block <= 4608, "level {level} rate {rate}");
+                } else {
+                    assert!(p.lpc <= 32 && p.block <= 16384, "level {level} rate {rate}");
+                }
+                assert!(p.partition <= 8);
+            }
+        }
+    }
+
     #[test]
     fn fused_fixed_sums_equal_per_order_sums() {
         let mut seed = 99u64;
@@ -1441,32 +1507,6 @@ mod tests {
                             assert_eq!(sum, fixed_sum(&x, order, start, (i + 1) * size));
                         }
                     }
-                }
-            }
-        }
-    }
-
-    #[test]
-    fn second_order_sums_equal_fixed_sums() {
-        let mut seed = 7u64;
-        for depth in [8u32, 16, 17, 20, 22, 24, 25] {
-            let max = (1i64 << (depth - 1)) - 1;
-            for n in [0usize, 1, 2, 3, 9, 4608, 20000] {
-                for pattern in 0..3 {
-                    let channels: Vec<Vec<i32>> = (0..4)
-                        .map(|c| {
-                            (0..n)
-                                .map(|i| match pattern {
-                                    0 => (rng(&mut seed) as i64 % (max + 1)) as i32,
-                                    1 => (if (i + c) % 2 == 0 { max } else { -max - 1 }) as i32,
-                                    _ => ((i as f64 * 0.01).sin() * max as f64) as i32,
-                                })
-                                .collect()
-                        })
-                        .collect();
-                    let x = [&channels[0][..], &channels[1], &channels[2], &channels[3]];
-                    let expected = x.map(|x| if n < 3 { 0 } else { fixed_sum(x, 2, 2, n) });
-                    assert_eq!(second_order_sums(x, depth), expected, "depth {depth} n {n}");
                 }
             }
         }

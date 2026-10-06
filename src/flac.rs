@@ -389,6 +389,7 @@ struct Encoder {
     bytes: u64,
     min_frame: usize,
     max_frame: usize,
+    fixed_sums: FixedSumsFn,
     autocorr: AutocorrKernel,
     lpc: LpcKernel,
     rice: RiceKernel,
@@ -425,6 +426,7 @@ impl Encoder {
             bytes: 42,
             min_frame: usize::MAX,
             max_frame: 0,
+            fixed_sums: fixed_sums_kernel(backend),
             autocorr: AutocorrKernel::new(backend),
             lpc: LpcKernel::new(backend),
             rice: RiceKernel::new(backend),
@@ -491,6 +493,7 @@ impl Encoder {
             left.extend(samples.iter().map(|&x| x >> shift));
         }
         let ctx = Context {
+            fixed_sums: self.fixed_sums,
             autocorr: &self.autocorr,
             lpc: &self.lpc,
             rice: &self.rice,
@@ -662,6 +665,7 @@ impl Encoder {
 
 /// Planning kernels and profile shared by every subframe of one encoder.
 struct Context<'a> {
+    fixed_sums: FixedSumsFn,
     autocorr: &'a AutocorrKernel,
     lpc: &'a LpcKernel,
     rice: &'a RiceKernel,
@@ -701,22 +705,14 @@ struct Rice {
 /// more conversion CPU); k = 0 is exact. The writer still picks each
 /// partition's exact best parameter.
 fn rice_estimate(sum: u64, count: u64) -> (u32, u64) {
-    if count == 0 {
-        return (0, 0);
-    }
-    if sum < count {
-        return (0, count + sum);
-    }
-    // floor(log2(floor(sum / count))) is the largest k with count 2^k <= sum;
-    // found from the bit lengths without a division.
-    let mut k = (63 - sum.leading_zeros()) - (63 - count.leading_zeros());
-    if count << k > sum {
-        k -= 1;
-    }
+    // Branch-free form of the cases: count == 0 (then sum == 0) and
+    // sum < count give k = 0, and k = 0 needs no separate formula
+    // (count + sum). floor(log2(floor(sum / count))) is the largest k with
+    // count 2^k <= sum, found from the bit lengths without a division.
+    let raw = (63 - (sum | 1).leading_zeros()) as i32 - (63 - (count | 1).leading_zeros()) as i32;
+    let mut k = raw.max(0) as u32;
+    k -= u32::from(raw > 0 && count << k > sum);
     let k = k.min(30);
-    if k == 0 {
-        return (0, count + sum);
-    }
     let quotients = (2 * sum).saturating_sub(count * ((1 << k) - 1)) >> (k + 1);
     (k, count * (k as u64 + 1) + quotients)
 }
@@ -809,6 +805,43 @@ fn fixed_residual(x: &[i32], order: usize, start: usize, end: usize, mut f: impl
     }
 }
 
+/// `fixed_residual(x, order, order, x.len(), ..)` stored into `out`
+/// (`x.len() - order` values). Writing through zipped slices instead of a
+/// push per value lets the loops vectorize; the arithmetic is the same.
+fn fixed_residual_into(x: &[i32], order: usize, out: &mut [u32]) {
+    let n = x.len();
+    assert_eq!(out.len(), n - order);
+    match order {
+        0 => out.iter_mut().zip(x).for_each(|(o, &a)| *o = fold(a)),
+        1 => out
+            .iter_mut()
+            .zip(&x[1..])
+            .zip(&x[..n - 1])
+            .for_each(|((o, &a), &b)| *o = fold(a - b)),
+        2 => out
+            .iter_mut()
+            .zip(&x[2..])
+            .zip(&x[1..n - 1])
+            .zip(&x[..n - 2])
+            .for_each(|(((o, &a), &b), &c)| *o = fold(a - 2 * b + c)),
+        3 => out
+            .iter_mut()
+            .zip(&x[3..])
+            .zip(&x[2..n - 1])
+            .zip(&x[1..n - 2])
+            .zip(&x[..n - 3])
+            .for_each(|((((o, &a), &b), &c), &d)| *o = fold(a - 3 * b + 3 * c - d)),
+        _ => out
+            .iter_mut()
+            .zip(&x[4..])
+            .zip(&x[3..n - 1])
+            .zip(&x[2..n - 2])
+            .zip(&x[1..n - 3])
+            .zip(&x[..n - 4])
+            .for_each(|(((((o, &a), &b), &c), &d), &e)| *o = fold(a - 4 * b + 6 * c - 4 * d + e)),
+    }
+}
+
 /// Sum of folded fixed residuals over one partition, written as zipped
 /// slices without per-element bounds checks so the baseline ISA vectorizes
 /// it (SSE2/AVX2/NEON).
@@ -823,6 +856,35 @@ fn fixed_sum(x: &[i32], order: usize, start: usize, end: usize) -> u64 {
 /// formed as repeated differences of the same samples, which equal the
 /// direct fixed-predictor formulas as integers (no intermediate exceeds the
 /// order-4 residual bound), so every sum and planning decision is unchanged.
+type FixedSumsFn = fn(&[i32], u32, usize, usize, &mut [[u64; PARTITIONS]]);
+
+/// [`fixed_partition_sums`] for the backend: an AVX2 build (eight u32 lanes
+/// instead of the baseline's four) on x86; NEON is the AArch64 baseline.
+fn fixed_sums_kernel(backend: Backend) -> FixedSumsFn {
+    #[cfg(target_arch = "x86_64")]
+    if backend == Backend::Avx2 {
+        // SAFETY: AVX2 is available when the backend is; the body is safe.
+        return |x, depth, size, parts, sums| unsafe {
+            fixed_partition_sums_avx2(x, depth, size, parts, sums)
+        };
+    }
+    let _ = backend;
+    fixed_partition_sums
+}
+
+#[cfg(target_arch = "x86_64")]
+#[target_feature(enable = "avx2")]
+unsafe fn fixed_partition_sums_avx2(
+    x: &[i32],
+    depth: u32,
+    size: usize,
+    parts: usize,
+    sums: &mut [[u64; PARTITIONS]],
+) {
+    fixed_partition_sums(x, depth, size, parts, sums)
+}
+
+#[inline(always)]
 fn fixed_partition_sums(
     x: &[i32],
     depth: u32,
@@ -1005,9 +1067,7 @@ impl Planner {
         // Zero padding around the block; the block itself is overwritten.
         windowed.resize(2 * AUTOCORR_PAD + n, 0.0);
         windowed[AUTOCORR_PAD + n..].fill(0.0);
-        for ((v, &x), &w) in windowed[AUTOCORR_PAD..].iter_mut().zip(x).zip(&window) {
-            *v = x as f64 * w;
-        }
+        kernel.window(x, &window, &mut windowed[AUTOCORR_PAD..AUTOCORR_PAD + n]);
         kernel.apply(windowed, n, r);
         window
     }
@@ -1083,7 +1143,7 @@ impl Plan {
         let fixed_stage = crate::profile::scope(crate::profile::Stage::EncoderFixed);
         let fused = size > 4;
         if fused {
-            fixed_partition_sums(samples, depth, size, parts, &mut planner.fixed_sums);
+            (ctx.fixed_sums)(samples, depth, size, parts, &mut planner.fixed_sums);
         }
         for order in 0..=4.min(n - 1) {
             if size <= order {
@@ -1276,8 +1336,8 @@ impl Plan {
                 }
                 let mut residual = planner.residual();
                 residual.clear();
-                residual.reserve(samples.len() - order);
-                fixed_residual(samples, order, order, samples.len(), |r| residual.push(r));
+                residual.resize(samples.len() - order, 0);
+                fixed_residual_into(samples, order, &mut residual);
                 write_residual(bw, &residual, samples.len(), order, &rice, ctx.rice);
                 planner.recycle(residual);
             }

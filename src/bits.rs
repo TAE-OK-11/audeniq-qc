@@ -215,9 +215,7 @@ fn rice_codes(out: &mut [u8], residual: &[u32], k: u32, pos: usize, used: u32, w
         used,
         word,
     };
-    let (pairs, rest) = residual.as_chunks::<2>();
-    for &[a, b] in pairs {
-        let (a, b) = (a as u64, b as u64);
+    let pair = |w: &mut Words<'_>, a: u64, b: u64| {
         let (ca, la) = (suffix | (a & mask), (a >> k) + 1 + k as u64);
         let (cb, lb) = (suffix | (b & mask), (b >> k) + 1 + k as u64);
         if la + lb <= 56 {
@@ -226,6 +224,26 @@ fn rice_codes(out: &mut [u8], residual: &[u32], k: u32, pos: usize, used: u32, w
             w.code(a, ca, la, k);
             w.code(b, cb, lb, k);
         }
+    };
+    // Four codes per store when they fit 56 bits (short codes, the common
+    // case for 16-bit material), otherwise two at a time.
+    let (quads, tail) = residual.as_chunks::<4>();
+    for &[a, b, c, d] in quads {
+        let [a, b, c, d] = [a, b, c, d].map(u64::from);
+        let len = |u: u64| (u >> k) + 1 + k as u64;
+        let (la, lb, lc, ld) = (len(a), len(b), len(c), len(d));
+        if la + lb + lc + ld <= 56 {
+            let code = |u: u64| suffix | (u & mask);
+            let joined = (((((code(a) << lb) | code(b)) << lc) | code(c)) << ld) | code(d);
+            w.put(joined, la + lb + lc + ld);
+        } else {
+            pair(&mut w, a, b);
+            pair(&mut w, c, d);
+        }
+    }
+    let (pairs, rest) = tail.as_chunks::<2>();
+    for &[a, b] in pairs {
+        pair(&mut w, a as u64, b as u64);
     }
     for &u in rest {
         let u = u as u64;

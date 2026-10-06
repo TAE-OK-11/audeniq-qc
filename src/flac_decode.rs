@@ -863,22 +863,42 @@ fn rice_codes_body(data: &[u8], mut pos: usize, k: u32, values: &[i32]) -> Optio
         }
         _ => rice_code_bits(data, pos, k, u)?.then_some(()),
     };
-    // Two consecutive codes are one bit string: compare them together
-    // when they fit 57 bits.
-    let (pairs, rest) = values.as_chunks::<2>();
-    for &[a, b] in pairs {
-        let (a, b) = (fold(a), fold(b));
+    // Consecutive codes are one bit string: compare two (or four, when they
+    // fit 57 bits, as short codes usually do) together.
+    let pair = |pos: usize, a: u64, b: u64, diff: &mut u64| -> Option<usize> {
         let (ca, la) = (suffix | (a & mask), (a >> k) + 1 + k as u64);
         let (cb, lb) = (suffix | (b & mask), (b >> k) + 1 + k as u64);
         let joined = data.get(pos >> 3..(pos >> 3) + 8);
         if let (Some(bytes), true) = (joined, la + lb <= 57) {
             let word = u64::from_be_bytes(bytes.try_into().unwrap()) << (pos & 7);
-            diff |= (word >> (64 - (la + lb))) ^ ((ca << lb) | cb);
+            *diff |= (word >> (64 - (la + lb))) ^ ((ca << lb) | cb);
         } else {
-            compare(pos, ca, la, a, &mut diff)?;
-            compare(pos + la as usize, cb, lb, b, &mut diff)?;
+            compare(pos, ca, la, a, diff)?;
+            compare(pos + la as usize, cb, lb, b, diff)?;
         }
-        pos += (la + lb) as usize;
+        Some(pos + (la + lb) as usize)
+    };
+    let (quads, tail) = values.as_chunks::<4>();
+    for &[a, b, c, d] in quads {
+        let [a, b, c, d] = [a, b, c, d].map(fold);
+        let len = |u: u64| (u >> k) + 1 + k as u64;
+        let (la, lb, lc, ld) = (len(a), len(b), len(c), len(d));
+        let total = la + lb + lc + ld;
+        let joined = data.get(pos >> 3..(pos >> 3) + 8);
+        if let (Some(bytes), true) = (joined, total <= 57) {
+            let code = |u: u64| suffix | (u & mask);
+            let expected = (((((code(a) << lb) | code(b)) << lc) | code(c)) << ld) | code(d);
+            let word = u64::from_be_bytes(bytes.try_into().unwrap()) << (pos & 7);
+            diff |= (word >> (64 - total)) ^ expected;
+            pos += total as usize;
+        } else {
+            pos = pair(pos, a, b, &mut diff)?;
+            pos = pair(pos, c, d, &mut diff)?;
+        }
+    }
+    let (pairs, rest) = tail.as_chunks::<2>();
+    for &[a, b] in pairs {
+        pos = pair(pos, fold(a), fold(b), &mut diff)?;
     }
     for &v in rest {
         let u = fold(v);

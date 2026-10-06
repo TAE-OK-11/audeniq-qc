@@ -6,17 +6,18 @@
 // streaming MD5/PCM SHA256, verified output and atomic no-clobber publication.
 // Own planning kernels (bounded u32/i32 lanes, whole-block LPC residuals),
 // branch-free Rice writer and positional frame verification; own Rice cost
-// model and exact stereo-assignment trials at levels 6-9. Own model search:
-// LPC orders up to the FLAC subset limits (12, or 32 above 48 kHz, with
-// 16384-frame blocks there), several apodization windows, models ranked by
-// residuals at gathered sample positions, minimal and searched coefficient
+// model and exact stereo-assignment trials at levels 6-10. Own model search:
+// LPC orders up to the FLAC subset limits (12, or 32 above 48 kHz),
+// apodization windows applied while autocorrelation is summed in chunks
+// (no block-sized window copies), per-window model choice from the
+// Levinson-Durbin prediction error, minimal and searched coefficient
 // precision.
 #[cfg(feature = "reference-codecs")]
 use crate::audio::pcm_sha256;
 use crate::{
     audio::AudioReader,
     bits::{crc16, crc8, BeWriter},
-    kernels::{Backend, Dot64Kernel, LpcKernel, RiceKernel},
+    kernels::{Backend, LagsKernel, LpcKernel, RiceKernel, LAG_HISTORY},
     AudioSpec, Error, Limits, Result,
 };
 use std::{
@@ -57,8 +58,7 @@ struct Profile {
     lpc_high: usize,
     windows: &'static [Window],
     /// LPC models costed exactly besides the highest order of the first
-    /// window: 0 for none, `usize::MAX` for all, otherwise the best ones by
-    /// sampled estimate.
+    /// window, at most.
     exact: usize,
     /// Coefficient precision of the planned models; lower precisions down
     /// to `precision_low` are also costed for the winning model.
@@ -68,13 +68,30 @@ struct Profile {
     partition: u32,
     /// Stereo assignments planned exactly, best estimated first.
     stereo: usize,
+    /// Orders per window costed exactly, the most promising by their
+    /// Levinson-Durbin prediction error.
+    window_orders: usize,
+    /// The precision search stops after this many lower precisions in a
+    /// row did not win (0: never).
+    precision_patience: usize,
 }
 const WELCH: &[Window] = &[Window::Welch];
-/// Level 9: whole-block, half-block and third-block models, and whole-block
-/// models with each third left out.
-const TUKEY3: &[Window] = &[
+/// Level 9: whole-block windows of three taper widths and the two halves.
+const WINDOWS9: &[Window] = &[
     Window::Welch,
     Window::Tukey(50),
+    Window::Tukey(25),
+    Window::Tukey(10),
+    Window::Partial(2, 0),
+    Window::Partial(2, 1),
+];
+/// Level 10: also third-block models and whole-block models with each third
+/// left out.
+const WINDOWS10: &[Window] = &[
+    Window::Welch,
+    Window::Tukey(50),
+    Window::Tukey(25),
+    Window::Tukey(10),
     Window::Partial(2, 0),
     Window::Partial(2, 1),
     Window::Partial(3, 0),
@@ -99,12 +116,16 @@ impl Profile {
             precision_low: 13,
             partition: 6,
             stereo: 1,
+            window_orders: 0,
+            precision_patience: 0,
         };
-        // Levels 0-3 cost about the same CPU (decoding, hashing and frame
-        // verification dominate; the fused fixed sums cost one pass for any
-        // order from 2). Each of levels 0-8 stays within the CPU of the
-        // previous preset of the same number; see
-        // docs/verified-pipeline/round13-encoder.txt.
+        // Each of levels 0-8 writes smaller files than the previous preset
+        // of the same number with less private memory and CPU within the
+        // measurement noise (0-5) or lower (6-8); above 48 kHz the block
+        // buffers stay small where stereo trials hold four channels. Levels 0-3 cost about the same
+        // CPU: decoding, hashing and frame verification dominate, and the
+        // fused fixed sums cost one pass for any order from 2. See
+        // docs/verified-pipeline/round14-encoder.txt.
         Ok(match level {
             0 => Self {
                 block: 1024,
@@ -126,59 +147,82 @@ impl Profile {
             },
             3 => base,
             4 => Self {
-                lpc: 8,
-                lpc_high: 8,
+                lpc: 6,
+                lpc_high: 6,
                 ..base
             },
             5 => Self {
-                block_high: 16384,
+                block_high: 8192,
                 lpc: 12,
-                lpc_high: 16,
+                lpc_high: 12,
                 ..base
             },
             6 => Self {
-                block_high: 16384,
                 lpc: 12,
                 lpc_high: 16,
                 exact: 1,
+                window_orders: 1,
                 stereo: 2,
                 ..base
             },
             7 => Self {
-                block_high: 16384,
                 lpc: 12,
-                lpc_high: 32,
+                lpc_high: 24,
                 exact: 2,
-                precision_low: 12,
+                window_orders: 2,
+                precision_low: 11,
+                precision_patience: 2,
                 stereo: 4,
                 ..base
             },
             8 => Self {
-                block_high: 16384,
                 lpc: 12,
                 lpc_high: 32,
-                exact: 3,
-                precision: 15,
+                exact: 2,
+                window_orders: 2,
+                precision: 14,
                 precision_low: 12,
                 stereo: 4,
                 ..base
             },
+            // Levels 9-10: 3072-frame blocks up to 48 kHz (within the subset
+            // limit; they compressed 0.1% better there than 4096), one
+            // exactly costed model per window.
             9 => Self {
+                block: 3072,
                 block_high: 16384,
                 lpc: 12,
                 lpc_high: 32,
-                windows: TUKEY3,
-                exact: 8,
+                windows: WINDOWS9,
+                exact: 6,
+                window_orders: 1,
                 precision: 15,
-                precision_low: 11,
+                precision_low: 9,
+                precision_patience: 2,
                 partition: 8,
                 stereo: 4,
                 ..base
             },
-            _ => return Err(Error::Invalid("compression level range 0..9")),
+            10 => Self {
+                block: 3072,
+                block_high: 16384,
+                lpc: 12,
+                lpc_high: 32,
+                windows: WINDOWS10,
+                exact: 12,
+                window_orders: 1,
+                precision: 15,
+                precision_low: 8,
+                precision_patience: 2,
+                partition: 8,
+                stereo: 4,
+                ..base
+            },
+            _ => return Err(Error::Invalid("compression level range 0..10")),
         })
     }
 }
+
 pub struct Conversion {
     pub spec: AudioSpec,
     pub frames: u64,
@@ -429,7 +473,9 @@ fn verify_output(
     file.read_exact(&mut head)?;
     let mut crc = crate::crc32::Crc32::new();
     let mut bytes = 0u64;
-    let mut buffer = vec![0u8; 1 << 16];
+    // Small enough to reuse the encoder's freed block buffers instead of
+    // growing the heap at the end of a conversion.
+    let mut buffer = vec![0u8; 1 << 14];
     loop {
         limits.check()?;
         let n = file.read(&mut buffer)?;
@@ -474,7 +520,7 @@ struct Encoder {
     bytes: u64,
     min_frame: usize,
     max_frame: usize,
-    dot: Dot64Kernel,
+    lags: LagsKernel,
     lpc: LpcKernel,
     rice: RiceKernel,
     #[cfg(not(feature = "reference-codecs"))]
@@ -513,7 +559,7 @@ impl Encoder {
             bytes: 42,
             min_frame: usize::MAX,
             max_frame: 0,
-            dot: Dot64Kernel::new(backend),
+            lags: LagsKernel::new(backend),
             lpc: LpcKernel::new(backend),
             rice: RiceKernel::new(backend),
             #[cfg(not(feature = "reference-codecs"))]
@@ -579,7 +625,7 @@ impl Encoder {
             left.extend(samples.iter().map(|&x| x >> shift));
         }
         let ctx = Context {
-            dot: &self.dot,
+            lags: &self.lags,
             lpc: &self.lpc,
             rice: &self.rice,
             profile: self.profile,
@@ -592,27 +638,21 @@ impl Encoder {
         let stereo = crate::profile::scope(crate::profile::Stage::EncoderStereo);
         // Indices into channel_buffers: left, right, mid, side.
         const PAIRS: [(u64, [usize; 2]); 4] = [(1, [0, 1]), (8, [0, 3]), (9, [3, 1]), (10, [2, 3])];
+        let trials = if channels == 2 {
+            self.profile.stereo
+        } else {
+            0
+        };
         let ranked = if channels == 1 {
             None
         } else {
-            mid.resize(n, 0);
-            side.resize(n, 0);
-            for (((&a, &b), m), d) in left
-                .iter()
-                .zip(right.iter())
-                .zip(mid.iter_mut())
-                .zip(side.iter_mut())
-            {
-                *m = (a + b) >> 1;
-                *d = a - b;
-            }
             let estimate = |sum: u64| {
                 if n < 3 {
                     return 0;
                 }
                 rice_estimate(sum, n as u64 - 2).1
             };
-            let sums = second_order_sums([left, right, mid, side], depth + 1);
+            let sums = stereo_second_order_sums(left, right, depth + 1);
             let (l, r, m, d) = (
                 estimate(sums[0]),
                 estimate(sums[1]),
@@ -625,28 +665,63 @@ impl Encoder {
             ranked.sort_by_key(|&i| costs[i]);
             Some(ranked)
         };
-        stereo.end();
-        let channel_depth = |index: usize| depth + u32::from(index == 3);
-        let trials = if ranked.is_some() {
-            self.profile.stereo
-        } else {
-            0
-        };
+        // Bits per channel buffer; side carries one extra.
+        let mut depths = [depth, depth, depth, depth + 1];
+        if trials > 1 {
+            mid.resize(n, 0);
+            side.resize(n, 0);
+            for (((&a, &b), m), d) in left
+                .iter()
+                .zip(right.iter())
+                .zip(mid.iter_mut())
+                .zip(side.iter_mut())
+            {
+                *m = (a + b) >> 1;
+                *d = a - b;
+            }
+        }
         let planner = &mut self.planner;
         let mut plans: [Option<Plan>; 4] = Default::default();
         let (assignment, channel_indices) = match ranked {
             None => (0u64, [Some(0), None]),
             Some(ranked) if trials == 1 => {
-                let (assignment, pair) = PAIRS[ranked[0]];
-                (assignment, pair.map(Some))
+                // Only the chosen pair is formed, in place of left and right,
+                // so mid and side need no buffers of their own.
+                let (assignment, _) = PAIRS[ranked[0]];
+                match assignment {
+                    8 => {
+                        for (&l, r) in left.iter().zip(right.iter_mut()) {
+                            *r = l - *r;
+                        }
+                        depths[1] = depth + 1;
+                    }
+                    9 => {
+                        for (l, &r) in left.iter_mut().zip(right.iter()) {
+                            *l -= r;
+                        }
+                        depths[0] = depth + 1;
+                    }
+                    10 => {
+                        for (l, r) in left.iter_mut().zip(right.iter_mut()) {
+                            (*l, *r) = ((*l + *r) >> 1, *l - *r);
+                        }
+                        depths[1] = depth + 1;
+                    }
+                    _ => {}
+                }
+                (assignment, [Some(0), Some(1)])
             }
             Some(ranked) => {
                 for &rank in &ranked[..trials] {
                     for index in PAIRS[rank].1 {
                         if plans[index].is_none() {
                             let samples = &mut self.channel_buffers[index];
-                            plans[index] =
-                                Some(Plan::new(samples, channel_depth(index), &ctx, planner));
+                            let mut plan = Plan::new(samples, depths[index], &ctx, planner);
+                            // Held plans keep only their model: the two
+                            // written are recomputed, so at most one
+                            // block-sized residual is alive at a time.
+                            plan.shed(planner);
+                            plans[index] = Some(plan);
                         }
                     }
                 }
@@ -671,6 +746,7 @@ impl Encoder {
                 (assignment, pair.map(Some))
             }
         };
+        stereo.end();
         let mut bw = BeWriter::reuse(std::mem::take(&mut self.frame_buffer));
         bw.put(16, 0xfff8);
         bw.put(4, 7);
@@ -689,7 +765,7 @@ impl Encoder {
             let samples = &mut self.channel_buffers[index];
             let plan = match plans[index].take() {
                 Some(plan) => plan,
-                None => Plan::new(samples, channel_depth(index), &ctx, planner),
+                None => Plan::new(samples, depths[index], &ctx, planner),
             };
             plan.write(&mut bw, samples, &ctx, planner)?;
         }
@@ -759,7 +835,7 @@ impl Encoder {
 
 /// Planning kernels and profile shared by every subframe of one encoder.
 struct Context<'a> {
-    dot: &'a Dot64Kernel,
+    lags: &'a LagsKernel,
     lpc: &'a LpcKernel,
     rice: &'a RiceKernel,
     profile: Profile,
@@ -989,35 +1065,94 @@ fn fixed_partition_sums(
     }
 }
 
-/// `fixed_sum(x, 2, 2, x.len())` for four equally long channels of at most
-/// `depth` bits, in one pass. Each folded second-order residual is below
-/// 2^(depth + 2), so runs of 2^(30 - depth) samples sum in u32 lanes.
-fn second_order_sums(x: [&[i32]; 4], depth: u32) -> [u64; 4] {
-    let n = x[0].len();
+/// [`fixed_partition_sums`] for orders 0..W only (W < 5, level 1): one
+/// pass, the k-th differences formed in turn from a W-sample window.
+fn low_fixed_partition_sums<const W: usize>(
+    x: &[i32],
+    depth: u32,
+    size: usize,
+    parts: usize,
+    sums: &mut [[u64; PARTITIONS]],
+) {
+    let narrow = (size as u64) << (depth + W as u32 - 1) <= u32::MAX as u64;
+    for i in 0..parts {
+        let (lo, hi) = (i * size, (i + 1) * size);
+        let mut acc = [0u64; W];
+        let start = lo.max(W - 1).min(hi);
+        for (order, acc) in acc.iter_mut().enumerate() {
+            if lo.max(order) < start {
+                *acc = fixed_sum(x, order, lo.max(order), start);
+            }
+        }
+        let mut lanes = [0u32; W];
+        let mut wide = [0u64; W];
+        for window in x[start + 1 - W..hi].windows(W) {
+            let mut d: [i32; W] = window.try_into().unwrap();
+            for k in 0..W {
+                if narrow {
+                    lanes[k] += fold(d[W - 1]);
+                } else {
+                    wide[k] += fold(d[W - 1]) as u64;
+                }
+                for j in (k + 1..W).rev() {
+                    d[j] -= d[j - 1];
+                }
+            }
+        }
+        for (k, sums) in sums[..W].iter_mut().enumerate() {
+            sums[i] = acc[k] + lanes[k] as u64 + wide[k];
+        }
+    }
+}
+
+/// `fixed_sum(x, 2, 2, n)` of left, right, mid = (l + r) >> 1 and
+/// side = l - r, in one pass over left and right; `depth` bounds the widest
+/// (side). Each folded second-order residual is below 2^(depth + 2), so runs
+/// of 2^(30 - depth) samples sum in u32 lanes.
+fn stereo_second_order_sums(left: &[i32], right: &[i32], depth: u32) -> [u64; 4] {
+    let n = left.len();
     let mut totals = [0u64; 4];
     if n < 3 {
         return totals;
     }
-    if depth > 22 {
-        for (total, x) in totals.iter_mut().zip(x) {
-            *total = fixed_sum(x, 2, 2, n);
-        }
-        return totals;
-    }
-    let run = 1usize << (30 - depth);
+    let run = if depth > 22 {
+        n
+    } else {
+        1usize << (30 - depth)
+    };
     let mut start = 2;
     while start < n {
         let end = n.min(start + run);
-        for (total, x) in totals.iter_mut().zip(x) {
-            let mut sum = 0u32;
-            for ((&a, &b), &c) in x[start..end]
-                .iter()
-                .zip(&x[start - 1..end - 1])
-                .zip(&x[start - 2..end - 2])
-            {
-                sum += fold(a - 2 * b + c);
+        let rows = left[start..end]
+            .iter()
+            .zip(&left[start - 1..end - 1])
+            .zip(&left[start - 2..end - 2])
+            .zip(&right[start..end])
+            .zip(&right[start - 1..end - 1])
+            .zip(&right[start - 2..end - 2]);
+        // The second difference is linear, so side's is left's minus right's.
+        if depth > 22 {
+            for (((((&l0, &l1), &l2), &r0), &r1), &r2) in rows {
+                let (dl, dr) = (l0 - 2 * l1 + l2, r0 - 2 * r1 + r2);
+                let dm = ((l0 + r0) >> 1) - 2 * ((l1 + r1) >> 1) + ((l2 + r2) >> 1);
+                totals[0] += fold(dl) as u64;
+                totals[1] += fold(dr) as u64;
+                totals[2] += fold(dm) as u64;
+                totals[3] += fold(dl - dr) as u64;
             }
-            *total += sum as u64;
+        } else {
+            let mut lanes = [0u32; 4];
+            for (((((&l0, &l1), &l2), &r0), &r1), &r2) in rows {
+                let (dl, dr) = (l0 - 2 * l1 + l2, r0 - 2 * r1 + r2);
+                let dm = ((l0 + r0) >> 1) - 2 * ((l1 + r1) >> 1) + ((l2 + r2) >> 1);
+                lanes[0] += fold(dl);
+                lanes[1] += fold(dr);
+                lanes[2] += fold(dm);
+                lanes[3] += fold(dl - dr);
+            }
+            for (total, lane) in totals.iter_mut().zip(lanes) {
+                *total += lane as u64;
+            }
         }
         start = end;
     }
@@ -1096,22 +1231,17 @@ impl Model {
         self.order as u64 * (depth + self.precision) as u64 + 4 + 5
     }
 }
+#[derive(Clone, Copy)]
 struct LpcCandidate {
     model: Model,
     /// Unquantized coefficients, for the precision search.
     real: [f64; MAX_LPC],
-    estimate: u64,
 }
 #[derive(Default)]
 struct Planner {
-    /// Apodization windows for blocks of `window_frames` samples, with the
-    /// range outside which each is zero.
-    windows: Vec<(Vec<f64>, usize, usize)>,
-    window_frames: usize,
-    windowed: Vec<f64>,
-    candidates: Vec<LpcCandidate>,
-    ranking: Vec<usize>,
-    probe: Probe,
+    tapers: Tapers,
+    /// Models to cost exactly besides the first highest.
+    kept: Vec<LpcCandidate>,
     residuals: Vec<Vec<u32>>,
     sums: Vec<u64>,
     fixed_sums: Vec<[u64; PARTITIONS]>,
@@ -1127,165 +1257,161 @@ impl Planner {
         }
     }
     fn recycle(&mut self, residual: Vec<u32>) {
-        // At most four held stereo/mid-side plans plus one planning scratch.
+        // A plan's winner and scratch, and up to two planned for writing
+        // (held stereo trial plans return theirs).
         debug_assert!(self.residuals.len() < 6);
         self.residuals.push(residual);
     }
-    fn prepare_windows(&mut self, n: usize, windows: &[Window]) {
-        if self.window_frames == n && self.windows.len() == windows.len() {
-            return;
+}
+
+/// Rising raised-cosine taper tables 0.5 - 0.5 cos(pi (i + 0.5) / t), by
+/// length t. Windows are applied from these while a block is read in chunks,
+/// so no block-sized window or windowed copy is kept.
+#[derive(Default)]
+struct Tapers(Vec<(usize, Vec<f64>)>);
+impl Tapers {
+    fn index(&mut self, t: usize) -> usize {
+        if let Some(i) = self.0.iter().position(|(length, _)| *length == t) {
+            return i;
         }
-        self.window_frames = n;
-        self.windows = windows.iter().map(|&w| window(w, n)).collect();
+        // A handful of lengths per block size; a short final block adds more.
+        if self.0.len() >= 8 {
+            self.0.clear();
+        }
+        let table = (0..t)
+            .map(|i| 0.5 - 0.5 * (std::f64::consts::PI * (i as f64 + 0.5) / t as f64).cos())
+            .collect();
+        self.0.push((t, table));
+        self.0.len() - 1
     }
 }
 
-/// Tukey window over `out` (tapering `percent`% of it), multiplied in.
-fn tukey(out: &mut [f64], percent: u8) {
-    let len = out.len();
-    let taper = (len * percent as usize / 200).max(1);
-    for i in 0..taper.min(len / 2) {
-        let w = 0.5 - 0.5 * (std::f64::consts::PI * (i as f64 + 0.5) / taper as f64).cos();
-        out[i] *= w;
-        out[len - 1 - i] *= w;
+/// Tukey window of `len` samples tapering `percent`% of them: the table
+/// length and the tapered samples at each end.
+fn tukey_taper(len: usize, percent: u8) -> (usize, usize) {
+    let t = (len * percent as usize / 200).max(1);
+    (t, t.min(len / 2))
+}
+
+/// Multiply `out[k]` by the Tukey window value at position `start + k` of a
+/// `len`-sample window whose `h` end samples follow `table`.
+fn tukey_into(out: &mut [f64], start: usize, len: usize, h: usize, table: &[f64]) {
+    let end = start + out.len();
+    for p in start..end.min(h) {
+        out[p - start] *= table[p];
+    }
+    for p in start.max(len - h)..end {
+        out[p - start] *= table[len - 1 - p];
     }
 }
 
-/// Window values for an n-sample block and the range [lo, hi) outside which
-/// they are zero.
-fn window(kind: Window, n: usize) -> (Vec<f64>, usize, usize) {
-    let mut w = vec![1.0f64; n];
-    let segment = |parts: u8, index: u8| {
-        let (parts, index) = (parts as usize, index as usize);
-        (n * index / parts, n * (index + 1) / parts)
-    };
+/// Samples [lo, hi) outside which the window is zero.
+fn window_range(kind: Window, n: usize) -> (usize, usize) {
+    match kind {
+        Window::Partial(parts, index) => segment(n, parts, index),
+        _ => (0, n),
+    }
+}
+
+/// Segment `index` of `parts` equal segments of n samples.
+fn segment(n: usize, parts: u8, index: u8) -> (usize, usize) {
+    let (parts, index) = (parts as usize, index as usize);
+    (n * index / parts, n * (index + 1) / parts)
+}
+
+/// `out[k] = x[k] * w(start + k)` for the window of an n-sample block.
+fn apply_window(
+    kind: Window,
+    n: usize,
+    start: usize,
+    x: &[i32],
+    out: &mut [f64],
+    tapers: &mut Tapers,
+) {
     match kind {
         Window::Welch => {
-            for (i, w) in w.iter_mut().enumerate() {
-                let d = 2.0 * i as f64 / (n - 1) as f64 - 1.0;
-                *w = 1.0 - d * d;
+            let scale = 2.0 / (n - 1) as f64;
+            for (k, (v, &x)) in out.iter_mut().zip(x).enumerate() {
+                let d = (start + k) as f64 * scale - 1.0;
+                *v = x as f64 * (1.0 - d * d);
+            }
+            return;
+        }
+        _ => {
+            for (v, &x) in out.iter_mut().zip(x) {
+                *v = x as f64;
             }
         }
-        Window::Tukey(percent) => tukey(&mut w, percent),
+    }
+    match kind {
+        Window::Tukey(percent) => {
+            let (t, h) = tukey_taper(n, percent);
+            let i = tapers.index(t);
+            tukey_into(out, start, n, h, &tapers.0[i].1);
+        }
         Window::Partial(parts, index) => {
-            let (lo, hi) = segment(parts, index);
-            w[..lo].fill(0.0);
-            w[hi..].fill(0.0);
-            tukey(&mut w[lo..hi], 50);
-            return (w, lo, hi);
+            let (lo, hi) = segment(n, parts, index);
+            let (t, h) = tukey_taper(hi - lo, 50);
+            let i = tapers.index(t);
+            tukey_into(out, start - lo, hi - lo, h, &tapers.0[i].1);
         }
         Window::Punchout(parts, index) => {
-            let (lo, hi) = segment(parts, index);
-            let mut hole = vec![1.0f64; hi - lo];
-            tukey(&mut hole, 50);
-            for (w, h) in w[lo..hi].iter_mut().zip(hole) {
-                *w = 1.0 - h;
+            let (t, h) = tukey_taper(n, 50);
+            let i = tapers.index(t);
+            tukey_into(out, start, n, h, &tapers.0[i].1);
+            // Times one minus a Tukey(50) window over the segment.
+            let (lo, hi) = segment(n, parts, index);
+            let (t, h) = tukey_taper(hi - lo, 50);
+            let j = tapers.index(t);
+            let table = &tapers.0[j].1;
+            let len = hi - lo;
+            for p in start.max(lo)..(start + out.len()).min(hi) {
+                let q = p - lo;
+                let w = if q < h {
+                    table[q]
+                } else if q >= len - h {
+                    table[len - 1 - q]
+                } else {
+                    1.0
+                };
+                out[p - start] *= 1.0 - w;
             }
-            tukey(&mut w, 50);
         }
+        Window::Welch => unreachable!(),
     }
-    (w, 0, n)
 }
 
-/// Residuals at evenly spaced sample positions rank prediction models
-/// without computing whole blocks. This changes compression choices only;
-/// reconstruction still uses checked exact residuals for every sample and
-/// verifies output PCM. The positions and their histories are gathered once
-/// per subframe, column by column, so that every model's sampled residuals
-/// are formed with one vectorized multiply-add per coefficient.
-struct Probe {
-    count: usize,
-    /// Residuals coded per model of order k: `n - k`.
-    frames: usize,
-    current: [i32; PROBES],
-    /// `history[j][t]` is the sample j + 1 positions before point t.
-    history: Vec<[i32; PROBES]>,
-}
-const PROBES: usize = crate::kernels::PROBE_POINTS;
-impl Default for Probe {
-    fn default() -> Self {
-        Self {
-            count: 0,
-            frames: 0,
-            current: [0; PROBES],
-            history: Vec::new(),
-        }
-    }
-}
-impl Probe {
-    /// Gather up to PROBES positions from `orders` (so that every order up
-    /// to it has a full history) to the end of the block.
-    fn gather(&mut self, samples: &[i32], orders: usize) {
-        let n = samples.len();
-        self.frames = n;
-        self.count = PROBES.min(n - orders);
-        self.history.resize(orders, [0; PROBES]);
-        // Position orders + floor(point * span / steps), stepped without a
-        // division per point.
-        let span = n - orders - 1;
-        let steps = (self.count - 1).max(1);
-        let (whole, part) = (span / steps, span % steps);
-        let (mut i, mut remainder) = (orders, 0);
-        for t in 0..self.count {
-            self.current[t] = samples[i];
-            for (j, column) in self.history.iter_mut().enumerate() {
-                column[t] = samples[i - 1 - j];
-            }
-            i += whole;
-            remainder += part;
-            if remainder >= steps {
-                remainder -= steps;
-                i += 1;
-            }
-        }
-    }
-    /// Estimated subframe bits of `model` (u64::MAX if a sampled residual
-    /// is outside i32).
-    fn cost(&self, model: &Model, depth: u32, kernel: &LpcKernel) -> u64 {
-        let count = self.count;
-        let mut prediction = [0i64; PROBES];
-        kernel.columns(model.coefficients(), &self.history, &mut prediction);
-        let mut residual = [0u32; PROBES];
-        let mut out = 0u64;
-        let mut total = 0u64;
-        for ((r, &p), &x) in residual
-            .iter_mut()
-            .zip(&prediction)
-            .zip(&self.current[..count])
-        {
-            let delta = x as i64 - (p >> model.shift);
-            out |= (delta.wrapping_add(1 << 31) as u64) >> 32;
-            *r = ((delta << 1) ^ (delta >> 63)) as u32;
-            total += *r as u64;
-        }
-        if out != 0 {
-            return u64::MAX;
-        }
-        let residual = &residual[..count];
-        let mean = total / count as u64;
-        let estimate = if mean == 0 {
-            0
-        } else {
-            63 - mean.leading_zeros()
-        };
-        let coded = (self.frames - model.order) as u64;
-        let overhead = 8 + model.overhead(depth) + 11;
-        (estimate.saturating_sub(1)..=(estimate + 1).min(30))
-            .map(|k| {
-                let bits = residual
-                    .iter()
-                    .map(|&r| (r as u64 >> k) + 1 + k as u64)
-                    .sum::<u64>();
-                overhead + bits * coded / count as u64
-            })
-            .min()
-            .unwrap_or(u64::MAX)
+/// Autocorrelation `r[lag]`, lag 0..r.len(), of the windowed block, formed
+/// in L1-sized chunks: each chunk is windowed once after the previous
+/// chunk's last values and all lags are summed over it in one pass.
+fn autocorrelation(
+    samples: &[i32],
+    kind: Window,
+    r: &mut [f64],
+    lags: &LagsKernel,
+    tapers: &mut Tapers,
+) {
+    const CHUNK: usize = 512;
+    let n = samples.len();
+    let (lo, hi) = window_range(kind, n);
+    let mut buffer = [0.0f64; LAG_HISTORY + CHUNK];
+    r.fill(0.0);
+    let mut start = lo;
+    while start < hi {
+        let len = CHUNK.min(hi - start);
+        let chunk = &mut buffer[LAG_HISTORY..LAG_HISTORY + len];
+        apply_window(kind, n, start, &samples[start..start + len], chunk, tapers);
+        lags.apply(&buffer[..LAG_HISTORY + len], r);
+        // The last values precede the next chunk.
+        buffer.copy_within(len..len + LAG_HISTORY, 0);
+        start += len;
     }
 }
 
 /// Levinson-Durbin recursion on autocorrelation `r`, calling `found` with
-/// the predictor of every order up to `r.len() - 1` until it fails.
-fn levinson(r: &[f64], mut found: impl FnMut(&[f64])) {
+/// the predictor of every order up to `r.len() - 1` until it fails, and its
+/// prediction error energy.
+fn levinson(r: &[f64], mut found: impl FnMut(&[f64], f64)) {
     let mut a = [0.0f64; MAX_LPC];
     let mut error = r[0];
     for index in 0..r.len() - 1 {
@@ -1303,7 +1429,7 @@ fn levinson(r: &[f64], mut found: impl FnMut(&[f64])) {
         }
         a[index] = reflection;
         error *= 1.0 - reflection * reflection;
-        found(&a[..index + 1]);
+        found(&a[..index + 1], error);
     }
 }
 
@@ -1341,9 +1467,15 @@ impl Plan {
         let parts = 1usize << finest;
         planner.sums.resize(parts, 0);
         let fixed_stage = crate::profile::scope(crate::profile::Stage::EncoderFixed);
+        // Order 1 alone is cheaper as two plain passes.
         let fused = profile.fixed >= 2 && size > 4;
         if fused {
-            fixed_partition_sums(samples, depth, size, parts, &mut planner.fixed_sums);
+            let sums = &mut planner.fixed_sums;
+            match profile.fixed {
+                2 => low_fixed_partition_sums::<3>(samples, depth, size, parts, sums),
+                3 => low_fixed_partition_sums::<4>(samples, depth, size, parts, sums),
+                _ => fixed_partition_sums(samples, depth, size, parts, sums),
+            }
         }
         for order in 0..=profile.fixed.min(n - 1) {
             if size <= order {
@@ -1383,9 +1515,15 @@ impl Plan {
     /// Autocorrelation of every apodized copy and Levinson-Durbin up to the
     /// profile's order give one model per window and order. The highest
     /// order of the first window (it wins most real-music subframes) and the
-    /// `exact` best by sampled estimate are costed exactly; lower coefficient
-    /// precisions are then tried on the winner. Integer residual costs
-    /// decide; no lossy reconstruction.
+    /// `window_orders` most promising orders of each window (by prediction
+    /// error) are costed exactly; lower coefficient precisions are then tried
+    /// on the winner. Integer residual costs decide; no lossy
+    /// reconstruction. (Ranking many models per window by sampled residuals
+    /// and costing the best was tried: its estimation error let optimistic
+    /// models displace better ones, and files were larger.)
+    // Out of line: its frame (models of every order) is only touched by the
+    // levels that use LPC.
+    #[inline(never)]
     fn plan_lpc(
         samples: &[i32],
         header: u64,
@@ -1397,101 +1535,93 @@ impl Plan {
         let profile = ctx.profile;
         let (n, depth, wasted) = (samples.len(), best.depth, best.wasted);
         let max_order = profile.lpc.min(n - 1);
-        // Models are estimated from sampled residuals only when some, but
-        // not all, are to be costed exactly besides the first highest.
-        let sampled = profile.exact != 0 && profile.exact != usize::MAX;
-        planner.prepare_windows(n, profile.windows);
-        planner.candidates.clear();
-        if sampled {
-            planner.probe.gather(samples, max_order);
-        }
+        planner.kept.clear();
         let mut r = [0.0f64; MAX_LPC + 1];
         let mut first_highest = None;
-        for w in 0..planner.windows.len() {
+        for (w, &kind) in profile.windows.iter().enumerate() {
             let autocorr = crate::profile::scope(crate::profile::Stage::EncoderAutocorr);
-            let (window, lo, hi) = &planner.windows[w];
-            let (lo, hi) = (*lo, *hi);
-            let len = hi - lo;
-            let windowed = &mut planner.windowed;
-            windowed.resize(len, 0.0);
-            for ((v, &x), &w) in windowed
-                .iter_mut()
-                .zip(&samples[lo..hi])
-                .zip(&window[lo..hi])
-            {
-                *v = x as f64 * w;
-            }
-            let orders = max_order.min(len - 1);
-            for (lag, energy) in r[..=orders].iter_mut().enumerate() {
-                *energy = ctx.dot.apply(&windowed[lag..], &windowed[..len - lag]);
-            }
+            let (lo, hi) = window_range(kind, n);
+            let orders = max_order.min(hi - lo - 1);
+            let r = &mut r[..=orders];
+            autocorrelation(samples, kind, r, ctx.lags, &mut planner.tapers);
             autocorr.end();
             let _levinson = crate::profile::scope(crate::profile::Stage::EncoderLevinson);
-            let (candidates, probe) = (&mut planner.candidates, &planner.probe);
-            levinson(&r[..=orders], |a| {
-                let Some(model) = Model::quantize(a, profile.precision) else {
-                    return;
-                };
-                let estimate = if sampled {
-                    probe.cost(&model, depth, ctx.lpc)
-                } else {
-                    0
-                };
-                let mut real = [0.0; MAX_LPC];
-                real[..a.len()].copy_from_slice(a);
-                if w == 0 {
-                    first_highest = Some(candidates.len());
-                }
-                candidates.push(LpcCandidate {
-                    model,
-                    real,
-                    estimate,
-                });
+            // Every order's predictor and its expected cost from the
+            // prediction error: half a bit per residual per halving of the
+            // error energy, plus the warm-up and coefficient bits.
+            let mut found = [[0.0f64; MAX_LPC]; MAX_LPC];
+            let mut expected = [(0.0f64, 0usize); MAX_LPC];
+            let mut count = 0;
+            levinson(r, |a, error| {
+                found[count][..a.len()].copy_from_slice(a);
+                let bits = 0.5 * (hi - lo - a.len()) as f64 * error.max(f64::MIN_POSITIVE).log2()
+                    + (a.len() as u32 * (depth + profile.precision)) as f64;
+                expected[count] = (bits, a.len());
+                count += 1;
             });
+            if count == 0 {
+                continue;
+            }
+            let candidate = |order: usize| {
+                let a = &found[order - 1][..order];
+                Model::quantize(a, profile.precision).map(|model| {
+                    let mut real = [0.0; MAX_LPC];
+                    real[..order].copy_from_slice(a);
+                    LpcCandidate { model, real }
+                })
+            };
+            if w == 0 {
+                first_highest = candidate(count);
+            }
+            // The first window's highest order is costed anyway.
+            let expected = &mut expected[..count - usize::from(w == 0)];
+            let take = profile.window_orders.min(expected.len());
+            if take < expected.len() {
+                // Unique orders: unstable sorts give the same result.
+                expected.sort_unstable_by(|a, b| a.0.total_cmp(&b.0).then(a.1.cmp(&b.1)));
+                expected[..take].sort_unstable_by_key(|e| e.1);
+            }
+            for &(_, order) in &expected[..take] {
+                if planner.kept.len() < profile.exact {
+                    planner.kept.extend(candidate(order));
+                }
+            }
         }
         let _cost = crate::profile::scope(crate::profile::Stage::EncoderLpcCost);
-        // Exactly costed candidates: the first window's highest order and
-        // the `exact` best others by sampled estimate (ties keep the lower
-        // order and earlier window).
-        let ranking = &mut planner.ranking;
-        ranking.clear();
-        if profile.exact != 0 {
-            ranking.extend((0..planner.candidates.len()).filter(|&i| Some(i) != first_highest));
-        }
-        if sampled && ranking.len() > profile.exact {
-            let candidates = &planner.candidates;
-            ranking.sort_by_key(|&i| candidates[i].estimate);
-            ranking.truncate(profile.exact);
-        }
-        ranking.extend(first_highest);
         let mut scratch = planner.residual();
         let mut winner = None;
-        for k in (0..planner.ranking.len()).rev() {
-            let index = planner.ranking[k];
-            let model = planner.candidates[index].model;
-            if Self::cost_lpc(
-                samples,
-                header,
-                &mut best,
-                model,
-                finest,
-                ctx,
-                planner,
-                &mut scratch,
-            ) {
-                winner = Some(index);
-            }
+        // The first highest, then the others in the order found.
+        let mut evaluate =
+            |model: Model, real: [f64; MAX_LPC], planner: &mut Planner, best: &mut Self| {
+                if Self::cost_lpc(
+                    samples,
+                    header,
+                    best,
+                    model,
+                    finest,
+                    ctx,
+                    planner,
+                    &mut scratch,
+                ) {
+                    winner = Some((model.order, real));
+                }
+            };
+        if let Some(LpcCandidate { model, real }) = first_highest {
+            evaluate(model, real, planner, &mut best);
+        }
+        for k in 0..planner.kept.len() {
+            let LpcCandidate { model, real } = planner.kept[k];
+            evaluate(model, real, planner, &mut best);
         }
         // Lower coefficient precisions for the winning model: fewer header
         // bits against coarser prediction.
-        if let Some(index) = winner {
-            let candidate = &planner.candidates[index];
-            let (real, order) = (candidate.real, candidate.model.order);
+        if let Some((order, real)) = winner {
+            let mut misses = 0;
             for precision in (profile.precision_low..profile.precision).rev() {
                 let Some(model) = Model::quantize(&real[..order], precision) else {
                     break;
                 };
-                Self::cost_lpc(
+                if Self::cost_lpc(
                     samples,
                     header,
                     &mut best,
@@ -1500,7 +1630,14 @@ impl Plan {
                     ctx,
                     planner,
                     &mut scratch,
-                );
+                ) {
+                    misses = 0;
+                } else {
+                    misses += 1;
+                    if misses == profile.precision_patience {
+                        break;
+                    }
+                }
             }
         }
         planner.recycle(scratch);
@@ -1568,6 +1705,14 @@ impl Plan {
         true
     }
 
+    /// Return the stored residual buffer; `write` recomputes it.
+    fn shed(&mut self, planner: &mut Planner) {
+        if let Mode::Lpc { residual, .. } = &mut self.mode {
+            if let Some(buffer) = residual.take() {
+                planner.recycle(buffer);
+            }
+        }
+    }
     /// Return a plan's stored residual buffer without writing it.
     fn release(self, planner: &mut Planner) {
         if let Mode::Lpc {
@@ -1838,10 +1983,29 @@ mod tests {
                         .collect();
                     let mut sums = vec![[0u64; PARTITIONS]; 5];
                     fixed_partition_sums(&x, bits, size, parts, &mut sums);
+                    let mut low = [
+                        vec![[0u64; PARTITIONS]; 5],
+                        vec![[0u64; PARTITIONS]; 5],
+                        vec![[0u64; PARTITIONS]; 5],
+                    ];
+                    low_fixed_partition_sums::<2>(&x, bits, size, parts, &mut low[0]);
+                    low_fixed_partition_sums::<3>(&x, bits, size, parts, &mut low[1]);
+                    low_fixed_partition_sums::<4>(&x, bits, size, parts, &mut low[2]);
                     for (order, sums) in sums.iter().enumerate() {
                         for (i, &sum) in sums[..parts].iter().enumerate() {
                             let start = (i * size).max(order);
-                            assert_eq!(sum, fixed_sum(&x, order, start, (i + 1) * size));
+                            let expected = fixed_sum(&x, order, start, (i + 1) * size);
+                            assert_eq!(sum, expected);
+                            for (w, low) in low.iter().enumerate() {
+                                if order < w + 2 {
+                                    assert_eq!(
+                                        low[order][i],
+                                        expected,
+                                        "W {} order {order}",
+                                        w + 2
+                                    );
+                                }
+                            }
                         }
                     }
                 }
@@ -1850,26 +2014,36 @@ mod tests {
     }
 
     #[test]
-    fn second_order_sums_equal_fixed_sums() {
+    fn stereo_second_order_sums_equal_fixed_sums() {
         let mut seed = 7u64;
-        for depth in [8u32, 16, 17, 20, 22, 24, 25] {
+        for depth in [8u32, 16, 24] {
             let max = (1i64 << (depth - 1)) - 1;
             for n in [0usize, 1, 2, 3, 9, 4608, 20000] {
                 for pattern in 0..3 {
-                    let channels: Vec<Vec<i32>> = (0..4)
-                        .map(|c| {
-                            (0..n)
-                                .map(|i| match pattern {
-                                    0 => (rng(&mut seed) as i64 % (max + 1)) as i32,
-                                    1 => (if (i + c) % 2 == 0 { max } else { -max - 1 }) as i32,
-                                    _ => ((i as f64 * 0.01).sin() * max as f64) as i32,
-                                })
-                                .collect()
-                        })
-                        .collect();
-                    let x = [&channels[0][..], &channels[1], &channels[2], &channels[3]];
-                    let expected = x.map(|x| if n < 3 { 0 } else { fixed_sum(x, 2, 2, n) });
-                    assert_eq!(second_order_sums(x, depth), expected, "depth {depth} n {n}");
+                    let [left, right]: [Vec<i32>; 2] = std::array::from_fn(|c| {
+                        (0..n)
+                            .map(|i| match pattern {
+                                0 => (rng(&mut seed) as i64 % (max + 1)) as i32,
+                                1 => (if (i + c) % 2 == 0 { max } else { -max - 1 }) as i32,
+                                _ => ((i as f64 * 0.01).sin() * max as f64) as i32,
+                            })
+                            .collect()
+                    });
+                    let mid: Vec<i32> =
+                        left.iter().zip(&right).map(|(l, r)| (l + r) >> 1).collect();
+                    let side: Vec<i32> = left.iter().zip(&right).map(|(l, r)| l - r).collect();
+                    let expected = [&left, &right, &mid, &side].map(|x| {
+                        if n < 3 {
+                            0
+                        } else {
+                            fixed_sum(x, 2, 2, n)
+                        }
+                    });
+                    assert_eq!(
+                        stereo_second_order_sums(&left, &right, depth + 1),
+                        expected,
+                        "depth {depth} n {n}"
+                    );
                 }
             }
         }
@@ -1883,14 +2057,21 @@ mod tests {
         let mut scratch = Default::default();
         let mut checked = 0;
         let mut decodable_mismatches = 0;
-        // Level 9 at 96 kHz covers 16384-frame blocks, every window and
+        // Levels 9-10 cover 16384- and 3072-frame blocks, every window and
         // LPC orders up to 32.
         for (channels, depth, level, sample_rate) in [1u16, 2]
             .into_iter()
             .flat_map(|c| [16u16, 24].map(|d| (c, d)))
             .flat_map(|(c, d)| {
-                [(0u8, 48000), (3, 48000), (5, 48000), (8, 48000), (9, 96000)]
-                    .map(|(l, r)| (c, d, l, r))
+                [
+                    (0u8, 48000),
+                    (3, 48000),
+                    (5, 96000),
+                    (8, 48000),
+                    (9, 96000),
+                    (10, 44100),
+                ]
+                .map(|(l, r)| (c, d, l, r))
             })
         {
             let spec = AudioSpec {

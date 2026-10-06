@@ -796,6 +796,57 @@ blocks up to 48 kHz (-0.10%, kept the common 4096), LPC order 2 at level 3
 (-1.7% for +6% CPU). Variable block sizes were not tried, to keep
 fixed-blocksize streams. [Raw](verified-pipeline/round13-encoder.txt).
 
+## Round 14: less CPU and memory per level, level 10
+
+Goal: at every level smaller files with less CPU and less memory than the
+previous preset of the same number, and a level 10 for the smallest output
+at about 10% more CPU than the round-13 level 9 (output for DSP delivery,
+where bytes are cost). Same corpus and host as round 13. Memory is the
+private memory of the process at exit (heap, stack, anonymous mappings;
+this is what grows with concurrent conversions) on the 96/24 and 44.1/16
+album files; CPU noise is about +-3%.
+
+| Level | Bytes vs before | CPU vs before | Private KiB 96k / 44.1k (before) |
+| --- | ---: | ---: | --- |
+| 0 | -19.28% | -0.6% | 272 / 244 (332 / 292) |
+| 1 | -6.17% | +1.6% (-1.2% recheck) | 304 / 268 (324 / 292) |
+| 2 | -2.01% | +1.5% | 368 / 344 (420 / 388) |
+| 3 | -0.26% | -0.7% | 368 / 348 (412 / 392) |
+| 4 | -0.96% | +3.7% (+0.1% recheck) | 400 / 356 (504 / 456) |
+| 5 (default) | -0.40% | +1.4% | 472 / 356 (504 / 460) |
+| 6 | -0.63% | -13.1% | 480 / 428 (500 / 460) |
+| 7 | -0.53% | -7.3% | 476 / 452 (528 / 476) |
+| 8 | -0.51% | -10.2% | 468 / 448 (588 / 472) |
+| 9 | -0.135% vs round-13 level 9 | -27.4% | 960 / 416 (1436 / 944) |
+| 10 (new) | -0.168% vs round-13 level 9 | +5.5% | 912 / 404 |
+
+Levels 0-5 run within the noise of the previous CPU; executed instructions
+(callgrind, SHA-256 excluded) are lower at levels 1-8 (L2 -2%, L3 -8%,
+L5 -9%, L8 -36%) and 6.7% higher at level 0, whose order-1 prediction (19%
+smaller files) costs more than order 0. Total RSS also counts the shared
+code pages; the binary's code grew from 1.01 to 1.08 MB (1.42 MB in round
+13 before the LPC specializations were narrowed).
+
+* **Memory**: windows applied while autocorrelation is summed in chunks
+  (no block-sized window caches; level 9 had ten); one-trial stereo levels
+  form the chosen pair in place (no mid/side buffers); held stereo-trial
+  plans keep only their model; verification derives one channel plane at a
+  time. Above 48 kHz levels 6-8 keep 4096-frame blocks and level 5 uses
+  8192; levels 9-10 use 16384.
+* **CPU**: an AVX2 many-lag autocorrelation (13-17% faster than one dot
+  product per lag); one pass for fixed orders 0-2; LPC models chosen per
+  window from the Levinson-Durbin prediction error. Ranking many sampled
+  models was measured to lose: optimistic estimates displaced better models
+  (level 9 with four windows was 0.07% smaller than with ten).
+* **Levels 9-10**: one exactly costed model per window (6 and 12 windows,
+  including Tukey 10/25/50% and block halves; level 10 also thirds and
+  third-removed windows), precision search to 9/8 bits that stops after two
+  losses, and 3072-frame blocks up to 48 kHz (subset-legal, 0.1% smaller
+  there than 4096; every stream's last block already uses the explicit
+  block-size field).
+
+[Raw](verified-pipeline/round14-encoder.txt).
+
 ## Remaining hotspots (after round 10), ranked by expected ROI
 
 0. **Conversion after round 10**: the fused MD5/SHA-256 pass is now the

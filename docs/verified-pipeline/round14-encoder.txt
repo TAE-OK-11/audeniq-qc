@@ -1,0 +1,123 @@
+Round 14: less CPU and memory per level, level 10
+Base: main 5257cac (levels 0-8) and round 13 ccb3fd8 (level 9).
+Host: Intel Xeon @ 2.80 GHz, 4 vCPU VM, AVX2 backend. Corpus as round 13
+(57 WAV: 49 CELLAR files + 8 x 48/24 resampled). CPU: user+sys per process,
+per file the minimum of 3 interleaved runs, summed; run-to-run noise about
++-3%. Memory: private = Rss of [heap], [stack] and anonymous rw mappings at
+process exit (ptrace stop at exit, /proc/pid/smaps), on album96 (5 x 96/24
+files, 41 s) and album44 (27 x 44.1/16 files, 205 s); total RSS also counts
+the shared, file-backed code and libc pages.
+
+Totals (bytes, CPU s, total RSS):
+base0                        bytes  114,799,236 (+0.000%)  cpu 2.176 (+0.0%)  rss max 3.39 MiB mean 3.20
+base1                        bytes   92,507,940 (-19.418%)  cpu 2.147 (-1.4%)  rss max 3.35 MiB mean 3.21
+base2                        bytes   86,819,120 (-24.373%)  cpu 2.137 (-1.8%)  rss max 3.43 MiB mean 3.24
+base3                        bytes   85,226,987 (-25.760%)  cpu 2.243 (+3.1%)  rss max 3.43 MiB mean 3.25
+base4                        bytes   81,746,729 (-28.792%)  cpu 2.531 (+16.3%)  rss max 3.68 MiB mean 3.52
+base5                        bytes   80,678,607 (-29.722%)  cpu 2.773 (+27.4%)  rss max 3.65 MiB mean 3.51
+base6                        bytes   80,658,854 (-29.739%)  cpu 4.037 (+85.5%)  rss max 3.67 MiB mean 3.52
+base7                        bytes   80,502,103 (-29.876%)  cpu 5.294 (+143.2%)  rss max 3.79 MiB mean 3.58
+base8                        bytes   80,492,642 (-29.884%)  cpu 5.660 (+160.1%)  rss max 3.73 MiB mean 3.56
+prev9                        bytes   79,919,151 (-30.384%)  cpu 12.851 (+490.5%)  rss max 7.42 MiB mean 4.71
+new0                         bytes   92,670,572 (-19.276%)  cpu 2.164 (-0.6%)  rss max 3.32 MiB mean 3.24
+new1                         bytes   86,801,950 (-24.388%)  cpu 2.182 (+0.2%)  rss max 3.38 MiB mean 3.26
+new2                         bytes   85,074,675 (-25.893%)  cpu 2.170 (-0.3%)  rss max 3.50 MiB mean 3.35
+new3                         bytes   85,001,459 (-25.956%)  cpu 2.227 (+2.3%)  rss max 3.43 MiB mean 3.35
+new4                         bytes   80,964,029 (-29.473%)  cpu 2.625 (+20.6%)  rss max 3.62 MiB mean 3.50
+new5                         bytes   80,352,155 (-30.006%)  cpu 2.812 (+29.2%)  rss max 3.68 MiB mean 3.50
+new6                         bytes   80,148,949 (-30.183%)  cpu 3.508 (+61.2%)  rss max 3.81 MiB mean 3.60
+new7                         bytes   80,077,281 (-30.246%)  cpu 4.910 (+125.6%)  rss max 3.71 MiB mean 3.57
+new8                         bytes   80,080,950 (-30.243%)  cpu 5.085 (+133.7%)  rss max 3.71 MiB mean 3.58
+new9                         bytes   79,811,437 (-30.477%)  cpu 9.335 (+328.9%)  rss max 4.38 MiB mean 3.65
+new10                        bytes   79,784,730 (-30.501%)  cpu 13.557 (+522.9%)  rss max 4.35 MiB mean 3.67
+
+Level 0-1 recheck after the low-order fixed-sum pass (5 runs):
+  base0 2.164  new0 2.187 (+1.1%)   base1 2.166  new1 2.138 (-1.2%)
+
+By format (bytes; % vs base0): cd = <=48 kHz, hi = >48 kHz
+                                       all              cd16              cd24              hi24
+base0                   114,799,236 +0.00% 55,870,734 +0.00% 16,675,659 +0.00% 42,252,843 +0.00%
+base1                    92,507,940-19.42% 43,682,558-21.81% 13,723,070-17.71% 35,102,312-16.92%
+base2                    86,819,120-24.37% 38,269,850-31.50% 13,606,527-18.40% 34,942,743-17.30%
+base3                    85,226,987-25.76% 36,703,649-34.31% 13,596,786-18.46% 34,926,552-17.34%
+base4                    81,746,729-28.79% 33,948,597-39.24% 13,302,783-20.23% 34,495,349-18.36%
+base5                    80,678,607-29.72% 33,143,236-40.68% 13,201,912-20.83% 34,333,459-18.74%
+base6                    80,658,854-29.74% 33,128,378-40.71% 13,199,755-20.84% 34,330,721-18.75%
+base7                    80,502,103-29.88% 33,037,158-40.87% 13,181,258-20.96% 34,283,687-18.86%
+base8                    80,492,642-29.88% 33,027,697-40.89% 13,181,258-20.96% 34,283,687-18.86%
+prev9                    79,919,151-30.38% 32,761,421-41.36% 13,132,681-21.25% 34,025,049-19.47%
+new0                     92,670,572-19.28% 43,755,150-21.69% 13,746,327-17.57% 35,169,095-16.77%
+new1                     86,801,950-24.39% 38,225,433-31.58% 13,607,150-18.40% 34,969,367-17.24%
+new2                     85,074,675-25.89% 36,540,941-34.60% 13,606,348-18.41% 34,927,386-17.34%
+new3                     85,001,459-25.96% 36,478,121-34.71% 13,596,786-18.46% 34,926,552-17.34%
+new4                     80,964,029-29.47% 33,335,655-40.33% 13,231,218-20.66% 34,397,156-18.59%
+new5                     80,352,155-30.01% 32,962,323-41.00% 13,167,304-21.04% 34,222,528-19.01%
+new6                     80,148,949-30.18% 32,839,602-41.22% 13,144,884-21.17% 34,164,463-19.14%
+new7                     80,077,281-30.25% 32,812,092-41.27% 13,140,764-21.20% 34,124,425-19.24%
+new8                     80,080,950-30.24% 32,809,855-41.28% 13,141,411-21.19% 34,129,684-19.23%
+new9                     79,811,437-30.48% 32,685,812-41.50% 13,113,176-21.36% 34,012,449-19.50%
+new10                    79,784,730-30.50% 32,670,389-41.53% 13,104,875-21.41% 34,009,466-19.51%
+
+Private KB and total RSS KB at exit: album96 private, total, album44 private, total
+base L0 332 3484 292 3468
+base L1 324 3460 292 3444
+base L2 420 3588 388 3596
+base L3 412 3624 392 3604
+base L4 504 3804 456 3756
+base L5 504 3828 460 3832
+base L6 500 3920 460 3784
+base L7 528 3936 476 3776
+base L8 588 3972 472 3776
+final4 L0 272 3512 244 3472
+final4 L1 304 3532 268 3496
+final4 L2 368 3640 344 3592
+final4 L3 368 3616 348 3648
+final4 L4 400 3768 356 3780
+final4 L5 472 3852 356 3844
+final4 L6 480 3820 428 3904
+final4 L7 476 3952 452 3940
+final4 L8 468 3856 448 3828
+final4 L9 960 4376 416 3812
+final4 L10 912 4320 404 3816
+prev L9 1436 5096 944 4656
+
+Instructions executed excluding SHA-256 (callgrind, t01.wav 7 s; valgrind
+runs SHA-256 without SHA-NI, so it is left out), new vs before:
+  L0 +6.7%  L1 -0.7%  L2 -2.0%  L3 -8.2%  L4 -4.4%  L5 -9.1%  L6 -26.6%
+  L8 -35.7%
+
+Memory changes: windows applied while autocorrelation is summed in 512-sample
+chunks (no block-sized window or windowed copies; level 9 had ten); stereo
+levels with one trial form the chosen pair in place of left/right (no mid
+and side buffers); stereo trial plans keep only their model (the written
+pair's residuals are recomputed); frame verification derives one channel
+plane at a time; the output check reads in 16 KiB (its 64 KiB buffer no
+longer fit the freed block buffers); LPC kernels specialized for orders
+1-12, 16, 24 and 32 with zero-padded coefficients (code 1.42 -> 1.08 MB).
+Above 48 kHz, levels 6-8 keep 4096-frame blocks (four channel buffers) and
+level 5 uses 8192, so their private memory stays below the previous presets.
+
+CPU changes: many-lag autocorrelation (AVX2: all lags of a 512-sample chunk
+in one pass, 13-17% faster than one dot product per lag); one pass for fixed
+orders 0-2 (level 1); models chosen per window from the Levinson-Durbin
+prediction error instead of ranking sampled residuals (the sampled ranking
+let optimistic estimates displace better models: level 9 with four windows
+was 0.07% smaller than with ten); precision search stops after two lower
+precisions in a row lose.
+
+Selection experiments (bytes vs round-13 level 9, CPU vs it):
+  ten windows, 8 best sampled models             +0.000%   0%
+  four windows, 2 sampled orders each            -0.071%  -27%
+  ten windows, one model per window (prediction error)  -0.092%  -7%
+  + precision down to 10                          -0.103%  -7%
+  + 3072-frame blocks <= 48 kHz                   -0.136%  -6%
+  + precision to 8, stop after two misses         -0.153%  -8%
+  + Tukey(10), Tukey(25) (level 10)               -0.168%  +11% (+5.5% final run)
+  six windows, one model each, precision to 9 (level 9)  -0.135%  -22% (-27% final run)
+Level 4 orders (CPU vs previous level 4, 5 runs): 8: -1.30% bytes, +1.7%;
+7: -1.15%, +0.5%; 6: -0.96%, +0.1% (taken).
+
+Gates: cargo test --workspace (release and debug), --features
+reference-codecs, clippy -D warnings (x86_64 and aarch64), qualify 628
+checks, codec-stress 288 checks; FFmpeg decoded 627 outputs (57 files x
+levels 0-10) with crccheck+explode to the source PCM MD5: 0 mismatches.

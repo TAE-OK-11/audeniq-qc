@@ -9,7 +9,7 @@ claim of measured speedup from dependency removal. Backend integration is deferr
 
 | Component | Implementation / location | External codec library required by default? |
 | --- | --- | --- |
-| FLAC encoding, levels 0..9 | `src/flac.rs`: constant/verbatim/fixed/LPC, Rice coding, stereo model selection, STREAMINFO, frame writing | No |
+| FLAC encoding, levels 0..10 | `src/flac.rs`: constant/verbatim/fixed/LPC, Rice coding, stereo model selection, STREAMINFO, frame writing | No |
 | WAV / raw s32le output | `src/pcm.rs`: PCM export, WAV header, output re-read/hash verification | No |
 | FLAC / ALAC / TTA / WavPack lossless decoding | Native Rust modules; FFmpeg-derived provenance retained | No |
 | WAV / AIFF / M4A / FLAC containers and metadata | `audio.rs`, `m4a.rs`, `mp4.rs`, `probe.rs`, native FLAC decoder | No |

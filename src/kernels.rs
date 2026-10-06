@@ -541,17 +541,31 @@ pub struct Dot64Kernel(fn(&[f64], &[f64]) -> f64);
 pub(crate) struct LpcKernel(Backend);
 /// Largest FLAC LPC order (the format's limit).
 pub(crate) const MAX_LPC_ORDER: usize = 32;
-/// Expand `$body!(N)` for one const-generic LPC order `$order` in 1..=32.
+/// Expand `$body!(N)` for the const-generic length N that serves LPC order
+/// `$order` in 1..=32: the order itself up to 12, else the next of 16, 24
+/// and 32. Callers pad the coefficients with zeros to N (zero products leave
+/// every sum unchanged) and handle samples order..N, which have fewer than N
+/// predecessors, separately. Fewer instances keep the code small.
 macro_rules! lpc_orders {
-    (@ $order:expr, $body:ident, $($n:literal)*) => {
+    ($order:expr, $body:ident) => {
         match $order {
-            $($n => $body!($n),)*
+            1 => $body!(1),
+            2 => $body!(2),
+            3 => $body!(3),
+            4 => $body!(4),
+            5 => $body!(5),
+            6 => $body!(6),
+            7 => $body!(7),
+            8 => $body!(8),
+            9 => $body!(9),
+            10 => $body!(10),
+            11 => $body!(11),
+            12 => $body!(12),
+            13..=16 => $body!(16),
+            17..=24 => $body!(24),
+            25..=32 => $body!(32),
             _ => unreachable!("unsupported LPC order"),
         }
-    };
-    ($order:expr, $body:ident) => {
-        $crate::kernels::lpc_orders!(@ $order, $body, 1 2 3 4 5 6 7 8 9 10 11 12 13 14
-            15 16 17 18 19 20 21 22 23 24 25 26 27 28 29 30 31 32)
     };
 }
 pub(crate) use lpc_orders;
@@ -576,8 +590,6 @@ impl LpcKernel {
         assert!(shift <= 15);
         assert!(coefficients.iter().all(|&c| (-16384..=16383).contains(&c)));
         assert!(samples.len() >= coefficients.len());
-        out.clear();
-        out.reserve(samples.len() - coefficients.len());
         macro_rules! compute {
             ($n:literal) => {
                 self.compute::<$n>(samples, coefficients, shift, out)
@@ -585,6 +597,8 @@ impl LpcKernel {
         }
         lpc_orders!(coefficients.len(), compute)
     }
+    /// Residuals of an order <= N model with N-length kernels (see
+    /// [`lpc_orders`]); samples before N are formed one by one in i64.
     fn compute<const N: usize>(
         &self,
         samples: &[i32],
@@ -592,27 +606,69 @@ impl LpcKernel {
         shift: u32,
         out: &mut Vec<u32>,
     ) -> Option<()> {
-        out.resize(samples.len() - N, 0);
-        let narrow = fits_i32(samples, coefficients);
+        let order = coefficients.len();
+        out.clear();
+        out.resize(samples.len() - order, 0);
+        let mut c = [0i32; N];
+        c[..order].copy_from_slice(coefficients);
+        let mut ok = true;
+        for i in order..N.min(samples.len()) {
+            let prediction: i64 = (0..order)
+                .map(|j| coefficients[j] as i64 * samples[i - 1 - j] as i64)
+                .sum();
+            let r = samples[i] as i64 - (prediction >> shift);
+            ok &= i32::try_from(r).is_ok();
+            out[i - order] = ((r << 1) ^ (r >> 63)) as u32;
+        }
+        if samples.len() <= N {
+            return ok.then_some(());
+        }
+        let out = &mut out[N - order..];
+        let narrow = fits_i32(samples, &c);
         #[cfg(target_arch = "x86_64")]
         if self.0 == Backend::Avx2 {
             // SAFETY: AVX2 selected at construction; the bodies are safe Rust.
             return unsafe {
                 if narrow {
-                    lpc_store_narrow_avx2::<N>(samples, coefficients, shift, out);
-                    true
+                    lpc_store_narrow_avx2::<N>(samples, &c, shift, out);
+                    ok
                 } else {
-                    lpc_store_avx2::<N>(samples, coefficients, shift, out)
+                    ok & lpc_store_avx2::<N>(samples, &c, shift, out)
                 }
             }
             .then_some(());
         }
-        if narrow {
-            lpc_store_narrow::<N>(samples, coefficients, shift, out);
-            return Some(());
+        // x86 without AVX2 (rare) takes one runtime-order loop instead of an
+        // instance per order, which keeps the code small.
+        #[cfg(target_arch = "x86_64")]
+        return (ok & lpc_store_any(samples, &c, shift, out)).then_some(());
+        #[cfg(not(target_arch = "x86_64"))]
+        {
+            if narrow {
+                lpc_store_narrow::<N>(samples, &c, shift, out);
+                return ok.then_some(());
+            }
+            (ok & lpc_store::<N>(samples, &c, shift, out)).then_some(())
         }
-        lpc_store::<N>(samples, coefficients, shift, out).then_some(())
     }
+}
+
+/// [`lpc_store`] with a runtime order: the same residuals.
+#[cfg(target_arch = "x86_64")]
+fn lpc_store_any(samples: &[i32], coefficients: &[i32], shift: u32, out: &mut [u32]) -> bool {
+    let order = coefficients.len();
+    let mut bad = 0u64;
+    for (i, o) in (order..samples.len()).zip(out.iter_mut()) {
+        let prediction: i64 = coefficients
+            .iter()
+            .zip(samples[i - order..i].iter().rev())
+            .map(|(&c, &x)| c as i64 * x as i64)
+            .sum();
+        let r = samples[i] as i64 - (prediction >> shift);
+        bad |= (r.wrapping_add(1 << 31) as u64) >> 32;
+        *o = ((r << 1) ^ (r >> 63)) as u32;
+    }
+    bad == 0
 }
 
 /// Whether every LPC prediction sum over `samples` is below 2^30 in
@@ -737,47 +793,89 @@ impl LpcKernel {
     }
 }
 
-/// Points per column in [`LpcKernel::columns`].
-pub(crate) const PROBE_POINTS: usize = 128;
-impl LpcKernel {
-    /// `prediction[t] = sum_j coefficients[j] * history[j][t]`: exact LPC
-    /// predictions at gathered sample positions, one widening multiply-add
-    /// per coefficient across all positions.
-    pub(crate) fn columns(
-        &self,
-        coefficients: &[i32],
-        history: &[[i32; PROBE_POINTS]],
-        prediction: &mut [i64; PROBE_POINTS],
-    ) {
+/// History before each autocorrelation chunk that [`LagsKernel`] reads: the
+/// largest lag plus the three lanes below it of the last lag group.
+pub(crate) const LAG_HISTORY: usize = MAX_LPC_ORDER + 4;
+
+/// Many-lag autocorrelation of one chunk: `r[lag] += sum x[i] x[i - lag]`
+/// over the chunk. On AVX2 all lags are summed in one pass, four to a
+/// vector (lane k of group g is lag 4g + 3 - k, loaded contiguously below
+/// i), with even and odd samples in separate accumulators so that the
+/// additions of a few groups do not wait on each other. Other backends sum
+/// each lag over the (L1-resident) chunk with [`Dot64Kernel`].
+#[cfg_attr(not(target_arch = "x86_64"), allow(dead_code))]
+pub(crate) struct LagsKernel(Backend, Dot64Kernel);
+impl LagsKernel {
+    pub(crate) fn new(backend: Backend) -> Self {
+        assert!(backend.available());
+        Self(backend, Dot64Kernel::new(backend))
+    }
+    /// `buffer[LAG_HISTORY..]` is the chunk, preceded by its history.
+    pub(crate) fn apply(&self, buffer: &[f64], r: &mut [f64]) {
+        assert!(r.len() <= MAX_LPC_ORDER + 1 && buffer.len() >= LAG_HISTORY);
         #[cfg(target_arch = "x86_64")]
         if self.0 == Backend::Avx2 {
-            // SAFETY: AVX2 selected at construction; the body is safe Rust.
-            return unsafe { columns_avx2(coefficients, history, prediction) };
+            macro_rules! groups {
+                ($($g:literal)*) => {
+                    match r.len().div_ceil(4) {
+                        // SAFETY: AVX2 selected at construction; every load
+                        // is within `buffer` (see `lags_avx2`).
+                        $($g => return unsafe { lags_avx2::<$g>(buffer, r) },)*
+                        _ => unreachable!("autocorrelation lags"),
+                    }
+                };
+            }
+            groups!(1 2 3 4 5 6 7 8 9)
         }
-        columns_body(coefficients, history, prediction)
+        let chunk = &buffer[LAG_HISTORY..];
+        for (lag, energy) in r.iter_mut().enumerate() {
+            *energy += self
+                .1
+                .apply(chunk, &buffer[LAG_HISTORY - lag..buffer.len() - lag]);
+        }
     }
 }
-#[inline(always)]
-fn columns_body(
-    coefficients: &[i32],
-    history: &[[i32; PROBE_POINTS]],
-    prediction: &mut [i64; PROBE_POINTS],
-) {
-    *prediction = [0; PROBE_POINTS];
-    for (&c, column) in coefficients.iter().zip(history) {
-        for (p, &x) in prediction.iter_mut().zip(column) {
-            *p += c as i64 * x as i64;
-        }
-    }
-}
+/// Loads read `buffer[i - 4g - 3..i - 4g + 1]` for chunk samples i >=
+/// LAG_HISTORY and g < G <= 9, so the lowest is index 1.
 #[cfg(target_arch = "x86_64")]
 #[target_feature(enable = "avx2")]
-unsafe fn columns_avx2(
-    coefficients: &[i32],
-    history: &[[i32; PROBE_POINTS]],
-    prediction: &mut [i64; PROBE_POINTS],
-) {
-    columns_body(coefficients, history, prediction)
+#[allow(clippy::needless_range_loop)] // g indexes two accumulators and the load offset
+unsafe fn lags_avx2<const G: usize>(buffer: &[f64], r: &mut [f64]) {
+    use std::arch::x86_64::*;
+    const { assert!(4 * G <= LAG_HISTORY) };
+    let p = buffer.as_ptr();
+    let end = buffer.len();
+    let mut even = [_mm256_setzero_pd(); G];
+    let mut odd = [_mm256_setzero_pd(); G];
+    let mut i = LAG_HISTORY;
+    while i + 2 <= end {
+        let c0 = _mm256_broadcast_sd(&*p.add(i));
+        let c1 = _mm256_broadcast_sd(&*p.add(i + 1));
+        for g in 0..G {
+            let v0 = _mm256_loadu_pd(p.add(i - 4 * g - 3));
+            let v1 = _mm256_loadu_pd(p.add(i - 4 * g - 2));
+            even[g] = _mm256_add_pd(even[g], _mm256_mul_pd(c0, v0));
+            odd[g] = _mm256_add_pd(odd[g], _mm256_mul_pd(c1, v1));
+        }
+        i += 2;
+    }
+    if i < end {
+        let c0 = _mm256_broadcast_sd(&*p.add(i));
+        for g in 0..G {
+            let v0 = _mm256_loadu_pd(p.add(i - 4 * g - 3));
+            even[g] = _mm256_add_pd(even[g], _mm256_mul_pd(c0, v0));
+        }
+    }
+    for g in 0..G {
+        let mut lanes = [0.0f64; 4];
+        _mm256_storeu_pd(lanes.as_mut_ptr(), _mm256_add_pd(even[g], odd[g]));
+        for (k, lane) in lanes.iter().enumerate() {
+            let lag = 4 * g + 3 - k;
+            if lag < r.len() {
+                r[lag] += lane;
+            }
+        }
+    }
 }
 
 impl Dot64Kernel {
@@ -1127,34 +1225,6 @@ mod tests {
                         }
                     }
                 }
-            }
-        }
-    }
-    /// Gathered-column predictions equal the per-point i64 sums, for every
-    /// order, extreme coefficients and full-range samples, on every backend.
-    #[test]
-    fn column_predictions_match_per_point_sums() {
-        let mut seed = 5u32;
-        let mut next = || {
-            seed = seed.wrapping_mul(1664525).wrapping_add(1013904223);
-            seed as i32
-        };
-        for order in 1..=MAX_LPC_ORDER {
-            let history: Vec<[i32; PROBE_POINTS]> = (0..order)
-                .map(|j| std::array::from_fn(|t| if (t + j) % 7 == 0 { i32::MIN } else { next() }))
-                .collect();
-            let coefficients: Vec<i32> = (0..order)
-                .map(|j| [16383, -16384, next() >> 18][j % 3])
-                .collect();
-            let expected: [i64; PROBE_POINTS] = std::array::from_fn(|t| {
-                (0..order)
-                    .map(|j| coefficients[j] as i64 * history[j][t] as i64)
-                    .sum()
-            });
-            for backend in [Backend::Scalar, Backend::detect()] {
-                let mut prediction = [7i64; PROBE_POINTS];
-                LpcKernel::new(backend).columns(&coefficients, &history, &mut prediction);
-                assert_eq!(prediction, expected, "order {order}");
             }
         }
     }

@@ -192,7 +192,7 @@ fn subframe(b: &mut Bits<'_>, p: &mut [i32], bits: u32) -> Result<()> {
                 let c = &coeff[..order];
                 macro_rules! restore {
                     ($n:literal) => {
-                        restore_lpc::<$n>(p, c, shift, width)?
+                        restore_lpc_padded::<$n>(p, c, shift, width)?
                     };
                 }
                 crate::kernels::lpc_orders!(order, restore)
@@ -351,10 +351,11 @@ pub(crate) fn decode(
     Ok((length + 2, h))
 }
 
-/// Scratch planes for [`verify`]: expected subframe signal and parsed residuals.
+/// Scratch planes for [`verify`]: one channel's expected subframe signal
+/// and its parsed residuals.
 #[derive(Default)]
 pub(crate) struct VerifyScratch {
-    expected: [Vec<i32>; 2],
+    expected: Vec<i32>,
     residual: Vec<i32>,
 }
 
@@ -396,52 +397,47 @@ pub(crate) fn verify(
     // low bits; the planes are the right-aligned source channels.
     let shift = 32 - spec.bits_per_sample as u32;
     let low = (1i32 << shift) - 1;
-    let mut bad = 0i32;
-    let [first, second] = &mut scratch.expected;
-    first.resize(h.samples, 0);
-    if channels == 1 {
-        for (e, &x) in first.iter_mut().zip(expected) {
-            bad |= x & low;
-            *e = x >> shift;
-        }
-    } else {
-        second.resize(h.samples, 0);
-        // Forward FLAC decorrelation of the source. `decode` inverts these
-        // maps: left/side (a, a - d), side/right (a + d, d) and mid/side via
-        // mid2 = (a << 1) | (d & 1). With L, R in range, L + R and L - R
-        // have equal parity, so the inverse of each forward pair is (L, R);
-        // and forward(inverse(a, d)) == (a, d), so no other in-range pair
-        // decodes to (L, R).
-        for ((row, a), d) in expected
-            .as_chunks::<2>()
-            .0
-            .iter()
-            .zip(first.iter_mut())
-            .zip(second.iter_mut())
-        {
-            bad |= (row[0] | row[1]) & low;
-            let (l, r) = (row[0] >> shift, row[1] >> shift);
-            (*a, *d) = match h.mode {
-                8 => (l, l - r),
-                9 => (l - r, r),
-                10 => ((l + r) >> 1, l - r),
-                _ => (l, r),
-            };
-        }
-    }
-    if bad != 0 {
-        return invalid("FLAC verified source alignment");
-    }
+    //
+    // One channel's expected signal at a time: forward FLAC decorrelation of
+    // the source. `decode` inverts these maps: left/side (a, a - d),
+    // side/right (a + d, d) and mid/side via mid2 = (a << 1) | (d & 1). With
+    // L, R in range, L + R and L - R have equal parity, so the inverse of each
+    // forward pair is (L, R); and forward(inverse(a, d)) == (a, d), so no
+    // other in-range pair decodes to (L, R). Each pass also collects the low
+    // bits of every source sample.
+    let plane = &mut scratch.expected;
     for ch in 0..channels {
+        plane.resize(h.samples, 0);
+        let mut bad = 0i32;
+        if channels == 1 {
+            for (e, &x) in plane.iter_mut().zip(expected) {
+                bad |= x;
+                *e = x >> shift;
+            }
+        } else {
+            let rows = expected.as_chunks::<2>().0.iter().zip(plane.iter_mut());
+            macro_rules! forward {
+                (|$l:ident, $r:ident| $value:expr) => {
+                    for (row, e) in rows {
+                        bad |= row[0] | row[1];
+                        let ($l, $r) = (row[0] >> shift, row[1] >> shift);
+                        *e = $value;
+                    }
+                };
+            }
+            match (h.mode, ch) {
+                (10, 0) => forward!(|l, r| (l + r) >> 1),
+                (9, 0) | (8 | 10, 1) => forward!(|l, r| l - r),
+                (_, 0) => forward!(|l, _r| l),
+                _ => forward!(|_l, r| r),
+            }
+        }
+        if bad & low != 0 {
+            return invalid("FLAC verified source alignment");
+        }
         let bits = spec.bits_per_sample as u32
             + u32::from((ch == 0 && h.mode == 9) || (ch == 1 && matches!(h.mode, 8 | 10)));
-        verify_subframe(
-            &mut b,
-            &mut scratch.expected[ch],
-            &mut scratch.residual,
-            bits,
-            backend,
-        )?;
+        verify_subframe(&mut b, plane, &mut scratch.residual, bits, backend)?;
     }
     b.align_zero()?;
     let length = b.pos / 8;
@@ -513,7 +509,7 @@ fn verify_subframe(
                 let c = &coeff[..order];
                 macro_rules! expected {
                     ($n:literal) => {
-                        expected_lpc::<$n>(x, c, shift, r, backend)
+                        expected_lpc_padded::<$n>(x, c, shift, r, backend)
                     };
                 }
                 crate::kernels::lpc_orders!(order, expected)
@@ -588,6 +584,24 @@ unsafe fn expected_fixed_avx2<const N: usize>(x: &[i32], e: &mut [i32]) -> bool 
     expected_fixed_body::<N>(x, e)
 }
 
+/// [`expected_lpc`] for an order <= N model (see `kernels::lpc_orders`):
+/// samples before N, which have fewer than N predecessors, take the exact
+/// i64 form and the rest the N-length kernel with zero-padded coefficients.
+fn expected_lpc_padded<const N: usize>(
+    x: &[i32],
+    coeff: &[i32],
+    shift: i32,
+    e: &mut [i32],
+    backend: Backend,
+) -> bool {
+    let order = coeff.len();
+    let head = N.min(x.len());
+    let fits = order == N || expected_lpc_wide(&x[..head], coeff, shift, &mut e[..head]);
+    let mut c = [0i32; N];
+    c[..order].copy_from_slice(coeff);
+    fits && (x.len() <= N || expected_lpc::<N>(x, &c, shift, e, backend))
+}
+
 /// [`expected_fixed`] for LPC: the residuals with which `restore_lpc`
 /// reproduces x. `restore_lpc` always forms the exact sum (its i32
 /// accumulator is used only when its bound proves exactness), shifts it as
@@ -609,13 +623,21 @@ fn expected_lpc<const N: usize>(
         return expected_lpc_wide(x, coeff, shift, e);
     }
     #[cfg(target_arch = "x86_64")]
-    if backend == Backend::Avx2 {
-        // SAFETY: the backend was checked available by the encoder; the
-        // generic body is bounds-checked safe Rust.
-        return unsafe { expected_lpc_avx2::<N>(x, &c, shift, e) };
+    {
+        if backend == Backend::Avx2 {
+            // SAFETY: the backend was checked available by the encoder; the
+            // generic body is bounds-checked safe Rust.
+            return unsafe { expected_lpc_avx2::<N>(x, &c, shift, e) };
+        }
+        // x86 without AVX2 (rare): one runtime-order loop, no instance per
+        // order.
+        expected_lpc_wide(x, coeff, shift, e)
     }
-    let _ = backend;
-    expected_lpc_body::<N>(x, &c, shift, e)
+    #[cfg(not(target_arch = "x86_64"))]
+    {
+        let _ = backend;
+        expected_lpc_body::<N>(x, &c, shift, e)
+    }
 }
 
 /// Exact i32 accumulation, valid when |c| * N * max|x| < 2^31.
@@ -1123,6 +1145,34 @@ fn restore_lpc<const N: usize>(p: &mut [i32], coeff: &[i32], shift: i32, bits: u
     lpc_tail(p, coeff, shift, bits, order, bad)
 }
 
+/// [`restore_lpc`] for an order <= N model (see `kernels::lpc_orders`):
+/// samples before N are restored one by one, then the N-length kernel with
+/// zero-padded coefficients continues from them.
+fn restore_lpc_padded<const N: usize>(
+    p: &mut [i32],
+    coeff: &[i32],
+    shift: i32,
+    bits: u32,
+) -> Result<()> {
+    if coeff.len() == N {
+        return restore_lpc::<N>(p, coeff, shift, bits);
+    }
+    // Warm-up samples are range-checked as `restore_lpc` checks them.
+    let low = -(1i64 << (bits - 1));
+    let span = (1u64 << bits) - 1;
+    let bad = p[..coeff.len()]
+        .iter()
+        .any(|&v| (v as i64).wrapping_sub(low) as u64 > span);
+    let head = N.min(p.len());
+    lpc_tail(&mut p[..head], coeff, shift, bits, coeff.len(), bad)?;
+    if p.len() <= N {
+        return Ok(());
+    }
+    let mut c = [0i32; N];
+    c[..coeff.len()].copy_from_slice(coeff);
+    restore_lpc::<N>(p, &c, shift, bits)
+}
+
 /// Samples from `start` restored one at a time from the stored window.
 fn lpc_tail(
     p: &mut [i32],
@@ -1309,6 +1359,75 @@ mod tests {
         run::<12>();
         run::<17>();
         run::<32>();
+    }
+    /// Orders above 12 run on zero-padded 16/24/32 kernels: restoring and
+    /// the verifier's expected residuals match the direct definitions for
+    /// every order, block lengths around the padded length, and widths.
+    #[test]
+    fn padded_lpc_orders_restore_and_verify_exactly() {
+        let mut seed = 11u32;
+        let mut next = || {
+            seed = seed.wrapping_mul(1664525).wrapping_add(1013904223);
+            seed as i32
+        };
+        for order in 1..=32usize {
+            for bits in [16u32, 24] {
+                for length in [order, order + 1, 15, 16, 17, 31, 33, 40, 300] {
+                    if length < order {
+                        continue;
+                    }
+                    let amplitude = 1i32 << (bits - 3);
+                    let x: Vec<i32> = (0..length)
+                        .map(|i| {
+                            ((i as f64 * 0.05).sin() * amplitude as f64) as i32 + (next() >> 28)
+                        })
+                        .collect();
+                    let coeff: Vec<i32> = (0..order).map(|_| next() >> 21).collect();
+                    let shift = 9;
+                    let mut residual = x.clone();
+                    let mut fits = true;
+                    for i in order..length {
+                        let sum: i64 = (0..order)
+                            .map(|j| coeff[j] as i64 * x[i - 1 - j] as i64)
+                            .sum();
+                        match i32::try_from(x[i] as i64 - (sum >> shift)) {
+                            Ok(v) => residual[i] = v,
+                            Err(_) => fits = false,
+                        }
+                    }
+                    let mut e = vec![0; length];
+                    let mut backends = vec![Backend::Scalar];
+                    backends.push(Backend::detect());
+                    for &backend in &backends {
+                        macro_rules! expected {
+                            ($n:literal) => {
+                                expected_lpc_padded::<$n>(&x, &coeff, shift, &mut e, backend)
+                            };
+                        }
+                        let ok = crate::kernels::lpc_orders!(order, expected);
+                        assert_eq!(ok, fits, "order {order} length {length}");
+                        if fits {
+                            assert_eq!(
+                                e[order..],
+                                residual[order..],
+                                "order {order} length {length}"
+                            );
+                        }
+                    }
+                    if fits {
+                        let mut p = residual.clone();
+                        macro_rules! restore {
+                            ($n:literal) => {
+                                restore_lpc_padded::<$n>(&mut p, &coeff, shift, bits)
+                            };
+                        }
+                        let restored = crate::kernels::lpc_orders!(order, restore);
+                        assert!(restored.is_ok(), "order {order} length {length}");
+                        assert_eq!(p, x, "order {order} length {length}");
+                    }
+                }
+            }
+        }
     }
     #[test]
     fn decorrelation_matches_reference_values_and_range_verdicts() {

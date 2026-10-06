@@ -224,7 +224,7 @@ fn compression_controls_and_pcm_outputs_preserve_samples() {
     let src = d.0.join("source.wav");
     ffmpeg(None, &src, "pcm_s24le");
     let (_, expected, frames) = pcm_sha256(&src, Limits::default(), Backend::Scalar).unwrap();
-    for level in 0..=9 {
+    for level in 0..=10 {
         let dst = d.0.join(format!("level{level}.flac"));
         let result = flac::convert_with_level(
             &src,
@@ -240,7 +240,7 @@ fn compression_controls_and_pcm_outputs_preserve_samples() {
     }
     let dst = d.0.join("invalid.flac");
     assert!(
-        flac::convert_with_level(&src, &dst, Limits::default(), Backend::detect(), Some(10))
+        flac::convert_with_level(&src, &dst, Limits::default(), Backend::detect(), Some(11))
             .is_err()
     );
     assert!(!dst.exists());
@@ -476,7 +476,7 @@ fn encoder_models_stereo_modes_and_wasted_bits_round_trip() {
         let src = d.0.join(format!("{name}.wav"));
         wav(&src, rate, channels, depth, &samples);
         let (_, expected, count) = pcm_sha256(&src, Limits::default(), Backend::Scalar).unwrap();
-        for level in 0..=9 {
+        for level in 0..=10 {
             for backend in [Backend::Scalar, Backend::detect()] {
                 let out = d.0.join(format!("{name}-{level}-{backend:?}.flac"));
                 let result =

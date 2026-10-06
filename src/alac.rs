@@ -1,6 +1,11 @@
-//! ALAC Rice/adaptive LPC Rust port, reworked for reusable in-place buffers.
-//! Derived from FFmpeg libavcodec/alac.c and alacdsp.c (LGPL-2.1-or-later),
-//! Copyright (c) 2005 David Hammerton. See THIRD_PARTY.md for the pinned source.
+// SPDX-License-Identifier: LGPL-2.1-or-later
+//! ALAC decoder. Originally a Rust port of FFmpeg libavcodec/alac.c and
+//! alacdsp.c (Copyright (c) 2005 David Hammerton; see THIRD_PARTY.md for the
+//! pinned source); now an AUDENIQ design: the adaptive Golomb state is a
+//! register struct with LZCNT/BMI2 dispatch, the predictor is specialized
+//! per common order with sign-specific coefficient steps, and stereo
+//! reconstruction, extra bits and interleaving share one output pass over
+//! reusable buffers. Bounded bit reads and checked packet structure remain.
 use crate::{msb::Bits, Error, Result};
 pub(crate) struct Decoder {
     config: [u8; 24],

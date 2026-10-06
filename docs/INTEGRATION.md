@@ -28,7 +28,7 @@ not an upload parent. Move/rename the finished FLAC from that directory in the
 parent. Do not pass an existing pre-created empty output file: no-clobber rejects it.
 
 PCM export has the same staging/no-clobber contract. Explicit
-`convert --compression-level 0..8` uses this engine's presets and forces FLAC
+`convert --compression-level 0..9` uses this engine's presets and forces FLAC
 re-encoding. Without that option, FLAC frames are preserved after full validation;
 other inputs use profile 5. These levels are not FFmpeg/libFLAC-equivalent numbers.
 

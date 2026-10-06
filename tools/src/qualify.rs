@@ -141,7 +141,7 @@ pub fn execute(options: &Options) -> Result<Value> {
                 verify!(actual == expected, "independent PCM export hash");
             }
             if matches!(ext, "wav" | "flac") {
-                for level in 0..=8 {
+                for level in 0..=9 {
                     let output = root.join(format!(
                         "{}.level{level}.flac",
                         input.file_name().unwrap().to_string_lossy()

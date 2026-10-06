@@ -1,12 +1,16 @@
 // SPDX-License-Identifier: LGPL-2.1-or-later
 // FLAC fixed predictors, signed Rice mapping and frame writer adapted from
 // FFmpeg libavcodec/flacenc.c / lpc.c, Copyright (c) 2006 Justin Ruggles.
-// Redesign: bounded 4096-frame work buffers; constant/fixed/verbatim choice;
+// Redesign: bounded block work buffers; constant/fixed/verbatim choice;
 // exact Rice costs near an estimated parameter; adaptive independent/mid-side;
 // streaming MD5/PCM SHA256, verified output and atomic no-clobber publication.
 // Own planning kernels (bounded u32/i32 lanes, whole-block LPC residuals),
 // branch-free Rice writer and positional frame verification; own Rice cost
-// model and exact stereo-assignment trials at levels 7-8.
+// model and exact stereo-assignment trials at levels 6-9. Own model search:
+// LPC orders up to the FLAC subset limits (12, or 32 above 48 kHz, with
+// 16384-frame blocks there), several apodization windows, models ranked by
+// residuals at gathered sample positions, minimal and searched coefficient
+// precision.
 #[cfg(feature = "reference-codecs")]
 use crate::audio::pcm_sha256;
 use crate::{
@@ -22,32 +26,156 @@ use std::{
     sync::atomic::{AtomicU64, Ordering},
 };
 
+/// Apodization applied to a block before its autocorrelation. Each window
+/// gives its own Levinson-Durbin model set; integer residual costs decide.
+#[derive(Clone, Copy, PartialEq, Debug)]
+enum Window {
+    /// 1 - x^2 over [-1, 1].
+    Welch,
+    /// Flat top with raised-cosine tapers over `percent`% of the block.
+    Tukey(u8),
+    /// Tukey(50) over segment `index` of `parts` equal segments, zero elsewhere:
+    /// a model of one part of a block whose signal changes inside it.
+    Partial(u8, u8),
+    /// Tukey(50) over the block with segment `index` of `parts` tapered out.
+    Punchout(u8, u8),
+}
+
+/// Encoder settings of one compression level. Every level writes FLAC
+/// subset streams with fixed block sizes.
 #[derive(Clone, Copy)]
 struct Profile {
     level: u8,
+    /// Block frames up to 48 kHz and above it (the subset allows 4608 and
+    /// 16384). High-order predictors at high rates gain from longer blocks.
     block: usize,
+    block_high: usize,
     fixed: usize,
+    /// Largest LPC order up to 48 kHz and above it (the subset allows 12
+    /// and 32).
     lpc: usize,
+    lpc_high: usize,
+    windows: &'static [Window],
+    /// LPC models costed exactly besides the highest order of the first
+    /// window: 0 for none, `usize::MAX` for all, otherwise the best ones by
+    /// sampled estimate.
+    exact: usize,
+    /// Coefficient precision of the planned models; lower precisions down
+    /// to `precision_low` are also costed for the winning model.
+    precision: u32,
+    precision_low: u32,
+    /// Largest Rice partition order.
+    partition: u32,
+    /// Stereo assignments planned exactly, best estimated first.
+    stereo: usize,
 }
+const WELCH: &[Window] = &[Window::Welch];
+/// Level 9: whole-block, half-block and third-block models, and whole-block
+/// models with each third left out.
+const TUKEY3: &[Window] = &[
+    Window::Welch,
+    Window::Tukey(50),
+    Window::Partial(2, 0),
+    Window::Partial(2, 1),
+    Window::Partial(3, 0),
+    Window::Partial(3, 1),
+    Window::Partial(3, 2),
+    Window::Punchout(3, 0),
+    Window::Punchout(3, 1),
+    Window::Punchout(3, 2),
+];
 impl Profile {
     fn new(level: u8) -> Result<Self> {
-        let (block, fixed, lpc) = match level {
-            0 => (1024, 0, 0),
-            1 => (2048, 1, 0),
-            2 => (4096, 2, 0),
-            3 => (4096, 3, 0),
-            4 => (4096, 4, 4),
-            5 => (4096, 4, 8),
-            6 => (4096, 4, 8),
-            7 => (4096, 4, 8),
-            8 => (4096, 4, 8),
-            _ => return Err(Error::Invalid("compression level range 0..8")),
-        };
-        Ok(Self {
+        let base = Self {
             level,
-            block,
-            fixed,
-            lpc,
+            block: 4096,
+            block_high: 4096,
+            fixed: 4,
+            lpc: 0,
+            lpc_high: 0,
+            windows: WELCH,
+            exact: 0,
+            precision: 13,
+            precision_low: 13,
+            partition: 6,
+            stereo: 1,
+        };
+        // Levels 0-3 cost about the same CPU (decoding, hashing and frame
+        // verification dominate; the fused fixed sums cost one pass for any
+        // order from 2). Each of levels 0-8 stays within the CPU of the
+        // previous preset of the same number; see
+        // docs/verified-pipeline/round13-encoder.txt.
+        Ok(match level {
+            0 => Self {
+                block: 1024,
+                block_high: 1024,
+                fixed: 1,
+                partition: 3,
+                ..base
+            },
+            1 => Self {
+                block: 2048,
+                block_high: 2048,
+                fixed: 2,
+                partition: 3,
+                ..base
+            },
+            2 => Self {
+                partition: 3,
+                ..base
+            },
+            3 => base,
+            4 => Self {
+                lpc: 8,
+                lpc_high: 8,
+                ..base
+            },
+            5 => Self {
+                block_high: 16384,
+                lpc: 12,
+                lpc_high: 16,
+                ..base
+            },
+            6 => Self {
+                block_high: 16384,
+                lpc: 12,
+                lpc_high: 16,
+                exact: 1,
+                stereo: 2,
+                ..base
+            },
+            7 => Self {
+                block_high: 16384,
+                lpc: 12,
+                lpc_high: 32,
+                exact: 2,
+                precision_low: 12,
+                stereo: 4,
+                ..base
+            },
+            8 => Self {
+                block_high: 16384,
+                lpc: 12,
+                lpc_high: 32,
+                exact: 3,
+                precision: 15,
+                precision_low: 12,
+                stereo: 4,
+                ..base
+            },
+            9 => Self {
+                block_high: 16384,
+                lpc: 12,
+                lpc_high: 32,
+                windows: TUKEY3,
+                exact: 8,
+                precision: 15,
+                precision_low: 11,
+                partition: 8,
+                stereo: 4,
+                ..base
+            },
+            _ => return Err(Error::Invalid("compression level range 0..9")),
         })
     }
 }
@@ -259,7 +387,7 @@ pub fn convert_with_options(
         encoder: if copied.is_some() {
             "verified-flac-frame-copy-v1"
         } else {
-            "adaptive-lpc8-rice-v1"
+            "adaptive-lpc-rice-v2"
         },
         compression_level: if copied.is_some() {
             None
@@ -365,8 +493,12 @@ impl Encoder {
         spec: AudioSpec,
         limits: Limits,
         backend: Backend,
-        profile: Profile,
+        mut profile: Profile,
     ) -> Result<Self> {
+        if spec.sample_rate > 48000 {
+            profile.block = profile.block_high;
+            profile.lpc = profile.lpc_high;
+        }
         file.write_all(b"fLaC\x80\x00\x00\x22")?;
         file.write_all(&[0u8; 34])?;
         let capacity = profile.block * spec.channels as usize;
@@ -456,7 +588,7 @@ impl Encoder {
         // 10 = mid/side; side carries one extra bit. Second-order fixed
         // residual sums rank the four pairs. Levels up to 6 plan only the
         // best-ranked pair; level 7 plans the channels of the two best and
-        // level 8 all four channels, and the smallest exact pair wins.
+        // levels 8-9 all four channels, and the smallest exact pair wins.
         let stereo = crate::profile::scope(crate::profile::Stage::EncoderStereo);
         // Indices into channel_buffers: left, right, mid, side.
         const PAIRS: [(u64, [usize; 2]); 4] = [(1, [0, 1]), (8, [0, 3]), (9, [3, 1]), (10, [2, 3])];
@@ -495,11 +627,10 @@ impl Encoder {
         };
         stereo.end();
         let channel_depth = |index: usize| depth + u32::from(index == 3);
-        let trials = match (ranked, self.profile.level) {
-            (None, _) => 0,
-            (Some(_), 8) => 4,
-            (Some(_), 7) => 2,
-            _ => 1,
+        let trials = if ranked.is_some() {
+            self.profile.stereo
+        } else {
+            0
         };
         let planner = &mut self.planner;
         let mut plans: [Option<Plan>; 4] = Default::default();
@@ -634,12 +765,11 @@ struct Context<'a> {
     profile: Profile,
 }
 
-/// Quantized LPC coefficient width, as FFmpeg's default for these levels.
-const LPC_PRECISION: u32 = 15;
-const LPC_MAX: f64 = ((1 << (LPC_PRECISION - 1)) - 1) as f64;
+/// Largest LPC order of any profile (the FLAC format's limit).
+const MAX_LPC: usize = crate::kernels::MAX_LPC_ORDER;
 
-/// Rice partition orders above this are never searched. With 4096-frame
-/// blocks the finest partitions hold 16 residuals.
+/// Rice partition orders above this are never searched (the FLAC subset
+/// limit). With 4096-frame blocks the finest partitions hold 16 residuals.
 const MAX_PARTITION_ORDER: u32 = 8;
 const PARTITIONS: usize = 1 << MAX_PARTITION_ORDER;
 
@@ -683,20 +813,23 @@ fn rice_estimate(sum: u64, count: u64) -> (u32, u64) {
 }
 
 /// Largest searched partition order for an n-sample block: partitions must
-/// tile the block exactly and each must exceed the predictor order (<= 8).
-fn max_partition_order(n: usize, level: u8) -> u32 {
-    // Level 5 (the default) stops at order 6: on the test corpus orders 7
-    // and 8 changed 4 of 55 files by 292 bytes in total (1 ppm) while they
-    // multiply the partition search (and its sums) by four.
-    let mut order = n.trailing_zeros().min(match level {
-        0..=2 => 3,
-        3..=5 => 6,
-        _ => MAX_PARTITION_ORDER,
-    });
+/// tile the block exactly and hold at least 16 samples. Level 5 (the
+/// default) stops at order 6: on the test corpus orders 7 and 8 changed 4 of
+/// 55 files by 292 bytes in total (1 ppm) while they multiply the partition
+/// search (and its sums) by four.
+fn max_partition_order(n: usize, limit: u32) -> u32 {
+    let mut order = n.trailing_zeros().min(limit);
     while order > 0 && n >> order < 16 {
         order -= 1;
     }
     order
+}
+
+/// Largest partition order not above `finest` whose first partition holds
+/// more samples than the `predictor` warm-up, or None if even one partition
+/// cannot.
+fn predictor_partition_order(n: usize, finest: u32, predictor: usize) -> Option<u32> {
+    (0..=finest).rev().find(|&order| n >> order > predictor)
 }
 
 /// Choose the partition order from per-finest-partition residual sums.
@@ -900,9 +1033,7 @@ enum Mode {
         rice: Box<Rice>,
     },
     Lpc {
-        coefficients: [i32; 8],
-        order: usize,
-        shift: u32,
+        model: Box<Model>,
         rice: Box<Rice>,
         /// Folded residuals stored while the model was costed, if they were.
         residual: Option<Vec<u32>>,
@@ -915,16 +1046,72 @@ struct Plan {
     wasted: u32,
     mode: Mode,
 }
-struct LpcCandidate {
-    coefficients: [i32; 8],
+/// Quantized LPC predictor: `precision` is the signed width written for
+/// every coefficient (the smallest that holds them all).
+#[derive(Clone, Copy)]
+struct Model {
+    coefficients: [i32; MAX_LPC],
     order: usize,
     shift: u32,
+    precision: u32,
+}
+impl Model {
+    /// Quantize `a` with coefficients of at most `precision` signed bits,
+    /// or None if the largest coefficient cannot be represented.
+    fn quantize(a: &[f64], precision: u32) -> Option<Self> {
+        let limit = ((1 << (precision - 1)) - 1) as f64;
+        let largest = a.iter().fold(0.0f64, |v, x| v.max(x.abs()));
+        if largest == 0.0 || largest > limit {
+            return None;
+        }
+        let shift = (limit / largest).log2().floor().clamp(0.0, 15.0) as u32;
+        let mut coefficients = [0i32; MAX_LPC];
+        // Error-feedback rounding: each coefficient's rounding error is
+        // carried into the next (noise-shaped quantization; plain rounding
+        // made the corpus 0.25% larger).
+        let mut error = 0.0f64;
+        for (c, x) in coefficients.iter_mut().zip(a) {
+            error += x * (1u32 << shift) as f64;
+            let q = error.round().clamp(-limit, limit);
+            *c = q as i32;
+            error -= q;
+        }
+        let precision = coefficients[..a.len()]
+            .iter()
+            .map(|&c| 33 - (c ^ (c >> 31)).leading_zeros())
+            .max()
+            .unwrap_or(1);
+        Some(Self {
+            coefficients,
+            order: a.len(),
+            shift,
+            precision,
+        })
+    }
+    fn coefficients(&self) -> &[i32] {
+        &self.coefficients[..self.order]
+    }
+    /// Subframe bits other than the residual and the subframe header.
+    fn overhead(&self, depth: u32) -> u64 {
+        self.order as u64 * (depth + self.precision) as u64 + 4 + 5
+    }
+}
+struct LpcCandidate {
+    model: Model,
+    /// Unquantized coefficients, for the precision search.
+    real: [f64; MAX_LPC],
     estimate: u64,
 }
 #[derive(Default)]
 struct Planner {
-    window: Vec<f64>,
+    /// Apodization windows for blocks of `window_frames` samples, with the
+    /// range outside which each is zero.
+    windows: Vec<(Vec<f64>, usize, usize)>,
+    window_frames: usize,
     windowed: Vec<f64>,
+    candidates: Vec<LpcCandidate>,
+    ranking: Vec<usize>,
+    probe: Probe,
     residuals: Vec<Vec<u32>>,
     sums: Vec<u64>,
     fixed_sums: Vec<[u64; PARTITIONS]>,
@@ -944,71 +1131,182 @@ impl Planner {
         debug_assert!(self.residuals.len() < 6);
         self.residuals.push(residual);
     }
+    fn prepare_windows(&mut self, n: usize, windows: &[Window]) {
+        if self.window_frames == n && self.windows.len() == windows.len() {
+            return;
+        }
+        self.window_frames = n;
+        self.windows = windows.iter().map(|&w| window(w, n)).collect();
+    }
 }
-// Uniformly spaced integer residuals rank prediction models without repeatedly
-// computing whole blocks. This changes compression choices only; reconstruction
-// still uses checked exact residuals for every sample and verifies output PCM.
-fn sampled_lpc_cost(samples: &[i32], coefficients: &[i32], shift: u32, depth: u32) -> u64 {
-    let order = coefficients.len();
-    let count = 128.min(samples.len() - order);
-    let mut sampled = [0u32; 128];
-    let residual = &mut sampled[..count];
-    // Sample index order + floor(point * span / steps), stepped without a
-    // division per point.
-    let span = samples.len() - order - 1;
-    let steps = (count - 1).max(1);
-    let (whole, part) = (span / steps, span % steps);
-    let (mut i, mut remainder) = (order, 0);
-    macro_rules! sample {
-        ($($n:literal)*) => {
-            match order {
-                $($n => {
-                    let c: [i64; $n] = std::array::from_fn(|j| coefficients[j] as i64);
-                    let mut out = 0u64;
-                    for value in residual.iter_mut() {
-                        let window: &[i32; $n] = samples[i - $n..i].try_into().unwrap();
-                        let mut prediction = 0i64;
-                        for j in 0..$n {
-                            prediction += c[j] * window[$n - 1 - j] as i64;
-                        }
-                        let delta = samples[i] as i64 - (prediction >> shift);
-                        out |= (delta.wrapping_add(1 << 31) as u64) >> 32;
-                        *value = ((delta << 1) ^ (delta >> 63)) as u32;
-                        i += whole;
-                        remainder += part;
-                        if remainder >= steps {
-                            remainder -= steps;
-                            i += 1;
-                        }
-                    }
-                    out
-                })*
-                _ => unreachable!("LPC order"),
-            }
-        };
+
+/// Tukey window over `out` (tapering `percent`% of it), multiplied in.
+fn tukey(out: &mut [f64], percent: u8) {
+    let len = out.len();
+    let taper = (len * percent as usize / 200).max(1);
+    for i in 0..taper.min(len / 2) {
+        let w = 0.5 - 0.5 * (std::f64::consts::PI * (i as f64 + 0.5) / taper as f64).cos();
+        out[i] *= w;
+        out[len - 1 - i] *= w;
     }
-    if sample!(1 2 3 4 5 6 7 8) != 0 {
-        return u64::MAX;
-    }
-    let mean = residual.iter().map(|&r| r as u64).sum::<u64>() / count as u64;
-    let estimate = if mean == 0 {
-        0
-    } else {
-        63 - mean.leading_zeros()
+}
+
+/// Window values for an n-sample block and the range [lo, hi) outside which
+/// they are zero.
+fn window(kind: Window, n: usize) -> (Vec<f64>, usize, usize) {
+    let mut w = vec![1.0f64; n];
+    let segment = |parts: u8, index: u8| {
+        let (parts, index) = (parts as usize, index as usize);
+        (n * index / parts, n * (index + 1) / parts)
     };
-    let overhead =
-        8 + order as u64 * depth as u64 + 4 + 5 + order as u64 * LPC_PRECISION as u64 + 11;
-    (estimate.saturating_sub(1)..=(estimate + 1).min(30))
-        .map(|k| {
-            let bits = residual
-                .iter()
-                .map(|&r| (r as u64 >> k) + 1 + k as u64)
-                .sum::<u64>();
-            overhead + bits * (samples.len() - order) as u64 / count as u64
-        })
-        .min()
-        .unwrap_or(u64::MAX)
+    match kind {
+        Window::Welch => {
+            for (i, w) in w.iter_mut().enumerate() {
+                let d = 2.0 * i as f64 / (n - 1) as f64 - 1.0;
+                *w = 1.0 - d * d;
+            }
+        }
+        Window::Tukey(percent) => tukey(&mut w, percent),
+        Window::Partial(parts, index) => {
+            let (lo, hi) = segment(parts, index);
+            w[..lo].fill(0.0);
+            w[hi..].fill(0.0);
+            tukey(&mut w[lo..hi], 50);
+            return (w, lo, hi);
+        }
+        Window::Punchout(parts, index) => {
+            let (lo, hi) = segment(parts, index);
+            let mut hole = vec![1.0f64; hi - lo];
+            tukey(&mut hole, 50);
+            for (w, h) in w[lo..hi].iter_mut().zip(hole) {
+                *w = 1.0 - h;
+            }
+            tukey(&mut w, 50);
+        }
+    }
+    (w, 0, n)
 }
+
+/// Residuals at evenly spaced sample positions rank prediction models
+/// without computing whole blocks. This changes compression choices only;
+/// reconstruction still uses checked exact residuals for every sample and
+/// verifies output PCM. The positions and their histories are gathered once
+/// per subframe, column by column, so that every model's sampled residuals
+/// are formed with one vectorized multiply-add per coefficient.
+struct Probe {
+    count: usize,
+    /// Residuals coded per model of order k: `n - k`.
+    frames: usize,
+    current: [i32; PROBES],
+    /// `history[j][t]` is the sample j + 1 positions before point t.
+    history: Vec<[i32; PROBES]>,
+}
+const PROBES: usize = crate::kernels::PROBE_POINTS;
+impl Default for Probe {
+    fn default() -> Self {
+        Self {
+            count: 0,
+            frames: 0,
+            current: [0; PROBES],
+            history: Vec::new(),
+        }
+    }
+}
+impl Probe {
+    /// Gather up to PROBES positions from `orders` (so that every order up
+    /// to it has a full history) to the end of the block.
+    fn gather(&mut self, samples: &[i32], orders: usize) {
+        let n = samples.len();
+        self.frames = n;
+        self.count = PROBES.min(n - orders);
+        self.history.resize(orders, [0; PROBES]);
+        // Position orders + floor(point * span / steps), stepped without a
+        // division per point.
+        let span = n - orders - 1;
+        let steps = (self.count - 1).max(1);
+        let (whole, part) = (span / steps, span % steps);
+        let (mut i, mut remainder) = (orders, 0);
+        for t in 0..self.count {
+            self.current[t] = samples[i];
+            for (j, column) in self.history.iter_mut().enumerate() {
+                column[t] = samples[i - 1 - j];
+            }
+            i += whole;
+            remainder += part;
+            if remainder >= steps {
+                remainder -= steps;
+                i += 1;
+            }
+        }
+    }
+    /// Estimated subframe bits of `model` (u64::MAX if a sampled residual
+    /// is outside i32).
+    fn cost(&self, model: &Model, depth: u32, kernel: &LpcKernel) -> u64 {
+        let count = self.count;
+        let mut prediction = [0i64; PROBES];
+        kernel.columns(model.coefficients(), &self.history, &mut prediction);
+        let mut residual = [0u32; PROBES];
+        let mut out = 0u64;
+        let mut total = 0u64;
+        for ((r, &p), &x) in residual
+            .iter_mut()
+            .zip(&prediction)
+            .zip(&self.current[..count])
+        {
+            let delta = x as i64 - (p >> model.shift);
+            out |= (delta.wrapping_add(1 << 31) as u64) >> 32;
+            *r = ((delta << 1) ^ (delta >> 63)) as u32;
+            total += *r as u64;
+        }
+        if out != 0 {
+            return u64::MAX;
+        }
+        let residual = &residual[..count];
+        let mean = total / count as u64;
+        let estimate = if mean == 0 {
+            0
+        } else {
+            63 - mean.leading_zeros()
+        };
+        let coded = (self.frames - model.order) as u64;
+        let overhead = 8 + model.overhead(depth) + 11;
+        (estimate.saturating_sub(1)..=(estimate + 1).min(30))
+            .map(|k| {
+                let bits = residual
+                    .iter()
+                    .map(|&r| (r as u64 >> k) + 1 + k as u64)
+                    .sum::<u64>();
+                overhead + bits * coded / count as u64
+            })
+            .min()
+            .unwrap_or(u64::MAX)
+    }
+}
+
+/// Levinson-Durbin recursion on autocorrelation `r`, calling `found` with
+/// the predictor of every order up to `r.len() - 1` until it fails.
+fn levinson(r: &[f64], mut found: impl FnMut(&[f64])) {
+    let mut a = [0.0f64; MAX_LPC];
+    let mut error = r[0];
+    for index in 0..r.len() - 1 {
+        if error <= r[0] * 1e-12 || !error.is_finite() {
+            break;
+        }
+        let reflection =
+            (r[index + 1] - (0..index).map(|j| a[j] * r[index - j]).sum::<f64>()) / error;
+        if !reflection.is_finite() || reflection.abs() >= 1.0 {
+            break;
+        }
+        let old = a;
+        for j in 0..index {
+            a[j] = old[j] - reflection * old[index - j - 1];
+        }
+        a[index] = reflection;
+        error *= 1.0 - reflection * reflection;
+        found(&a[..index + 1]);
+    }
+}
+
 impl Plan {
     /// Plan one subframe. Common trailing zero bits ("wasted bits") are
     /// removed in place first; `write` must receive the same, shifted slice.
@@ -1038,12 +1336,12 @@ impl Plan {
             wasted,
             mode: Mode::Verbatim,
         };
-        let finest = max_partition_order(n, profile.level);
+        let finest = max_partition_order(n, profile.partition);
         let size = n >> finest;
         let parts = 1usize << finest;
         planner.sums.resize(parts, 0);
         let fixed_stage = crate::profile::scope(crate::profile::Stage::EncoderFixed);
-        let fused = profile.fixed == 4 && size > 4;
+        let fused = profile.fixed >= 2 && size > 4;
         if fused {
             fixed_partition_sums(samples, depth, size, parts, &mut planner.fixed_sums);
         }
@@ -1075,190 +1373,201 @@ impl Plan {
                 };
             }
         }
-        // Welch-tapered autocorrelation and Levinson-Durbin, limited to order
-        // eight. Integer residual costs decide; no lossy reconstruction.
         fixed_stage.end();
         if n > 16 && profile.lpc > 0 {
-            let autocorr = crate::profile::scope(crate::profile::Stage::EncoderAutocorr);
-            if planner.window.len() != n {
-                planner.window = (0..n)
-                    .map(|i| {
-                        let d = 2.0 * i as f64 / (n - 1) as f64 - 1.0;
-                        1.0 - d * d
-                    })
-                    .collect();
-            }
-            let windowed = &mut planner.windowed;
-            windowed.resize(n, 0.0);
-            for ((v, &x), &w) in windowed.iter_mut().zip(samples).zip(&planner.window) {
-                *v = x as f64 * w;
-            }
-            let mut r = [0.0f64; 9];
-            for (lag, energy) in r[..=profile.lpc].iter_mut().enumerate() {
-                *energy = ctx.dot.apply(&windowed[lag..], &windowed[..n - lag]);
-            }
-            autocorr.end();
-            let levinson = crate::profile::scope(crate::profile::Stage::EncoderLevinson);
-            let mut a = [0.0f64; 8];
-            let mut error = r[0];
-            let mut candidates: [Option<LpcCandidate>; 8] = Default::default();
-            let mut found = 0;
-            for index in 0..profile.lpc {
-                if error <= r[0] * 1e-12 || !error.is_finite() {
-                    break;
-                }
-                let reflection =
-                    (r[index + 1] - (0..index).map(|j| a[j] * r[index - j]).sum::<f64>()) / error;
-                if !reflection.is_finite() || reflection.abs() >= 1.0 {
-                    break;
-                }
-                let old = a;
-                for j in 0..index {
-                    a[j] = old[j] - reflection * old[index - j - 1];
-                }
-                a[index] = reflection;
-                error *= 1.0 - reflection * reflection;
-                let order = index + 1;
-                if order >= size {
-                    continue;
-                }
-                let largest = a[..order].iter().fold(0.0f64, |v, x| v.max(x.abs()));
-                if largest == 0.0 || largest > LPC_MAX {
-                    continue;
-                }
-                let shift = (LPC_MAX / largest).log2().floor().clamp(0.0, 15.0) as u32;
-                let mut coefficients = [0i32; 8];
-                // Error-feedback rounding: each coefficient's rounding error
-                // is carried into the next (noise-shaped quantization; plain
-                // rounding made the corpus 0.25% larger).
-                let mut error = 0.0f64;
-                for (c, x) in coefficients.iter_mut().zip(&a[..order]) {
-                    error += x * (1u32 << shift) as f64;
-                    let q = error.round().clamp(-LPC_MAX, LPC_MAX);
-                    *c = q as i32;
-                    error -= q;
-                }
-                // Levels 6..8 cost every order exactly; 4..5 rank by samples.
-                let estimate = if profile.level <= 5 {
-                    sampled_lpc_cost(samples, &coefficients[..order], shift, depth)
-                } else {
-                    0
-                };
-                candidates[found] = Some(LpcCandidate {
-                    coefficients,
-                    order,
-                    shift,
-                    estimate,
-                });
-                found += 1;
-            }
-            let candidates = &mut candidates[..found];
-            if profile.level <= 5 && found > 2 {
-                // Exactly cost the highest order and the best sampled lower
-                // order. Ties keep the lower order (stable ranking). Costing
-                // the second-best sampled order as well saved 0.013-0.016%
-                // of real-music FLAC bytes for about 5% more conversion CPU.
-                let mut rank = [0usize; 7];
-                for (i, r) in rank.iter_mut().enumerate().take(found - 1) {
-                    *r = i;
-                }
-                let rank = &mut rank[..found - 1];
-                rank.sort_by_key(|&i| candidates[i].as_ref().unwrap().estimate);
-                for &i in &rank[1..] {
-                    candidates[i] = None;
-                }
-            }
-            // Cost the highest order first and keep its residual (it wins
-            // most real-music subframes), so the writer need not recompute it;
-            // lower orders are summed only. Iterating downwards, a lower order
-            // also replaces an equal-cost LPC model, which selects the same
-            // model as ascending evaluation with strict comparisons (lowest
-            // order among equal costs; LPC must beat fixed/verbatim
-            // strictly). At most one residual buffer is held per subframe.
-            levinson.end();
-            let _cost = crate::profile::scope(crate::profile::Stage::EncoderLpcCost);
-            let mut stored = false;
-            for candidate in candidates.iter_mut().rev() {
-                let Some(LpcCandidate {
-                    coefficients,
-                    order,
-                    shift,
-                    ..
-                }) = candidate.take()
-                else {
-                    continue;
-                };
-                let coefficients_used = &coefficients[..order];
-                let mut residual = None;
-                // The first (highest) order keeps its residual for the writer;
-                // the others only need the sums.
-                let valid = if stored {
-                    ctx.lpc.partition_sums(
-                        samples,
-                        coefficients_used,
-                        shift,
-                        size,
-                        &mut planner.sums[..parts],
-                    )
-                } else {
-                    stored = true;
-                    let mut buffer = planner.residual();
-                    let valid = ctx.lpc.partition_sums_into(
-                        samples,
-                        coefficients_used,
-                        shift,
-                        size,
-                        &mut planner.sums[..parts],
-                        &mut buffer,
-                    );
-                    if valid {
-                        residual = Some(buffer);
-                    } else {
-                        planner.recycle(buffer);
-                    }
-                    valid
-                };
-                if !valid {
-                    continue;
-                }
-                let rice = choose_rice(&planner.sums, n, order, finest);
-                let cost = header
-                    + order as u64 * depth as u64
-                    + 4
-                    + 5
-                    + order as u64 * LPC_PRECISION as u64
-                    + rice.bits;
-                let lpc_best = matches!(best.mode, Mode::Lpc { .. });
-                if cost < best.cost || (lpc_best && cost == best.cost) {
-                    let replaced = std::mem::replace(
-                        &mut best,
-                        Self {
-                            cost,
-                            depth,
-                            wasted,
-                            mode: Mode::Lpc {
-                                coefficients,
-                                order,
-                                shift,
-                                rice: Box::new(rice),
-                                residual,
-                            },
-                        },
-                    );
-                    if let Mode::Lpc {
-                        residual: Some(buffer),
-                        ..
-                    } = replaced.mode
-                    {
-                        planner.recycle(buffer);
-                    }
-                } else if let Some(buffer) = residual {
-                    planner.recycle(buffer);
-                }
-            }
+            best = Self::plan_lpc(samples, header, best, finest, ctx, planner);
         }
         best
     }
+
+    /// Autocorrelation of every apodized copy and Levinson-Durbin up to the
+    /// profile's order give one model per window and order. The highest
+    /// order of the first window (it wins most real-music subframes) and the
+    /// `exact` best by sampled estimate are costed exactly; lower coefficient
+    /// precisions are then tried on the winner. Integer residual costs
+    /// decide; no lossy reconstruction.
+    fn plan_lpc(
+        samples: &[i32],
+        header: u64,
+        mut best: Self,
+        finest: u32,
+        ctx: &Context<'_>,
+        planner: &mut Planner,
+    ) -> Self {
+        let profile = ctx.profile;
+        let (n, depth, wasted) = (samples.len(), best.depth, best.wasted);
+        let max_order = profile.lpc.min(n - 1);
+        // Models are estimated from sampled residuals only when some, but
+        // not all, are to be costed exactly besides the first highest.
+        let sampled = profile.exact != 0 && profile.exact != usize::MAX;
+        planner.prepare_windows(n, profile.windows);
+        planner.candidates.clear();
+        if sampled {
+            planner.probe.gather(samples, max_order);
+        }
+        let mut r = [0.0f64; MAX_LPC + 1];
+        let mut first_highest = None;
+        for w in 0..planner.windows.len() {
+            let autocorr = crate::profile::scope(crate::profile::Stage::EncoderAutocorr);
+            let (window, lo, hi) = &planner.windows[w];
+            let (lo, hi) = (*lo, *hi);
+            let len = hi - lo;
+            let windowed = &mut planner.windowed;
+            windowed.resize(len, 0.0);
+            for ((v, &x), &w) in windowed
+                .iter_mut()
+                .zip(&samples[lo..hi])
+                .zip(&window[lo..hi])
+            {
+                *v = x as f64 * w;
+            }
+            let orders = max_order.min(len - 1);
+            for (lag, energy) in r[..=orders].iter_mut().enumerate() {
+                *energy = ctx.dot.apply(&windowed[lag..], &windowed[..len - lag]);
+            }
+            autocorr.end();
+            let _levinson = crate::profile::scope(crate::profile::Stage::EncoderLevinson);
+            let (candidates, probe) = (&mut planner.candidates, &planner.probe);
+            levinson(&r[..=orders], |a| {
+                let Some(model) = Model::quantize(a, profile.precision) else {
+                    return;
+                };
+                let estimate = if sampled {
+                    probe.cost(&model, depth, ctx.lpc)
+                } else {
+                    0
+                };
+                let mut real = [0.0; MAX_LPC];
+                real[..a.len()].copy_from_slice(a);
+                if w == 0 {
+                    first_highest = Some(candidates.len());
+                }
+                candidates.push(LpcCandidate {
+                    model,
+                    real,
+                    estimate,
+                });
+            });
+        }
+        let _cost = crate::profile::scope(crate::profile::Stage::EncoderLpcCost);
+        // Exactly costed candidates: the first window's highest order and
+        // the `exact` best others by sampled estimate (ties keep the lower
+        // order and earlier window).
+        let ranking = &mut planner.ranking;
+        ranking.clear();
+        if profile.exact != 0 {
+            ranking.extend((0..planner.candidates.len()).filter(|&i| Some(i) != first_highest));
+        }
+        if sampled && ranking.len() > profile.exact {
+            let candidates = &planner.candidates;
+            ranking.sort_by_key(|&i| candidates[i].estimate);
+            ranking.truncate(profile.exact);
+        }
+        ranking.extend(first_highest);
+        let mut scratch = planner.residual();
+        let mut winner = None;
+        for k in (0..planner.ranking.len()).rev() {
+            let index = planner.ranking[k];
+            let model = planner.candidates[index].model;
+            if Self::cost_lpc(
+                samples,
+                header,
+                &mut best,
+                model,
+                finest,
+                ctx,
+                planner,
+                &mut scratch,
+            ) {
+                winner = Some(index);
+            }
+        }
+        // Lower coefficient precisions for the winning model: fewer header
+        // bits against coarser prediction.
+        if let Some(index) = winner {
+            let candidate = &planner.candidates[index];
+            let (real, order) = (candidate.real, candidate.model.order);
+            for precision in (profile.precision_low..profile.precision).rev() {
+                let Some(model) = Model::quantize(&real[..order], precision) else {
+                    break;
+                };
+                Self::cost_lpc(
+                    samples,
+                    header,
+                    &mut best,
+                    model,
+                    finest,
+                    ctx,
+                    planner,
+                    &mut scratch,
+                );
+            }
+        }
+        planner.recycle(scratch);
+        debug_assert!(best.depth == depth && best.wasted == wasted);
+        best
+    }
+
+    /// Cost `model` exactly; if it beats `best` (strictly, or an LPC model
+    /// of equal cost and higher order) it replaces it, keeping its residual
+    /// in place of `scratch`. Returns whether it did.
+    #[allow(clippy::too_many_arguments)]
+    fn cost_lpc(
+        samples: &[i32],
+        header: u64,
+        best: &mut Self,
+        model: Model,
+        finest: u32,
+        ctx: &Context<'_>,
+        planner: &mut Planner,
+        scratch: &mut Vec<u32>,
+    ) -> bool {
+        let n = samples.len();
+        let Some(finest) = predictor_partition_order(n, finest, model.order) else {
+            return false;
+        };
+        let parts = 1usize << finest;
+        if !ctx.lpc.partition_sums_into(
+            samples,
+            model.coefficients(),
+            model.shift,
+            n >> finest,
+            &mut planner.sums[..parts],
+            scratch,
+        ) {
+            return false;
+        }
+        let rice = choose_rice(&planner.sums, n, model.order, finest);
+        let cost = header + model.overhead(best.depth) + rice.bits;
+        let replaces = match &best.mode {
+            Mode::Lpc { model: held, .. } => {
+                cost < best.cost || (cost == best.cost && model.order < held.order)
+            }
+            _ => cost < best.cost,
+        };
+        if !replaces {
+            return false;
+        }
+        let residual = std::mem::replace(scratch, planner.residual());
+        let replaced = std::mem::replace(
+            &mut best.mode,
+            Mode::Lpc {
+                model: Box::new(model),
+                rice: Box::new(rice),
+                residual: Some(residual),
+            },
+        );
+        best.cost = cost;
+        if let Mode::Lpc {
+            residual: Some(buffer),
+            ..
+        } = replaced
+        {
+            planner.recycle(buffer);
+        }
+        true
+    }
+
     /// Return a plan's stored residual buffer without writing it.
     fn release(self, planner: &mut Planner) {
         if let Mode::Lpc {
@@ -1308,20 +1617,19 @@ impl Plan {
                 planner.recycle(residual);
             }
             Mode::Lpc {
-                coefficients,
-                order,
-                shift,
+                model,
                 rice,
                 residual,
             } => {
+                let order = model.order;
                 header(bw, 32 + order as u64 - 1);
                 for x in &samples[..order] {
                     bw.put(depth, *x as u64);
                 }
-                bw.put(4, (LPC_PRECISION - 1) as u64);
-                bw.put(5, shift as u64);
-                for &c in &coefficients[..order] {
-                    bw.put(LPC_PRECISION, c as u64);
+                bw.put(4, (model.precision - 1) as u64);
+                bw.put(5, model.shift as u64);
+                for &c in model.coefficients() {
+                    bw.put(model.precision, c as u64);
                 }
                 let residual = match residual {
                     // Stored while costing; every value was range-checked.
@@ -1331,7 +1639,12 @@ impl Plan {
                         // Planning proved every residual of this model fits i32.
                         if ctx
                             .lpc
-                            .residual_into(samples, &coefficients[..order], shift, &mut residual)
+                            .residual_into(
+                                samples,
+                                model.coefficients(),
+                                model.shift,
+                                &mut residual,
+                            )
                             .is_none()
                         {
                             return Err(Error::Invalid("planned LPC residual range"));
@@ -1570,88 +1883,87 @@ mod tests {
         let mut scratch = Default::default();
         let mut checked = 0;
         let mut decodable_mismatches = 0;
-        for channels in [1u16, 2] {
-            for depth in [16u16, 24] {
-                for level in [0u8, 3, 5, 8] {
-                    let spec = AudioSpec {
-                        container: "wav".into(),
-                        codec: "pcm".into(),
-                        sample_rate: 48000,
-                        channels,
-                        bits_per_sample: depth,
-                        frames: None,
-                    };
-                    let profile = Profile::new(level).unwrap();
-                    let path = dir.join(format!("{channels}-{depth}-{level}.flac"));
-                    let _ = std::fs::remove_file(&path);
-                    let file = File::create(&path).unwrap();
-                    let mut encoder = Encoder::new(
-                        file,
-                        spec.clone(),
-                        Limits::default(),
-                        Backend::detect(),
-                        profile,
-                    )
-                    .unwrap();
-                    for n in [profile.block, 17, 1] {
-                        for samples in blocks(channels as usize, depth as u32, n, &mut seed) {
-                            encoder.write_block(&samples).unwrap();
-                            let frame = encoder.frame_buffer.clone();
-                            let block = profile.block;
-                            assert!(decoded_matches(&frame, &spec, block, &samples));
-                            assert!(verified(&frame, &spec, block, &samples, &mut scratch));
-                            // CRC-repaired bit flips: both must agree on
-                            // acceptance (a flip that still decodes to the
-                            // source is accepted by both).
-                            for _ in 0..48 {
-                                let mut bad = frame.clone();
-                                let bit = rng(&mut seed) as usize % ((bad.len() - 2) * 8);
-                                bad[bit / 8] ^= 0x80 >> (bit % 8);
-                                let end = bad.len() - 2;
-                                let crc = crate::bits::crc16(&bad[..end]);
-                                bad[end..].copy_from_slice(&crc.to_be_bytes());
-                                assert_eq!(
-                                    verified(&bad, &spec, block, &samples, &mut scratch),
-                                    decoded_matches(&bad, &spec, block, &samples),
-                                    "bit {bit} channels={channels} depth={depth} level={level}"
-                                );
-                                checked += 1;
-                                // Count flips that parse and decode, but to
-                                // different PCM: only the sample check sees them.
-                                let mut planes = std::array::from_fn(|_| Vec::new());
-                                let mut out = Vec::new();
-                                if crate::flac_decode::decode(
-                                    &bad,
-                                    &spec,
-                                    block,
-                                    &mut planes,
-                                    &mut out,
-                                )
-                                .is_ok()
-                                    && out[..] != *samples
-                                {
-                                    decodable_mismatches += 1;
-                                }
-                            }
-                            // Source perturbations: a different sample, or a
-                            // set low bit below the declared depth.
-                            for delta in [1i32 << (32 - depth), 1] {
-                                let mut other = samples.clone();
-                                let i = rng(&mut seed) as usize % other.len();
-                                other[i] = other[i].wrapping_add(delta);
-                                assert!(!verified(&frame, &spec, block, &other, &mut scratch));
-                                assert!(!decoded_matches(&frame, &spec, block, &other));
-                            }
-                            for cut in [0, 1, frame.len() / 2, frame.len() - 1] {
-                                assert!(!verified(
-                                    &frame[..cut],
-                                    &spec,
-                                    block,
-                                    &samples,
-                                    &mut scratch
-                                ));
-                            }
+        // Level 9 at 96 kHz covers 16384-frame blocks, every window and
+        // LPC orders up to 32.
+        for (channels, depth, level, sample_rate) in [1u16, 2]
+            .into_iter()
+            .flat_map(|c| [16u16, 24].map(|d| (c, d)))
+            .flat_map(|(c, d)| {
+                [(0u8, 48000), (3, 48000), (5, 48000), (8, 48000), (9, 96000)]
+                    .map(|(l, r)| (c, d, l, r))
+            })
+        {
+            let spec = AudioSpec {
+                container: "wav".into(),
+                codec: "pcm".into(),
+                sample_rate,
+                channels,
+                bits_per_sample: depth,
+                frames: None,
+            };
+            let profile = Profile::new(level).unwrap();
+            let path = dir.join(format!("{channels}-{depth}-{level}.flac"));
+            let _ = std::fs::remove_file(&path);
+            let file = File::create(&path).unwrap();
+            let mut encoder = Encoder::new(
+                file,
+                spec.clone(),
+                Limits::default(),
+                Backend::detect(),
+                profile,
+            )
+            .unwrap();
+            let block = encoder.profile.block;
+            for n in [block, 17, 1] {
+                for samples in blocks(channels as usize, depth as u32, n, &mut seed) {
+                    encoder.write_block(&samples).unwrap();
+                    let frame = encoder.frame_buffer.clone();
+                    assert!(decoded_matches(&frame, &spec, block, &samples));
+                    assert!(verified(&frame, &spec, block, &samples, &mut scratch));
+                    // CRC-repaired bit flips: both must agree on
+                    // acceptance (a flip that still decodes to the
+                    // source is accepted by both).
+                    for _ in 0..48 {
+                        let mut bad = frame.clone();
+                        let bit = rng(&mut seed) as usize % ((bad.len() - 2) * 8);
+                        bad[bit / 8] ^= 0x80 >> (bit % 8);
+                        let end = bad.len() - 2;
+                        let crc = crate::bits::crc16(&bad[..end]);
+                        bad[end..].copy_from_slice(&crc.to_be_bytes());
+                        assert_eq!(
+                            verified(&bad, &spec, block, &samples, &mut scratch),
+                            decoded_matches(&bad, &spec, block, &samples),
+                            "bit {bit} channels={channels} depth={depth} level={level}"
+                        );
+                        checked += 1;
+                        // Count flips that parse and decode, but to
+                        // different PCM: only the sample check sees them.
+                        let mut planes = std::array::from_fn(|_| Vec::new());
+                        let mut out = Vec::new();
+                        if crate::flac_decode::decode(&bad, &spec, block, &mut planes, &mut out)
+                            .is_ok()
+                            && out[..] != *samples
+                        {
+                            decodable_mismatches += 1;
                         }
+                    }
+                    // Source perturbations: a different sample, or a
+                    // set low bit below the declared depth.
+                    for delta in [1i32 << (32 - depth), 1] {
+                        let mut other = samples.clone();
+                        let i = rng(&mut seed) as usize % other.len();
+                        other[i] = other[i].wrapping_add(delta);
+                        assert!(!verified(&frame, &spec, block, &other, &mut scratch));
+                        assert!(!decoded_matches(&frame, &spec, block, &other));
+                    }
+                    for cut in [0, 1, frame.len() / 2, frame.len() - 1] {
+                        assert!(!verified(
+                            &frame[..cut],
+                            &spec,
+                            block,
+                            &samples,
+                            &mut scratch
+                        ));
                     }
                 }
             }

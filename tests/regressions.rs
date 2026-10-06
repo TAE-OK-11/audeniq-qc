@@ -224,7 +224,7 @@ fn compression_controls_and_pcm_outputs_preserve_samples() {
     let src = d.0.join("source.wav");
     ffmpeg(None, &src, "pcm_s24le");
     let (_, expected, frames) = pcm_sha256(&src, Limits::default(), Backend::Scalar).unwrap();
-    for level in 0..=8 {
+    for level in 0..=9 {
         let dst = d.0.join(format!("level{level}.flac"));
         let result = flac::convert_with_level(
             &src,
@@ -240,7 +240,7 @@ fn compression_controls_and_pcm_outputs_preserve_samples() {
     }
     let dst = d.0.join("invalid.flac");
     assert!(
-        flac::convert_with_level(&src, &dst, Limits::default(), Backend::detect(), Some(9))
+        flac::convert_with_level(&src, &dst, Limits::default(), Backend::detect(), Some(10))
             .is_err()
     );
     assert!(!dst.exists());
@@ -409,8 +409,9 @@ fn encoder_models_stereo_modes_and_wasted_bits_round_trip() {
     // Independent WAV writer: these fixtures exercise wasted bits (16-bit
     // content in 24-bit containers), every stereo assignment (identical,
     // antiphase, one silent channel, independent), mono, tiny/odd tails,
-    // full-scale extremes and noise, at every compression level.
-    fn wav(path: &Path, channels: u16, depth: u16, samples: &[i32]) {
+    // full-scale extremes and noise, at every compression level; the 96 kHz
+    // fixtures take the high-rate block size and LPC orders.
+    fn wav(path: &Path, rate: u32, channels: u16, depth: u16, samples: &[i32]) {
         let bytes = (depth / 8) as usize;
         let data = samples.len() * bytes;
         let mut out = Vec::with_capacity(44 + data);
@@ -420,8 +421,8 @@ fn encoder_models_stereo_modes_and_wasted_bits_round_trip() {
         out.extend_from_slice(&16u32.to_le_bytes());
         out.extend_from_slice(&1u16.to_le_bytes());
         out.extend_from_slice(&channels.to_le_bytes());
-        out.extend_from_slice(&48000u32.to_le_bytes());
-        out.extend_from_slice(&(48000 * channels as u32 * bytes as u32).to_le_bytes());
+        out.extend_from_slice(&rate.to_le_bytes());
+        out.extend_from_slice(&(rate * channels as u32 * bytes as u32).to_le_bytes());
         out.extend_from_slice(&(channels * bytes as u16).to_le_bytes());
         out.extend_from_slice(&depth.to_le_bytes());
         out.extend_from_slice(b"data");
@@ -442,15 +443,18 @@ fn encoder_models_stereo_modes_and_wasted_bits_round_trip() {
         seed ^= seed << 17;
         seed as i32
     };
-    for (name, channels, depth, frames) in [
-        ("identical", 2u16, 24u16, 9001usize),
-        ("antiphase", 2, 24, 4609),
-        ("left-silent", 2, 16, 4608),
-        ("independent", 2, 24, 13),
-        ("wasted", 2, 24, 7000),
-        ("mono-wasted", 1, 24, 5000),
-        ("extremes", 2, 16, 4700),
-        ("noise", 1, 24, 3),
+    for (name, rate, channels, depth, frames) in [
+        ("identical", 48000, 2u16, 24u16, 9001usize),
+        ("antiphase", 48000, 2, 24, 4609),
+        ("left-silent", 48000, 2, 16, 4608),
+        ("independent", 48000, 2, 24, 13),
+        ("wasted", 48000, 2, 24, 7000),
+        ("mono-wasted", 48000, 1, 24, 5000),
+        ("extremes", 48000, 2, 16, 4700),
+        ("noise", 48000, 1, 24, 3),
+        ("hires-tone", 96000, 2, 24, 40000),
+        ("hires-extremes", 192000, 2, 24, 16390),
+        ("hires-noise", 96000, 1, 16, 700),
     ] {
         let max = (1i32 << (depth - 1)) - 1;
         let mut samples = Vec::with_capacity(frames * channels as usize);
@@ -461,15 +465,18 @@ fn encoder_models_stereo_modes_and_wasted_bits_round_trip() {
                 "antiphase" => [tone, -tone],
                 "left-silent" => [0, tone],
                 "wasted" | "mono-wasted" => [tone & !0xff, (tone / 3) & !0xff],
-                "extremes" => [if i % 2 == 0 { max } else { -max - 1 }, -max - 1],
+                "extremes" | "hires-extremes" => {
+                    [if i % 2 == 0 { max } else { -max - 1 }, -max - 1]
+                }
+                "hires-tone" => [tone, tone / 2 + (noise() >> 20)],
                 _ => [noise() >> (33 - depth), noise() >> (33 - depth)],
             };
             samples.extend_from_slice(&row[..channels as usize]);
         }
         let src = d.0.join(format!("{name}.wav"));
-        wav(&src, channels, depth, &samples);
+        wav(&src, rate, channels, depth, &samples);
         let (_, expected, count) = pcm_sha256(&src, Limits::default(), Backend::Scalar).unwrap();
-        for level in 0..=8 {
+        for level in 0..=9 {
             for backend in [Backend::Scalar, Backend::detect()] {
                 let out = d.0.join(format!("{name}-{level}-{backend:?}.flac"));
                 let result =

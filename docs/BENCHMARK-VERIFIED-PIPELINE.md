@@ -742,6 +742,60 @@ CPU is neutral (whole corpus, eight alternating runs: 11.48 s before,
 11.50 s after) and peak RSS unchanged; levels 6-8 use about 1.6 MiB less.
 [Raw](verified-pipeline/round12-encoder.txt).
 
+## Round 13: FLAC model search and level 9
+
+Goal: smaller files at every existing level without more CPU than the
+previous preset of the same number, and a new level 9 for the smallest
+output. All output stays fixed-blocksize FLAC subset (blocks <= 4608 and LPC
+order <= 12 up to 48 kHz; blocks <= 16384 and order <= 32 above; Rice
+partition order <= 8). Corpus: the 49 supported CELLAR files plus 8 48/24
+files resampled from the high-rate ones (57 WAV, 278 MB); CPU is the per-file
+minimum of 3 interleaved runs, summed (noise about +-3%).
+
+* **Model search**: LPC up to order 12 (16 or 32 above 48 kHz) from
+  Levinson-Durbin on Welch-windowed autocorrelation; level 9 adds Tukey,
+  half/third-block and third-removed windows (10 in all). Every model is
+  ranked from residuals at up to 128 gathered positions: the histories are
+  collected once per subframe, column by column, so a model costs one
+  vectorized multiply-add per coefficient (an AVX2 kernel; the previous
+  per-model strided loop made order 12 cost +17% CPU, now +6%).
+  The first window's highest order and the best ranked models are costed
+  exactly; levels 4-5 cost only the highest order.
+* **Coefficients**: written with the smallest precision that holds them;
+  planned at 13 bits (levels 4-7) or 15 bits with a search down to 12/11 on
+  the winner (levels 7-9).
+* **Blocks**: 16384 frames above 48 kHz at levels 5-9, where high orders gain
+  from them (-0.18% to -0.32% on those files); 4096 up to 48 kHz.
+* **Fixed levels**: order-0 at level 0 and orders 1-3 at levels 1-3 were
+  replaced; the fused one-pass fixed sums now serve every order from 2, so
+  levels 0-3 gain 0.3-19% at equal CPU.
+* **Decoder/verification**: frame verification and the decoder have
+  specialized paths for every LPC order; above 12 the decoder restores from
+  memory instead of a register ring (level 9 output decodes 8% faster).
+
+| Level | Before bytes | CPU s | Now bytes | CPU s | Bytes | CPU |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| 0 | 114,799,236 | 2.123 | 92,670,572 | 2.164 | -19.28% | +1.9% |
+| 1 | 92,507,940 | 2.110 | 86,801,950 | 2.165 | -6.17% | +2.6% |
+| 2 | 86,819,120 | 2.110 | 85,074,675 | 2.124 | -2.01% | +0.7% |
+| 3 | 85,226,987 | 2.202 | 85,001,459 | 2.177 | -0.26% | -1.1% |
+| 4 | 81,746,729 | 2.509 | 80,682,299 | 2.535 | -1.30% | +1.0% |
+| 5 (default) | 80,678,607 | 2.761 | 80,305,899 | 2.649 | -0.46% | -4.1% |
+| 6 | 80,658,854 | 3.987 | 80,109,798 | 3.415 | -0.68% | -14.3% |
+| 7 | 80,502,103 | 5.280 | 79,998,081 | 4.444 | -0.63% | -15.8% |
+| 8 | 80,492,642 | 5.612 | 79,980,927 | 5.331 | -0.64% | -5.0% |
+| 9 (new) | | | 79,919,151 | 12.811 | -0.71% vs 8 before | 2.40x new 8 |
+
+Levels 0-4 changed CPU within the run-to-run noise. Level 9 is 0.08%
+smaller than the new level 8 for 2.4x its CPU: it is for archival
+conversions, not the default. Files with orders above 8 also take more
+decoder multiplies per sample (native `pcm-hash` of level 5 output +6-8%).
+Measured and not kept: reweighted least-squares refinement (-0.023% per
+iteration for 2x CPU), exact Rice partition-order choice (-0.002%), 3072-frame
+blocks up to 48 kHz (-0.10%, kept the common 4096), LPC order 2 at level 3
+(-1.7% for +6% CPU). Variable block sizes were not tried, to keep
+fixed-blocksize streams. [Raw](verified-pipeline/round13-encoder.txt).
+
 ## Remaining hotspots (after round 10), ranked by expected ROI
 
 0. **Conversion after round 10**: the fused MD5/SHA-256 pass is now the

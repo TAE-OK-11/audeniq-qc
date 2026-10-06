@@ -190,19 +190,12 @@ fn subframe(b: &mut Bits<'_>, p: &mut [i32], bits: u32) -> Result<()> {
                 let (shift, coeff) = lpc_parameters(b, order)?;
                 residual(b, p, order)?;
                 let c = &coeff[..order];
-                match order {
-                    1 => restore_lpc::<1>(p, c, shift, width)?,
-                    2 => restore_lpc::<2>(p, c, shift, width)?,
-                    3 => restore_lpc::<3>(p, c, shift, width)?,
-                    4 => restore_lpc::<4>(p, c, shift, width)?,
-                    5 => restore_lpc::<5>(p, c, shift, width)?,
-                    6 => restore_lpc::<6>(p, c, shift, width)?,
-                    7 => restore_lpc::<7>(p, c, shift, width)?,
-                    8 => restore_lpc::<8>(p, c, shift, width)?,
-                    10 => restore_lpc::<10>(p, c, shift, width)?,
-                    12 => restore_lpc::<12>(p, c, shift, width)?,
-                    _ => restore_lpc::<0>(p, c, shift, width)?,
+                macro_rules! restore {
+                    ($n:literal) => {
+                        restore_lpc::<$n>(p, c, shift, width)?
+                    };
                 }
+                crate::kernels::lpc_orders!(order, restore)
             } else {
                 residual(b, p, order)?;
                 restore_fixed(p, order, width)?;
@@ -518,17 +511,12 @@ fn verify_subframe(
             r.resize(x.len(), 0);
             let fits = if let Some((shift, coeff)) = lpc {
                 let c = &coeff[..order];
-                match order {
-                    1 => expected_lpc::<1>(x, c, shift, r, backend),
-                    2 => expected_lpc::<2>(x, c, shift, r, backend),
-                    3 => expected_lpc::<3>(x, c, shift, r, backend),
-                    4 => expected_lpc::<4>(x, c, shift, r, backend),
-                    5 => expected_lpc::<5>(x, c, shift, r, backend),
-                    6 => expected_lpc::<6>(x, c, shift, r, backend),
-                    7 => expected_lpc::<7>(x, c, shift, r, backend),
-                    8 => expected_lpc::<8>(x, c, shift, r, backend),
-                    _ => expected_lpc::<0>(x, c, shift, r, backend),
+                macro_rules! expected {
+                    ($n:literal) => {
+                        expected_lpc::<$n>(x, c, shift, r, backend)
+                    };
                 }
+                crate::kernels::lpc_orders!(order, expected)
             } else {
                 expected_fixed(x, order, r, backend)
             };
@@ -614,9 +602,6 @@ fn expected_lpc<const N: usize>(
     e: &mut [i32],
     backend: Backend,
 ) -> bool {
-    if N == 0 {
-        return expected_lpc_wide(x, coeff, shift, e);
-    }
     let c: [i32; N] = coeff.try_into().unwrap();
     let largest = c.iter().map(|c| c.unsigned_abs()).max().unwrap_or(0) as u64;
     let peak = x.iter().fold(0u32, |a, &v| a.max(v.unsigned_abs())) as u64;
@@ -1121,6 +1106,14 @@ fn restore_lpc<const N: usize>(p: &mut [i32], coeff: &[i32], shift: i32, bits: u
     for &v in &p[..order] {
         bad |= (v as i64).wrapping_sub(low) as u64 > span;
     }
+    if N > UNROLLED_LPC && (0..32).contains(&shift) {
+        bad |= lpc_serial::<N>(p, coeff, shift as u32, low, span);
+        return if bad {
+            invalid("FLAC reconstructed sample range")
+        } else {
+            Ok(())
+        };
+    }
     if N != 0 && (0..32).contains(&shift) && p.len() >= 2 * N {
         let blocks = (p.len() - N) / N * N;
         bad |= lpc_unrolled::<N>(&mut p[..N + blocks], coeff, shift as u32, low, span);
@@ -1177,6 +1170,38 @@ fn lpc_tail(
         return invalid("FLAC reconstructed sample range");
     }
     Ok(())
+}
+
+/// Largest order restored by [`lpc_unrolled`]; above it the history no
+/// longer fits the register file and [`lpc_serial`] reads it back instead.
+const UNROLLED_LPC: usize = 12;
+
+/// LPC restoration of `p[N..]` for high orders: the same arithmetic and
+/// summation order as [`lpc_unrolled`] (residual first, newest product
+/// last), with the window loaded from the samples already restored. A
+/// sample that wrapped is out of range, which fails the subframe.
+#[inline(always)]
+fn lpc_serial<const N: usize>(
+    p: &mut [i32],
+    coeff: &[i32],
+    shift: u32,
+    low: i64,
+    span: u64,
+) -> bool {
+    let c: [i64; N] = std::array::from_fn(|j| coeff[j] as i64);
+    let mut seen = 0u64;
+    for i in N..p.len() {
+        let w: &[i32; N] = p[i - N..i].try_into().unwrap();
+        let mut sum = (p[i] as i64) << shift;
+        for j in (1..N).rev() {
+            sum = sum.wrapping_add(c[j].wrapping_mul(w[N - 1 - j] as i64));
+        }
+        let x = sum.wrapping_add(c[0].wrapping_mul(w[N - 1] as i64)) >> shift;
+        seen |= x.wrapping_sub(low) as u64;
+        p[i] = x as i32;
+    }
+    // span is 2^bits - 1, so one OR collects every out-of-range sample.
+    seen > span
 }
 
 /// Fixed-order LPC restoration of `p[N..]`, whose length must be a multiple
@@ -1281,6 +1306,9 @@ mod tests {
         }
         run::<4>();
         run::<8>();
+        run::<12>();
+        run::<17>();
+        run::<32>();
     }
     #[test]
     fn decorrelation_matches_reference_values_and_range_verdicts() {

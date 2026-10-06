@@ -532,12 +532,29 @@ pub struct DotKernel(fn(&[f32], &[f32]) -> f32);
 pub struct Dot64Kernel(fn(&[f64], &[f64]) -> f64);
 
 /// Integer LPC prediction across consecutive samples. Widening multiplication
-/// preserves all bits; a coefficient has at most 15 signed bits, so eight
-/// products of i32 samples cannot overflow the i64 accumulator.
+/// preserves all bits; a coefficient has at most 15 signed bits, so up to
+/// [`MAX_LPC_ORDER`] products of i32 samples (each below 2^45) cannot overflow
+/// the i64 accumulator.
 // The backend selects an explicit AVX2 build on x86; AArch64 always uses
 // the baseline-NEON auto-vectorized loops.
 #[cfg_attr(not(target_arch = "x86_64"), allow(dead_code))]
 pub(crate) struct LpcKernel(Backend);
+/// Largest FLAC LPC order (the format's limit).
+pub(crate) const MAX_LPC_ORDER: usize = 32;
+/// Expand `$body!(N)` for one const-generic LPC order `$order` in 1..=32.
+macro_rules! lpc_orders {
+    (@ $order:expr, $body:ident, $($n:literal)*) => {
+        match $order {
+            $($n => $body!($n),)*
+            _ => unreachable!("unsupported LPC order"),
+        }
+    };
+    ($order:expr, $body:ident) => {
+        $crate::kernels::lpc_orders!(@ $order, $body, 1 2 3 4 5 6 7 8 9 10 11 12 13 14
+            15 16 17 18 19 20 21 22 23 24 25 26 27 28 29 30 31 32)
+    };
+}
+pub(crate) use lpc_orders;
 impl LpcKernel {
     pub(crate) fn new(backend: Backend) -> Self {
         assert!(backend.available());
@@ -561,17 +578,12 @@ impl LpcKernel {
         assert!(samples.len() >= coefficients.len());
         out.clear();
         out.reserve(samples.len() - coefficients.len());
-        match coefficients.len() {
-            1 => self.compute::<1>(samples, coefficients, shift, out),
-            2 => self.compute::<2>(samples, coefficients, shift, out),
-            3 => self.compute::<3>(samples, coefficients, shift, out),
-            4 => self.compute::<4>(samples, coefficients, shift, out),
-            5 => self.compute::<5>(samples, coefficients, shift, out),
-            6 => self.compute::<6>(samples, coefficients, shift, out),
-            7 => self.compute::<7>(samples, coefficients, shift, out),
-            8 => self.compute::<8>(samples, coefficients, shift, out),
-            _ => unreachable!("unsupported LPC order"),
+        macro_rules! compute {
+            ($n:literal) => {
+                self.compute::<$n>(samples, coefficients, shift, out)
+            };
         }
+        lpc_orders!(coefficients.len(), compute)
     }
     fn compute<const N: usize>(
         &self,
@@ -696,76 +708,6 @@ unsafe fn lpc_store_avx2<const N: usize>(
 }
 
 impl LpcKernel {
-    /// [`Self::partition_sums_into`] without keeping the residuals: they are
-    /// formed in 64-sample pieces on the stack, with the same arithmetic.
-    pub(crate) fn partition_sums(
-        &self,
-        samples: &[i32],
-        coefficients: &[i32],
-        shift: u32,
-        size: usize,
-        sums: &mut [u64],
-    ) -> bool {
-        assert!(shift <= 15 && size > coefficients.len());
-        assert!(sums.len() * size == samples.len());
-        assert!(coefficients.iter().all(|&c| (-16384..=16383).contains(&c)));
-        let narrow = fits_i32(samples, coefficients);
-        macro_rules! dispatch {
-            ($($n:literal)*) => {
-                match coefficients.len() {
-                    $($n => self.chunked_sums::<$n>(narrow, samples, coefficients, shift, size, sums),)*
-                    _ => unreachable!("unsupported LPC order"),
-                }
-            };
-        }
-        dispatch!(1 2 3 4 5 6 7 8)
-    }
-    fn chunked_sums<const N: usize>(
-        &self,
-        narrow: bool,
-        samples: &[i32],
-        coefficients: &[i32],
-        shift: u32,
-        size: usize,
-        sums: &mut [u64],
-    ) -> bool {
-        let mut piece = [0u32; 64];
-        let mut ok = true;
-        for (p, sum) in sums.iter_mut().enumerate() {
-            let end = (p + 1) * size;
-            let mut i = (p * size).max(N);
-            let mut total = 0u64;
-            while i < end {
-                let stop = end.min(i + piece.len());
-                let window = &samples[i - N..stop];
-                let out = &mut piece[..stop - i];
-                #[cfg(target_arch = "x86_64")]
-                if self.0 == Backend::Avx2 {
-                    // SAFETY: AVX2 selected at construction; the bodies are
-                    // safe Rust.
-                    unsafe {
-                        if narrow {
-                            lpc_store_narrow_avx2::<N>(window, coefficients, shift, out);
-                        } else {
-                            ok &= lpc_store_avx2::<N>(window, coefficients, shift, out);
-                        }
-                    }
-                    total += out.iter().map(|&v| v as u64).sum::<u64>();
-                    i = stop;
-                    continue;
-                }
-                if narrow {
-                    lpc_store_narrow::<N>(window, coefficients, shift, out);
-                } else {
-                    ok &= lpc_store::<N>(window, coefficients, shift, out);
-                }
-                total += out.iter().map(|&v| v as u64).sum::<u64>();
-                i = stop;
-            }
-            *sum = total;
-        }
-        ok
-    }
     /// Per-partition sums of folded LPC residuals, for ranking models.
     /// `sums[p]` covers samples `p * size..(p + 1) * size`, excluding the
     /// first `order` warm-up samples; the folded residuals of samples
@@ -793,6 +735,49 @@ impl LpcKernel {
         sums_from_residual(out, coefficients.len(), size, sums);
         true
     }
+}
+
+/// Points per column in [`LpcKernel::columns`].
+pub(crate) const PROBE_POINTS: usize = 128;
+impl LpcKernel {
+    /// `prediction[t] = sum_j coefficients[j] * history[j][t]`: exact LPC
+    /// predictions at gathered sample positions, one widening multiply-add
+    /// per coefficient across all positions.
+    pub(crate) fn columns(
+        &self,
+        coefficients: &[i32],
+        history: &[[i32; PROBE_POINTS]],
+        prediction: &mut [i64; PROBE_POINTS],
+    ) {
+        #[cfg(target_arch = "x86_64")]
+        if self.0 == Backend::Avx2 {
+            // SAFETY: AVX2 selected at construction; the body is safe Rust.
+            return unsafe { columns_avx2(coefficients, history, prediction) };
+        }
+        columns_body(coefficients, history, prediction)
+    }
+}
+#[inline(always)]
+fn columns_body(
+    coefficients: &[i32],
+    history: &[[i32; PROBE_POINTS]],
+    prediction: &mut [i64; PROBE_POINTS],
+) {
+    *prediction = [0; PROBE_POINTS];
+    for (&c, column) in coefficients.iter().zip(history) {
+        for (p, &x) in prediction.iter_mut().zip(column) {
+            *p += c as i64 * x as i64;
+        }
+    }
+}
+#[cfg(target_arch = "x86_64")]
+#[target_feature(enable = "avx2")]
+unsafe fn columns_avx2(
+    coefficients: &[i32],
+    history: &[[i32; PROBE_POINTS]],
+    prediction: &mut [i64; PROBE_POINTS],
+) {
+    columns_body(coefficients, history, prediction)
 }
 
 impl Dot64Kernel {
@@ -1082,7 +1067,7 @@ mod tests {
     use super::*;
     #[test]
     fn integer_lpc_matches_independent_reference() {
-        for order in [2, 4, 8] {
+        for order in [2, 4, 8, 12, 32] {
             for n in order..=129 {
                 let samples: Vec<i32> = (0..n)
                     .map(|i| (i as u32).wrapping_mul(2654435761) as i32)
@@ -1145,6 +1130,34 @@ mod tests {
             }
         }
     }
+    /// Gathered-column predictions equal the per-point i64 sums, for every
+    /// order, extreme coefficients and full-range samples, on every backend.
+    #[test]
+    fn column_predictions_match_per_point_sums() {
+        let mut seed = 5u32;
+        let mut next = || {
+            seed = seed.wrapping_mul(1664525).wrapping_add(1013904223);
+            seed as i32
+        };
+        for order in 1..=MAX_LPC_ORDER {
+            let history: Vec<[i32; PROBE_POINTS]> = (0..order)
+                .map(|j| std::array::from_fn(|t| if (t + j) % 7 == 0 { i32::MIN } else { next() }))
+                .collect();
+            let coefficients: Vec<i32> = (0..order)
+                .map(|j| [16383, -16384, next() >> 18][j % 3])
+                .collect();
+            let expected: [i64; PROBE_POINTS] = std::array::from_fn(|t| {
+                (0..order)
+                    .map(|j| coefficients[j] as i64 * history[j][t] as i64)
+                    .sum()
+            });
+            for backend in [Backend::Scalar, Backend::detect()] {
+                let mut prediction = [7i64; PROBE_POINTS];
+                LpcKernel::new(backend).columns(&coefficients, &history, &mut prediction);
+                assert_eq!(prediction, expected, "order {order}");
+            }
+        }
+    }
     #[test]
     fn lpc_partition_sums_match_stored_residuals() {
         let mut seed = 1729u32;
@@ -1158,11 +1171,11 @@ mod tests {
         // Large samples take the i64 path; scaled down, the i32 one.
         for divisor in [1, 4096] {
             let samples: Vec<i32> = base.iter().map(|&x| x / divisor).collect();
-            for order in 1..=8 {
+            for order in (1..=12).chain([16, 31, 32]) {
                 for shift in [0, 5, 15] {
-                    for size in [18, 72, 4608] {
+                    for size in [36, 72, 4608] {
                         let coefficients: Vec<i32> = (0..order)
-                            .map(|j| [16383, -16384, 9000, -1, 0, 77, -5000, 3][j])
+                            .map(|j| [16383, -16384, 9000, -1, 0, 77, -5000, 3][j % 8])
                             .collect();
                         for backend in [Backend::Scalar, Backend::detect()] {
                             let kernel = LpcKernel::new(backend);
@@ -1174,7 +1187,7 @@ mod tests {
                             // when valid, every stored residual and every sum.
                             let mut sums = vec![u64::MAX; samples.len() / size];
                             let mut into = vec![7u32; 3];
-                            let into_ok = kernel.partition_sums_into(
+                            let ok = kernel.partition_sums_into(
                                 &samples,
                                 &coefficients,
                                 shift,
@@ -1182,25 +1195,9 @@ mod tests {
                                 &mut sums,
                                 &mut into,
                             );
-                            let ok = into_ok;
                             assert_eq!(ok, stored, "order {order} shift {shift}");
                             if ok {
                                 assert_eq!(into, residual);
-                            }
-                            // The chunked variant gives the same verdict and sums.
-                            let mut chunked = vec![u64::MAX; samples.len() / size];
-                            let chunked_ok = kernel.partition_sums(
-                                &samples,
-                                &coefficients,
-                                shift,
-                                size,
-                                &mut chunked,
-                            );
-                            assert_eq!(chunked_ok, ok, "chunked order {order} shift {shift}");
-                            if ok {
-                                assert_eq!(chunked, sums);
-                            }
-                            if ok {
                                 for (p, &sum) in sums.iter().enumerate() {
                                     let start = (p * size).max(order) - order;
                                     let end = (p + 1) * size - order;
@@ -1227,12 +1224,12 @@ mod tests {
                     (seed as i32) % (amplitude + 1)
                 })
                 .collect();
-            for order in 1..=8usize {
+            for order in 1..=MAX_LPC_ORDER {
                 for shift in [0u32, 3, 9, 15] {
                     for set in 0..3 {
                         let coefficients: Vec<i32> = (0..order)
                             .map(|j| match set {
-                                0 => [16383, -16384, 1, -1, 0, 2, -2, 3][j],
+                                0 => [16383, -16384, 1, -1, 0, 2, -2, 3][j % 8],
                                 1 => j as i32 * 37 - 100,
                                 _ => -16384,
                             })

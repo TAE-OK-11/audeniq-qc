@@ -1,0 +1,94 @@
+Round 13: FLAC model search, rate-dependent blocks and level 9
+Base: main 5257cac. Host: Intel Xeon @ 2.80 GHz, 4 vCPU VM, AVX2 backend.
+Corpus: 57 WAV files. 49 decoded from the CC0 IETF CELLAR FLAC test bench
+subset (every 1-2 channel, 16/24-bit, 44.1-192 kHz file; 27 x 44.1/16
+stereo, 3 x 44.1/16 mono, 1 x 44.1/24 mono, 10 x 48/16, 5 x 96/24, 1 x
+134.56/24, 2 x 192/24) plus 8 x 48/24 made from the 96-192 kHz files with
+FFmpeg soxr (precision 28, triangular dither) to cover 24-bit/48 kHz masters.
+Command: `convert IN OUT --compression-level N` (WAV -> FLAC, verified).
+CPU: user+sys per process from wait4; per file the minimum of 3 interleaved
+runs, summed over the corpus. Noise between identical runs is about +-3%.
+
+Totals (bytes, CPU s):
+base0                        bytes  114,799,236 (+0.000%)  cpu 2.123 (+0.0%)
+base1                        bytes   92,507,940 (-19.418%)  cpu 2.110 (-0.6%)
+base2                        bytes   86,819,120 (-24.373%)  cpu 2.110 (-0.6%)
+base3                        bytes   85,226,987 (-25.760%)  cpu 2.202 (+3.7%)
+base4                        bytes   81,746,729 (-28.792%)  cpu 2.509 (+18.2%)
+base5                        bytes   80,678,607 (-29.722%)  cpu 2.761 (+30.1%)
+base6                        bytes   80,658,854 (-29.739%)  cpu 3.987 (+87.8%)
+base7                        bytes   80,502,103 (-29.876%)  cpu 5.280 (+148.7%)
+base8                        bytes   80,492,642 (-29.884%)  cpu 5.612 (+164.4%)
+new0                         bytes   92,670,572 (-19.276%)  cpu 2.164 (+2.0%)
+new1                         bytes   86,801,950 (-24.388%)  cpu 2.165 (+2.0%)
+new2                         bytes   85,074,675 (-25.893%)  cpu 2.124 (+0.1%)
+new3                         bytes   85,001,459 (-25.956%)  cpu 2.177 (+2.5%)
+new4                         bytes   80,682,299 (-29.719%)  cpu 2.535 (+19.4%)
+new5                         bytes   80,305,899 (-30.047%)  cpu 2.649 (+24.8%)
+new6                         bytes   80,109,798 (-30.217%)  cpu 3.415 (+60.9%)
+new7                         bytes   79,998,081 (-30.315%)  cpu 4.444 (+109.4%)
+new8                         bytes   79,980,927 (-30.330%)  cpu 5.331 (+151.1%)
+new9                         bytes   79,919,151 (-30.384%)  cpu 12.811 (+503.5%)
+
+By format (bytes; % vs base0): cd = <=48 kHz, hi = >48 kHz
+                                       all              cd16              cd24              hi24
+base0                   114,799,236 +0.00% 55,870,734 +0.00% 16,675,659 +0.00% 42,252,843 +0.00%
+base1                    92,507,940-19.42% 43,682,558-21.81% 13,723,070-17.71% 35,102,312-16.92%
+base2                    86,819,120-24.37% 38,269,850-31.50% 13,606,527-18.40% 34,942,743-17.30%
+base3                    85,226,987-25.76% 36,703,649-34.31% 13,596,786-18.46% 34,926,552-17.34%
+base4                    81,746,729-28.79% 33,948,597-39.24% 13,302,783-20.23% 34,495,349-18.36%
+base5                    80,678,607-29.72% 33,143,236-40.68% 13,201,912-20.83% 34,333,459-18.74%
+base6                    80,658,854-29.74% 33,128,378-40.71% 13,199,755-20.84% 34,330,721-18.75%
+base7                    80,502,103-29.88% 33,037,158-40.87% 13,181,258-20.96% 34,283,687-18.86%
+base8                    80,492,642-29.88% 33,027,697-40.89% 13,181,258-20.96% 34,283,687-18.86%
+new0                     92,670,572-19.28% 43,755,150-21.69% 13,746,327-17.57% 35,169,095-16.77%
+new1                     86,801,950-24.39% 38,225,433-31.58% 13,607,150-18.40% 34,969,367-17.24%
+new2                     85,074,675-25.89% 36,540,941-34.60% 13,606,348-18.41% 34,927,386-17.34%
+new3                     85,001,459-25.96% 36,478,121-34.71% 13,596,786-18.46% 34,926,552-17.34%
+new4                     80,682,299-29.72% 33,153,519-40.66% 13,200,542-20.84% 34,328,238-18.76%
+new5                     80,305,899-30.05% 32,962,323-41.00% 13,167,304-21.04% 34,176,272-19.11%
+new6                     80,109,798-30.22% 32,846,227-41.21% 13,146,257-21.16% 34,117,314-19.25%
+new7                     79,998,081-30.31% 32,822,774-41.25% 13,143,414-21.18% 34,031,893-19.46%
+new8                     79,980,927-30.33% 32,808,289-41.28% 13,141,245-21.20% 34,031,393-19.46%
+new9                     79,919,151-30.38% 32,761,421-41.36% 13,132,681-21.25% 34,025,049-19.47%
+
+Same number, new vs before:
+  level 0  -19.28%  cpu +1.9%     level 5  -0.46%  cpu -4.1%
+  level 1   -6.17%  cpu +2.6%     level 6  -0.68%  cpu -14.3%
+  level 2   -2.01%  cpu +0.7%     level 7  -0.63%  cpu -15.8%
+  level 3   -0.26%  cpu -1.1%     level 8  -0.64%  cpu -5.0%
+  level 4   -1.30%  cpu +1.0%
+  level 9  -0.71% vs level 8 before, -0.94% vs level 5 before,
+           -0.077% vs new level 8; cpu 2.40x new level 8 (2.28x old level 8)
+
+Single-change measurements (level 5 base unless noted; bytes vs that base):
+  LPC order 12 (<=48 kHz) and 12 at >48 kHz     -0.40%   cpu +6% (after probe kernel)
+  same, rank by gathered columns, cost only the highest order   -0.36%  cpu -3.5%
+  order 16 / 32 above 48 kHz (highest only)     16 better than 32 without ranking
+  coefficient precision 15/14/13/12 fixed       0 / -0.02 / -0.03 / -0.03%
+  precision search 14..12 on the winner         -0.04% more, cpu +40% at level 5
+  windows (level 9 set vs Welch only)           -0.045%, cpu x1.8 at level 9
+  blocks above 48 kHz 4096 -> 8192 / 16384      hi: -0.17% / -0.18% (level 5),
+                                                -0.23% / -0.32% (level 8)
+  blocks <=48 kHz 3072 / 3584 / 4608            -0.10 / -0.05 / +0.09% (not
+                                                taken: kept the common 4096)
+  Rice partition order 8 vs 6                   -0.0007%, cpu +13% (levels 6-8)
+  level 0 fixed order 1 (was 0)                 -19.3%, cpu equal
+  level 2 fixed order 4 (fused sums, was 2)     -2.0%, cpu equal
+  level 3 LPC order 2 (not taken)               -1.7%, cpu +6%
+
+Measured and not kept: reweighted least-squares (L1) refinement of the
+winning model (-0.023% per iteration, cpu x2 at level 9); exact Rice cost of
+every partition order when writing (-0.002%, cpu +3%); variable block sizes
+(not tried: kept fixed-blocksize subset streams for player/ingest
+compatibility).
+
+Native decoding of the outputs (pcm-hash, whole corpus, min of 4-5 runs):
+  level 5 before 2.05-2.21 s, level 5 now 2.24-2.35 s (+6-8%, orders 9-16),
+  level 9 2.22 s with orders above 12 restored by the serial kernel
+  (2.40 s with the register-ring kernel for every order).
+
+Gates: cargo test --workspace (release and debug), --features
+reference-codecs, clippy -D warnings (x86_64 and aarch64 targets); FFmpeg
+decoded 570 outputs (57 files x levels 0-9) with crccheck+explode to the
+source PCM MD5: 0 mismatches.

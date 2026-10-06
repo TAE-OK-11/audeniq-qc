@@ -917,27 +917,40 @@ pub const AUTOCORR_PAD: usize = 48;
 /// `w[AUTOCORR_PAD..AUTOCORR_PAD + n]` holds the block and every other
 /// element of `w` is zero; `w.len()` is at least `2 * AUTOCORR_PAD + n`.
 type WindowFn = fn(&[i32], &[f64], &mut [f64]);
-pub struct AutocorrKernel(fn(&[f64], usize, &mut [f64]), WindowFn);
+pub struct AutocorrKernel(fn(&[f64], usize, usize, &mut [f64]), WindowFn);
 impl AutocorrKernel {
     pub fn new(backend: Backend) -> Self {
         assert!(backend.available());
         #[cfg(target_arch = "x86_64")]
         if backend == Backend::Avx2 {
+            if std::is_x86_feature_detected!("fma") {
+                return Self(
+                    |w, n, first, out| unsafe { autocorr_fma(w, n, first, out) },
+                    |x, w, out| unsafe { window_avx2(x, w, out) },
+                );
+            }
             return Self(
-                |w, n, out| unsafe { autocorr_avx2(w, n, out) },
+                |w, n, first, out| unsafe { autocorr_avx2(w, n, first, out) },
                 |x, w, out| unsafe { window_avx2(x, w, out) },
             );
         }
         #[cfg(target_arch = "aarch64")]
         if backend == Backend::Neon {
-            return Self(|w, n, out| unsafe { autocorr_neon(w, n, out) }, window_body);
+            return Self(
+                |w, n, first, out| unsafe { autocorr_neon(w, n, first, out) },
+                window_body,
+            );
         }
         Self(autocorr_scalar, window_body)
     }
     pub fn apply(&self, w: &[f64], n: usize, out: &mut [f64]) {
-        assert!(out.len() <= AUTOCORR_PAD - 16 + 1 && w.len() >= 2 * AUTOCORR_PAD + n);
+        self.apply_from(w, n, 0, out)
+    }
+    /// [`Self::apply`] for lags `first..first + out.len()` only.
+    pub fn apply_from(&self, w: &[f64], n: usize, first: usize, out: &mut [f64]) {
+        assert!(first + out.len() <= AUTOCORR_PAD - 16 + 1 && w.len() >= 2 * AUTOCORR_PAD + n);
         assert!(w[..AUTOCORR_PAD].iter().all(|&v| v == 0.0));
-        (self.0)(w, n, out)
+        (self.0)(w, n, first, out)
     }
     /// `out[i] = x[i] * w[i]`. Exact products of integers below 2^25 and
     /// f64 window values, identical for every backend; vectorized here
@@ -960,9 +973,10 @@ fn window_body(x: &[i32], w: &[f64], out: &mut [f64]) {
 unsafe fn window_avx2(x: &[i32], w: &[f64], out: &mut [f64]) {
     window_body(x, w, out)
 }
-fn autocorr_scalar(w: &[f64], n: usize, out: &mut [f64]) {
+fn autocorr_scalar(w: &[f64], n: usize, first: usize, out: &mut [f64]) {
     let x = &w[AUTOCORR_PAD..AUTOCORR_PAD + n];
-    for (lag, r) in out.iter_mut().enumerate() {
+    for (i, r) in out.iter_mut().enumerate() {
+        let lag = first + i;
         let later = x.get(lag..).unwrap_or_default();
         *r = later.iter().zip(x).map(|(a, b)| a * b).sum();
     }
@@ -991,21 +1005,35 @@ fn autocorr_groups(lags: usize, widest: usize, mut group: impl FnMut(usize, usiz
 }
 #[cfg(target_arch = "x86_64")]
 #[target_feature(enable = "avx2")]
-unsafe fn autocorr_avx2(w: &[f64], n: usize, out: &mut [f64]) {
+unsafe fn autocorr_avx2(w: &[f64], n: usize, lag0: usize, out: &mut [f64]) {
     // At most eight lags per pass: eight accumulators plus the shared
-    // samples fit the sixteen YMM registers. Products are added, not fused,
-    // so the result does not depend on FMA support.
-    let end = AUTOCORR_PAD + n.next_multiple_of(4);
-    assert!(end + 4 <= w.len());
+    // samples fit the sixteen YMM registers. Groups of 4 and 2 lags take 2
+    // and 4 sample vectors per step, so there are always eight independent
+    // accumulation chains (the add latency, not the loads, bounds a short
+    // group otherwise).
+    let end = AUTOCORR_PAD + n.next_multiple_of(16);
+    assert!(end <= w.len());
     autocorr_groups(out.len(), 8, |first, width| match width {
-        8 => autocorr_group_avx2::<8>(w, end, first, out),
-        4 => autocorr_group_avx2::<4>(w, end, first, out),
-        _ => autocorr_group_avx2::<2>(w, end, first, out),
+        8 => autocorr_group_avx2::<8, 1, false>(w, end, lag0 + first, &mut out[first..]),
+        4 => autocorr_group_avx2::<4, 2, false>(w, end, lag0 + first, &mut out[first..]),
+        _ => autocorr_group_avx2::<2, 4, false>(w, end, lag0 + first, &mut out[first..]),
+    });
+}
+/// [`autocorr_avx2`] with fused multiply-adds, on hosts with FMA.
+#[cfg(target_arch = "x86_64")]
+#[target_feature(enable = "avx2,fma")]
+unsafe fn autocorr_fma(w: &[f64], n: usize, lag0: usize, out: &mut [f64]) {
+    let end = AUTOCORR_PAD + n.next_multiple_of(16);
+    assert!(end <= w.len());
+    autocorr_groups(out.len(), 8, |first, width| match width {
+        8 => autocorr_group_avx2::<8, 1, true>(w, end, lag0 + first, &mut out[first..]),
+        4 => autocorr_group_avx2::<4, 2, true>(w, end, lag0 + first, &mut out[first..]),
+        _ => autocorr_group_avx2::<2, 4, true>(w, end, lag0 + first, &mut out[first..]),
     });
 }
 #[cfg(target_arch = "x86_64")]
-#[target_feature(enable = "avx2")]
-unsafe fn autocorr_group_avx2<const G: usize>(
+#[inline(always)]
+unsafe fn autocorr_group_avx2<const G: usize, const U: usize, const FMA: bool>(
     w: &[f64],
     end: usize,
     first: usize,
@@ -1013,41 +1041,53 @@ unsafe fn autocorr_group_avx2<const G: usize>(
 ) {
     use std::arch::x86_64::*;
     let p = w.as_ptr();
-    let mut acc = [_mm256_setzero_pd(); G];
+    let mut acc = [[_mm256_setzero_pd(); G]; U];
     let mut i = AUTOCORR_PAD;
     while i < end {
-        let x = _mm256_loadu_pd(p.add(i));
-        for (j, acc) in acc.iter_mut().enumerate() {
-            let y = _mm256_loadu_pd(p.add(i - first - j));
-            *acc = _mm256_add_pd(*acc, _mm256_mul_pd(x, y));
+        for (u, acc) in acc.iter_mut().enumerate() {
+            let at = i + 4 * u;
+            let x = _mm256_loadu_pd(p.add(at));
+            for (j, acc) in acc.iter_mut().enumerate() {
+                let y = _mm256_loadu_pd(p.add(at - first - j));
+                *acc = if FMA {
+                    _mm256_fmadd_pd(x, y, *acc)
+                } else {
+                    _mm256_add_pd(*acc, _mm256_mul_pd(x, y))
+                };
+            }
         }
-        i += 4;
+        i += 4 * U;
     }
-    for (j, acc) in acc.iter().enumerate() {
-        if let Some(r) = out.get_mut(first + j) {
+    for j in 0..G {
+        if let Some(r) = out.get_mut(j) {
+            let mut sum = acc[0][j];
+            for acc in &acc[1..] {
+                sum = _mm256_add_pd(sum, acc[j]);
+            }
             let mut lanes = [0.0; 4];
-            _mm256_storeu_pd(lanes.as_mut_ptr(), *acc);
+            _mm256_storeu_pd(lanes.as_mut_ptr(), sum);
             *r = (lanes[0] + lanes[1]) + (lanes[2] + lanes[3]);
         }
     }
 }
 #[cfg(target_arch = "aarch64")]
 #[target_feature(enable = "neon")]
-unsafe fn autocorr_neon(w: &[f64], n: usize, out: &mut [f64]) {
-    // Up to sixteen lags per pass: sixteen independent FMA chains keep four
-    // FP pipes (Neoverse V2) busy, in 17 of the 32 vector registers.
-    let end = AUTOCORR_PAD + n.next_multiple_of(2);
-    assert!(end + 2 <= w.len());
+unsafe fn autocorr_neon(w: &[f64], n: usize, lag0: usize, out: &mut [f64]) {
+    // Up to sixteen lags per pass, and sixteen independent FMA chains in
+    // every group (smaller groups take more sample vectors per step): four
+    // FP pipes (Neoverse V2) stay busy, in at most 17 of 32 registers.
+    let end = AUTOCORR_PAD + n.next_multiple_of(16);
+    assert!(end <= w.len());
     autocorr_groups(out.len(), 16, |first, width| match width {
-        16 => autocorr_group_neon::<16>(w, end, first, out),
-        8 => autocorr_group_neon::<8>(w, end, first, out),
-        4 => autocorr_group_neon::<4>(w, end, first, out),
-        _ => autocorr_group_neon::<2>(w, end, first, out),
+        16 => autocorr_group_neon::<16, 1>(w, end, lag0 + first, &mut out[first..]),
+        8 => autocorr_group_neon::<8, 2>(w, end, lag0 + first, &mut out[first..]),
+        4 => autocorr_group_neon::<4, 4>(w, end, lag0 + first, &mut out[first..]),
+        _ => autocorr_group_neon::<2, 8>(w, end, lag0 + first, &mut out[first..]),
     });
 }
 #[cfg(target_arch = "aarch64")]
 #[target_feature(enable = "neon")]
-unsafe fn autocorr_group_neon<const G: usize>(
+unsafe fn autocorr_group_neon<const G: usize, const U: usize>(
     w: &[f64],
     end: usize,
     first: usize,
@@ -1055,18 +1095,25 @@ unsafe fn autocorr_group_neon<const G: usize>(
 ) {
     use std::arch::aarch64::*;
     let p = w.as_ptr();
-    let mut acc = [vdupq_n_f64(0.0); G];
+    let mut acc = [[vdupq_n_f64(0.0); G]; U];
     let mut i = AUTOCORR_PAD;
     while i < end {
-        let x = vld1q_f64(p.add(i));
-        for (j, acc) in acc.iter_mut().enumerate() {
-            *acc = vfmaq_f64(*acc, x, vld1q_f64(p.add(i - first - j)));
+        for (u, acc) in acc.iter_mut().enumerate() {
+            let at = i + 2 * u;
+            let x = vld1q_f64(p.add(at));
+            for (j, acc) in acc.iter_mut().enumerate() {
+                *acc = vfmaq_f64(*acc, x, vld1q_f64(p.add(at - first - j)));
+            }
         }
-        i += 2;
+        i += 2 * U;
     }
-    for (j, acc) in acc.iter().enumerate() {
-        if let Some(r) = out.get_mut(first + j) {
-            *r = vaddvq_f64(*acc);
+    for j in 0..G {
+        if let Some(r) = out.get_mut(j) {
+            let mut sum = acc[0][j];
+            for acc in &acc[1..] {
+                sum = vaddq_f64(sum, acc[j]);
+            }
+            *r = vaddvq_f64(sum);
         }
     }
 }

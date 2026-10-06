@@ -45,7 +45,19 @@ jobs:
             fi
           done
           ls corpus | wc -l
+          # Long files for CPU: 16-bit stereo and 24-bit stereo tracks, joined.
+          for spec in "44100 16" "96000 24"; do
+            set -- $spec
+            list=$(for f in corpus/*.wav; do
+              v=$(ffprobe -v error -show_entries stream=sample_rate,channels,bits_per_sample -of csv=p=0 "$f")
+              [ "$v" = "$1,2,$2" ] && echo "$f"; done)
+            n=$(echo "$list" | wc -l)
+            ffmpeg -nostdin -v error $(for f in $list; do echo -i $f; done) -filter_complex "concat=n=$n:v=0:a=1" -c:a pcm_s${2}le album$1.wav
+            ffmpeg -nostdin -v error -stream_loop 3 -i album$1.wav -c:a pcm_s${2}le long$1.wav
+          done
+          ls -la long*.wav
       - name: Levels 0-8, three interleaved repeats, every output cross-decoded
         run: |
           python3 tools/scripts/flac_level_bench.py corpus flac-levels.json \
-            round12=round12/target/release/audeniq-qc new=target/release/audeniq-qc --ffmpeg --repeats 3
+            round12=round12/target/release/audeniq-qc new=target/release/audeniq-qc --ffmpeg --repeats 5 \
+            --albums long44100.wav,long96000.wav

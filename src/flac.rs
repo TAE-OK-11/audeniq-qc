@@ -508,6 +508,9 @@ impl Encoder {
         let stereo = crate::profile::scope(crate::profile::Stage::EncoderStereo);
         // Indices into channel_buffers: left, right, mid, side.
         const PAIRS: [(u64, [usize; 2]); 4] = [(1, [0, 1]), (8, [0, 3]), (9, [3, 1]), (10, [2, 3])];
+        // Whole-block lags 0..=STEREO_ESTIMATE_ORDER of each channel, when
+        // the stereo estimate computed them.
+        let mut priors = [[0.0f64; STEREO_ESTIMATE_ORDER + 1]; 4];
         let ranked = if channels == 1 {
             None
         } else {
@@ -523,8 +526,23 @@ impl Encoder {
                 *d = a - b;
             }
             let planner = &mut self.planner;
-            let [l, r, m, d] = [&*left, &*right, &*mid, &*side]
-                .map(|x| stereo_estimate(x, depth, &self.autocorr, planner));
+            let [l, r, m, d] = if self.profile.lpc > 0 && n > 16 {
+                // LPC levels: the first lags of the whole block, which
+                // planning the chosen channels reuses (see `Plan::new`).
+                let lags = STEREO_ESTIMATE_ORDER.min(n - 1);
+                let mut index = 0;
+                [&*left, &*right, &*mid, &*side].map(|x| {
+                    let prior = &mut priors[index];
+                    index += 1;
+                    let window = std::mem::take(&mut planner.window);
+                    planner.window =
+                        planner.autocorrelate(x, window, &self.autocorr, &mut prior[..=lags]);
+                    levinson_estimate(&prior[..=lags], n, depth)
+                })
+            } else {
+                [&*left, &*right, &*mid, &*side]
+                    .map(|x| stereo_estimate(x, depth, &self.autocorr, planner))
+            };
             let costs = [l + r, l + d, d + r, m + d];
             let mut ranked = [0, 1, 2, 3];
             // Stable: equal estimates keep the assignment order.
@@ -533,6 +551,8 @@ impl Encoder {
         };
         stereo.end();
         let channel_depth = |index: usize| depth + u32::from(index == 3);
+        let reuse = channels == 2 && self.profile.lpc > 0 && n > 16;
+        let prior = |index: usize| reuse.then_some(priors[index]);
         let trials = if ranked.is_some() {
             self.profile.stereo_trials
         } else {
@@ -551,8 +571,13 @@ impl Encoder {
                     for index in PAIRS[rank].1 {
                         if plans[index].is_none() {
                             let samples = &mut self.channel_buffers[index];
-                            plans[index] =
-                                Some(Plan::new(samples, channel_depth(index), &ctx, planner));
+                            plans[index] = Some(Plan::new(
+                                samples,
+                                channel_depth(index),
+                                &ctx,
+                                planner,
+                                prior(index),
+                            ));
                         }
                     }
                 }
@@ -595,7 +620,7 @@ impl Encoder {
             let samples = &mut self.channel_buffers[index];
             let plan = match plans[index].take() {
                 Some(plan) => plan,
-                None => Plan::new(samples, channel_depth(index), &ctx, planner),
+                None => Plan::new(samples, channel_depth(index), &ctx, planner, prior(index)),
             };
             plan.write(&mut bw, samples, &ctx, planner)?;
         }
@@ -980,13 +1005,20 @@ fn stereo_estimate(x: &[i32], depth: u32, kernel: &AutocorrKernel, planner: &mut
     let mut r = [0.0f64; STEREO_ESTIMATE_ORDER + 1];
     let window = std::mem::take(&mut planner.stereo_window);
     planner.stereo_window = planner.autocorrelate(x, window, kernel, &mut r[..=max_order]);
+    levinson_estimate(&r[..=max_order], n, depth)
+}
+
+/// The estimate of [`stereo_estimate`] from autocorrelation lags
+/// `0..=order` of an `n`-sample window.
+fn levinson_estimate(r: &[f64], n: usize, depth: u32) -> f64 {
+    let max_order = r.len() - 1;
     // Silence and near-silence have no meaningful logarithm; below about
     // 0.01 per sample every channel costs the same.
     let floor = 1e-2 * n as f64;
     let mut best = 0.5 * n as f64 * r[0].max(floor).log2();
     let mut a = [0.0f64; STEREO_ESTIMATE_ORDER];
     let mut error = r[0];
-    for index in 0..max_order {
+    for index in 0..max_order.min(STEREO_ESTIMATE_ORDER) {
         if error <= r[0] * 1e-12 || !error.is_finite() {
             break;
         }
@@ -1050,8 +1082,19 @@ impl Planner {
     fn autocorrelate(
         &mut self,
         x: &[i32],
+        window: Vec<f64>,
+        kernel: &AutocorrKernel,
+        r: &mut [f64],
+    ) -> Vec<f64> {
+        self.autocorrelate_from(x, window, kernel, 0, r)
+    }
+    /// [`Self::autocorrelate`] for lags `first..first + r.len()`.
+    fn autocorrelate_from(
+        &mut self,
+        x: &[i32],
         mut window: Vec<f64>,
         kernel: &AutocorrKernel,
+        first: usize,
         r: &mut [f64],
     ) -> Vec<f64> {
         let n = x.len();
@@ -1068,7 +1111,7 @@ impl Planner {
         windowed.resize(2 * AUTOCORR_PAD + n, 0.0);
         windowed[AUTOCORR_PAD + n..].fill(0.0);
         kernel.window(x, &window, &mut windowed[AUTOCORR_PAD..AUTOCORR_PAD + n]);
-        kernel.apply(windowed, n, r);
+        kernel.apply_from(windowed, n, first, r);
         window
     }
     fn residual(&mut self) -> Vec<u32> {
@@ -1110,7 +1153,15 @@ fn quantize(a: &[f64]) -> Option<([i32; MAX_LPC_ORDER], u32)> {
 impl Plan {
     /// Plan one subframe. Common trailing zero bits ("wasted bits") are
     /// removed in place first; `write` must receive the same, shifted slice.
-    fn new(samples: &mut [i32], depth: u32, ctx: &Context<'_>, planner: &mut Planner) -> Self {
+    /// `prior`: autocorrelation lags `0..=STEREO_ESTIMATE_ORDER` of the
+    /// unshifted channel over the whole block, if already computed.
+    fn new(
+        samples: &mut [i32],
+        depth: u32,
+        ctx: &Context<'_>,
+        planner: &mut Planner,
+        prior: Option<[f64; STEREO_ESTIMATE_ORDER + 1]>,
+    ) -> Self {
         let _profile = crate::profile::scope(crate::profile::Stage::EncoderPlan);
         let profile = ctx.profile;
         if samples.iter().all(|x| *x == samples[0]) {
@@ -1182,9 +1233,26 @@ impl Plan {
         if n > 16 && max_order > 0 {
             let autocorr = crate::profile::scope(crate::profile::Stage::EncoderAutocorr);
             let mut r = [0.0f64; MAX_LPC_ORDER + 1];
-            let window = std::mem::take(&mut planner.window);
-            planner.window =
-                planner.autocorrelate(samples, window, ctx.autocorr, &mut r[..=max_order]);
+            let mut first = 0;
+            if let Some(prior) = prior {
+                // Removing wasted bits divides every windowed sample by
+                // 2^wasted, so every lag by 4^wasted, exactly in f64.
+                let scale = 0.25f64.powi(wasted as i32);
+                first = (STEREO_ESTIMATE_ORDER + 1).min(max_order + 1);
+                for (r, &p) in r[..first].iter_mut().zip(&prior) {
+                    *r = p * scale;
+                }
+            }
+            if first <= max_order {
+                let window = std::mem::take(&mut planner.window);
+                planner.window = planner.autocorrelate_from(
+                    samples,
+                    window,
+                    ctx.autocorr,
+                    first,
+                    &mut r[first..=max_order],
+                );
+            }
             autocorr.end();
             let levinson = crate::profile::scope(crate::profile::Stage::EncoderLevinson);
             // Levinson-Durbin keeps the predictor of every order. A Laplacian

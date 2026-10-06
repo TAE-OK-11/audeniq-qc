@@ -1,0 +1,110 @@
+Round 13: FLAC low levels and level-5 LPC search. Corpus: 49 IETF CELLAR CC0 tracks as WAV.
+convert IN OUT --compression-level L; CPU = user+sys summed over corpus, min of 3; RSS = max peak KiB.
+
+before (5257cac)
+  L0 bytes=98442777 cpu=0.793 rss=3512
+  L1 bytes=79056344 cpu=0.754 rss=3516
+  L2 bytes=73483284 cpu=0.78 rss=3528
+  L3 bytes=71893208 cpu=0.846 rss=3516
+  L4 bytes=68698832 cpu=1.05 rss=3852
+  L5 bytes=67718241 cpu=1.238 rss=3824
+  L6 bytes=67700212 cpu=1.846 rss=3848
+  L7 bytes=67561958 cpu=2.553 rss=3980
+  L8 bytes=67552497 cpu=2.658 rss=3980
+
+after
+  L0 bytes=71739018 cpu=0.809 rss=3580
+  L1 bytes=71667680 cpu=0.914 rss=3668
+  L2 bytes=68697644 cpu=0.955 rss=3864
+  L3 bytes=67710085 cpu=1.006 rss=3856
+  L4 bytes=67436173 cpu=1.09 rss=3868
+  L5 bytes=67310249 cpu=1.182 rss=3856
+  L6 bytes=67108721 cpu=1.408 rss=3856
+  L7 bytes=66933180 cpu=2.138 rss=3984
+  L8 bytes=66907684 cpu=3.295 rss=3984
+
+FFmpeg 6.1.1 -threads 1
+  L0 bytes=73909130 cpu=7.413 rss=56440
+  L1 bytes=72199900 cpu=7.183 rss=56496
+  L2 bytes=72127350 cpu=7.254 rss=56376
+  L3 bytes=68574784 cpu=6.73 rss=56904
+  L4 bytes=68295424 cpu=6.535 rss=56832
+  L5 bytes=68251657 cpu=6.953 rss=56988
+  L6 bytes=68226043 cpu=7.932 rss=56876
+  L7 bytes=68224152 cpu=8.012 rss=56908
+  L8 bytes=67939273 cpu=8.322 rss=56752
+
+Per-file bytes, level 5 (before / after / FFmpeg):
+  t01.wav 544189 541278 553324
+  t02.wav 567082 564972 575590
+  t03.wav 519772 518202 528804
+  t04.wav 533736 532387 542475
+  t05.wav 577144 575978 586240
+  t06.wav 565037 564040 573010
+  t07.wav 569350 567773 577792
+  t08.wav 558265 556980 565889
+  t09.wav 558889 557307 567099
+  t10.wav 471135 469120 480794
+  t11.wav 494444 491936 513286
+  t12.wav 480689 477454 492336
+  t13.wav 475017 471835 484855
+  t14.wav 279445 277514 305964
+  t15.wav 481691 479346 490542
+  t16.wav 457576 455098 470945
+  t17.wav 505154 502970 513515
+  t18.wav 476214 474012 487763
+  t24.wav 2325651 2289225 2341385
+  t25.wav 2338443 2298917 2353691
+  t26.wav 2292001 2255478 2305215
+  t27.wav 2230217 2188379 2247942
+  t28.wav 3469952 3431282 3475954
+  t29.wav 3262677 3258601 3273112
+  t30.wav 3242920 3234445 3252638
+  t31.wav 3237390 3231462 3245014
+  t32.wav 3254105 3250069 3263129
+  t33.wav 6631148 6617428 6633877
+  t34.wav 6629747 6620219 6636520
+  t35.wav 4605520 4594978 4611838
+  t45.wav 557376 553730 566037
+  t46.wav 423212 421111 432284
+  t47.wav 334424 333044 342785
+  t48.wav 393499 392042 402322
+  t49.wav 378146 376154 386770
+  t50.wav 380056 378406 389550
+  t51.wav 448916 447093 457297
+  t52.wav 473548 471012 482287
+  t53.wav 4385340 4363851 4393589
+  t54.wav 611850 608873 621836
+  t55.wav 5229757 5197510 5266789
+  t56.wav 251266 244158 261810
+  t57.wav 246522 239324 259440
+  t58.wav 233503 227863 245295
+  t59.wav 242618 235325 255255
+  t60.wav 41540 39246 50224
+  t61.wav 124211 119334 134276
+  t63.wav 241546 232795 258407
+  t64.wav 86311 80693 94866
+
+Hypothesis sweeps (level 5 corpus bytes; experiment builds with temporary switches):
+  max LPC order (old sampled search, 15-bit): 8 67718241, 12 67453069, 16 67338956, 20 67269845, 24 67234594, 32 67202074
+  precision at order 12: p12 67434121 p13 67434881 p14 67439949 p15 67453069
+  precision at order 16: p12 67314332 p13 67312943 p14 67321564 p15 67338956
+  order choice, p13: sampled+2 exact o16 67312943; highest only o8 67723384 o12 67457594 o16 67358542 o32 67345627
+                     Levinson estimate o8 67710226 o12 67436508 o16 67310394 o32 67109553; estimate+highest o16 67290711
+  sampled points at o12: 128 67434881, 64 67436668, 32 67437741
+  window (new search): welch 67310249 tukey0.5 67308304 tukey0.25 67309999 sqrt-welch 67351688
+  estimate overhead weight: 0.25 67301799 0.4 67292754 0.5 67289929 0.6 67289791 0.75 67293725 1.0 67310249 1.5 67359405
+  block: 3584 67329353 4096 67310249 4608 67319993 8192 67456590
+  fixed predictors skipped at LPC levels: 67339250 (vs 67310654)
+  f32 autocorrelation (scalar backend): L5 67525255 vs 67309354, L6 67417860 vs 67108211
+  level 8 orders costed: all 32 66872961 (11.94 s), +-1 66914758 (3.28 s), +-2 66907684 (3.58 s), +-4 66901711 (4.72 s)
+
+Album encoder stage times, ms (min of 7, profile-native build), level 5:
+  album44 before: encoder=265 autocorr=25 fixed=31 levinson=26 lpc_cost=43 rice_write=30 frame_verify=62
+  album44 after:  encoder=215 autocorr=31 fixed=28 levinson=3 lpc_cost=27 rice_write=26 frame_verify=60
+  album96 before: encoder=141 autocorr=10 fixed=20 levinson=10 lpc_cost=27 rice_write=10 frame_verify=36
+  album96 after:  encoder=117 autocorr=14 fixed=20 levinson=1 lpc_cost=16 rice_write=11 frame_verify=28
+Instructions (valgrind, SHA-256 excluded): album44 3,470.6M -> 3,277.7M; album96 before/after totals 4,175.2M -> 3,847.8M.
+Paired median CPU, 21 interleaved runs: album44 -3.3%, album96 -11.1%.
+Text size: before 1,006,730; all orders 1-32 instantiated 1,348,302; final 988,798.
+aarch64 (QEMU, correctness): L0 71739018, L3 67710085, L5 67309977, L8 66908253; all cross-decoded by FFmpeg.

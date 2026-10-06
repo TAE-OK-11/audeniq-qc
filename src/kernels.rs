@@ -528,9 +528,6 @@ fn dot_scalar(a: &[f32], b: &[f32]) -> f32 {
 /// wastes instructions even when CPUID results themselves are cached.
 pub struct DotKernel(fn(&[f32], &[f32]) -> f32);
 
-/// FLAC LPC autocorrelation needs f64 stability, including near-singular tones.
-pub struct Dot64Kernel(fn(&[f64], &[f64]) -> f64);
-
 /// Integer LPC prediction across consecutive samples. Widening multiplication
 /// preserves all bits; a coefficient has at most 15 signed bits, so eight
 /// products of i32 samples cannot overflow the i64 accumulator.
@@ -561,6 +558,8 @@ impl LpcKernel {
         assert!(samples.len() >= coefficients.len());
         out.clear();
         out.reserve(samples.len() - coefficients.len());
+        // Constant-order kernels for the orders up to 8; one kernel for any
+        // higher order (see `lpc_store_any`).
         match coefficients.len() {
             1 => self.compute::<1>(samples, coefficients, shift, out),
             2 => self.compute::<2>(samples, coefficients, shift, out),
@@ -570,9 +569,11 @@ impl LpcKernel {
             6 => self.compute::<6>(samples, coefficients, shift, out),
             7 => self.compute::<7>(samples, coefficients, shift, out),
             8 => self.compute::<8>(samples, coefficients, shift, out),
+            9..=32 => self.compute::<0>(samples, coefficients, shift, out),
             _ => unreachable!("unsupported LPC order"),
         }
     }
+    /// `N` is the order, or 0 for any order (`lpc_store_any`).
     fn compute<const N: usize>(
         &self,
         samples: &[i32],
@@ -580,27 +581,208 @@ impl LpcKernel {
         shift: u32,
         out: &mut Vec<u32>,
     ) -> Option<()> {
-        out.resize(samples.len() - N, 0);
+        let order = coefficients.len();
+        out.resize(samples.len() - order, 0);
         let narrow = fits_i32(samples, coefficients);
         #[cfg(target_arch = "x86_64")]
         if self.0 == Backend::Avx2 {
             // SAFETY: AVX2 selected at construction; the bodies are safe Rust.
             return unsafe {
-                if narrow {
-                    lpc_store_narrow_avx2::<N>(samples, coefficients, shift, out);
-                    true
-                } else {
-                    lpc_store_avx2::<N>(samples, coefficients, shift, out)
+                match (N, narrow) {
+                    (0, true) => lpc_store_any_avx2::<true>(samples, coefficients, shift, out),
+                    (0, false) => lpc_store_any_avx2::<false>(samples, coefficients, shift, out),
+                    (_, true) => {
+                        lpc_store_narrow_avx2::<N>(samples, coefficients, shift, out);
+                        true
+                    }
+                    (_, false) => lpc_store_avx2::<N>(samples, coefficients, shift, out),
                 }
             }
             .then_some(());
         }
-        if narrow {
-            lpc_store_narrow::<N>(samples, coefficients, shift, out);
-            return Some(());
+        #[cfg(target_arch = "aarch64")]
+        if self.0 == Backend::Neon && !narrow {
+            // SAFETY: NEON selected at construction; bounds are asserted.
+            return lpc_store_wide_neon(samples, coefficients, shift, out).then_some(());
         }
-        lpc_store::<N>(samples, coefficients, shift, out).then_some(())
+        match (N, narrow) {
+            (0, true) => lpc_store_any::<true>(samples, coefficients, shift, out),
+            (0, false) => lpc_store_any::<false>(samples, coefficients, shift, out),
+            (_, true) => {
+                lpc_store_narrow::<N>(samples, coefficients, shift, out);
+                true
+            }
+            (_, false) => lpc_store::<N>(samples, coefficients, shift, out),
+        }
+        .then_some(())
     }
+}
+
+/// Exact i64 LPC residuals `x[i] - (sum_j c[j] x[i-1-j] >> shift)` for the
+/// samples from `c.len()` in whole groups of 16, with widening
+/// multiply-accumulates (eight i64x2 accumulators, one coefficient broadcast
+/// per group). Each residual is stored truncated to 32 bits at
+/// `e[i - c.len()]`. Returns the first sample not done and whether any
+/// residual is outside i32 (its stored value is then meaningless).
+/// Baseline NEON has no 64-bit vector multiply, so LLVM leaves the generic
+/// i64 loops scalar (SMADDL); this serves 24-bit material at every order.
+#[cfg(target_arch = "aarch64")]
+#[target_feature(enable = "neon")]
+pub(crate) unsafe fn lpc_wide_groups_neon(
+    x: &[i32],
+    c: &[i32],
+    shift: u32,
+    e: &mut [i32],
+) -> (usize, bool) {
+    use std::arch::aarch64::*;
+    let order = c.len();
+    let n = x.len();
+    assert!(order >= 1 && shift < 64 && e.len() + order >= n);
+    let p = x.as_ptr();
+    let shift = vdupq_n_s64(-(shift as i64));
+    let half = vdupq_n_s64(1 << 31);
+    let mut high = vdupq_n_u64(0);
+    let mut i = order;
+    while i + 16 <= n {
+        let mut acc = [vdupq_n_s64(0); 8];
+        for (j, &cj) in c.iter().enumerate() {
+            let cj = vdupq_n_s32(cj);
+            let h = p.add(i - 1 - j);
+            for k in 0..4 {
+                let v = vld1q_s32(h.add(4 * k));
+                acc[2 * k] = vmlal_s32(acc[2 * k], vget_low_s32(v), vget_low_s32(cj));
+                acc[2 * k + 1] = vmlal_high_s32(acc[2 * k + 1], v, cj);
+            }
+        }
+        for k in 0..4 {
+            let v = vld1q_s32(p.add(i + 4 * k));
+            let lo = vsubq_s64(vmovl_s32(vget_low_s32(v)), vshlq_s64(acc[2 * k], shift));
+            let hi = vsubq_s64(vmovl_high_s32(v), vshlq_s64(acc[2 * k + 1], shift));
+            // Outside i32 exactly when (d + 2^31) has bits above bit 31.
+            high = vorrq_u64(
+                high,
+                vshrq_n_u64::<32>(vreinterpretq_u64_s64(vaddq_s64(lo, half))),
+            );
+            high = vorrq_u64(
+                high,
+                vshrq_n_u64::<32>(vreinterpretq_u64_s64(vaddq_s64(hi, half))),
+            );
+            let d = vmovn_high_s64(vmovn_s64(lo), hi);
+            vst1q_s32(e.as_mut_ptr().add(i - order + 4 * k), d);
+        }
+        i += 16;
+    }
+    (i, vmaxvq_u32(vreinterpretq_u32_u64(high)) != 0)
+}
+
+/// Predictions computed together by [`lpc_store_any`]: each coefficient is
+/// broadcast once per group, and the group's lanes fill two AVX2 (four
+/// NEON) vectors of i32 or four (eight) of i64.
+const ANY_GROUP: usize = 16;
+
+/// [`lpc_store_narrow`] (`NARROW`, for blocks where [`fits_i32`] holds) or
+/// [`lpc_store`] for any order: the predictions of `ANY_GROUP` consecutive
+/// samples accumulate side by side over the coefficients, so one kernel
+/// serves every order above the constant-order ones with the same
+/// arithmetic, instead of one instantiation per order.
+#[inline(always)]
+fn lpc_store_any<const NARROW: bool>(
+    samples: &[i32],
+    coefficients: &[i32],
+    shift: u32,
+    out: &mut [u32],
+) -> bool {
+    let order = coefficients.len();
+    let n = samples.len();
+    let mut bad = 0u64;
+    let mut i = order;
+    while i + ANY_GROUP <= n {
+        let x: &[i32; ANY_GROUP] = samples[i..i + ANY_GROUP].try_into().unwrap();
+        let o: &mut [u32; ANY_GROUP] = (&mut out[i - order..i - order + ANY_GROUP])
+            .try_into()
+            .unwrap();
+        if NARROW {
+            let mut acc = [0i32; ANY_GROUP];
+            for (j, &c) in coefficients.iter().enumerate() {
+                let h: &[i32; ANY_GROUP] = samples[i - 1 - j..i - 1 - j + ANY_GROUP]
+                    .try_into()
+                    .unwrap();
+                for (a, &h) in acc.iter_mut().zip(h) {
+                    *a = a.wrapping_add(c.wrapping_mul(h));
+                }
+            }
+            for ((o, &x), &a) in o.iter_mut().zip(x).zip(&acc) {
+                let r = x.wrapping_sub(a >> shift);
+                *o = ((r << 1) ^ (r >> 31)) as u32;
+            }
+        } else {
+            let mut acc = [0i64; ANY_GROUP];
+            for (j, &c) in coefficients.iter().enumerate() {
+                let h: &[i32; ANY_GROUP] = samples[i - 1 - j..i - 1 - j + ANY_GROUP]
+                    .try_into()
+                    .unwrap();
+                for (a, &h) in acc.iter_mut().zip(h) {
+                    *a += c as i64 * h as i64;
+                }
+            }
+            for ((o, &x), &a) in o.iter_mut().zip(x).zip(&acc) {
+                let r = x as i64 - (a >> shift);
+                bad |= (r.wrapping_add(1 << 31) as u64) >> 32;
+                *o = ((r << 1) ^ (r >> 63)) as u32;
+            }
+        }
+        i += ANY_GROUP;
+    }
+    for i in i..n {
+        let mut prediction = 0i64;
+        for (j, &c) in coefficients.iter().enumerate() {
+            prediction += c as i64 * samples[i - 1 - j] as i64;
+        }
+        let r = samples[i] as i64 - (prediction >> shift);
+        bad |= (r.wrapping_add(1 << 31) as u64) >> 32;
+        out[i - order] = ((r << 1) ^ (r >> 63)) as u32;
+    }
+    bad == 0
+}
+
+/// [`lpc_store`] for any order on NEON: [`lpc_wide_groups_neon`], folded,
+/// then the remaining samples one at a time.
+#[cfg(target_arch = "aarch64")]
+fn lpc_store_wide_neon(samples: &[i32], coefficients: &[i32], shift: u32, out: &mut [u32]) -> bool {
+    let order = coefficients.len();
+    // SAFETY: u32 and i32 have the same size and alignment; NEON is part of
+    // the AArch64 baseline and was selected by the caller.
+    let (done, high) = unsafe {
+        let e = std::slice::from_raw_parts_mut(out.as_mut_ptr().cast::<i32>(), out.len());
+        lpc_wide_groups_neon(samples, coefficients, shift, e)
+    };
+    // In range, folding the stored 32 bits equals folding the i64 residual.
+    for o in &mut out[..done - order] {
+        let r = *o as i32;
+        *o = ((r << 1) ^ (r >> 31)) as u32;
+    }
+    let mut bad = u64::from(high);
+    for i in done..samples.len() {
+        let mut prediction = 0i64;
+        for (j, &c) in coefficients.iter().enumerate() {
+            prediction += c as i64 * samples[i - 1 - j] as i64;
+        }
+        let r = samples[i] as i64 - (prediction >> shift);
+        bad |= (r.wrapping_add(1 << 31) as u64) >> 32;
+        out[i - order] = ((r << 1) ^ (r >> 63)) as u32;
+    }
+    bad == 0
+}
+
+#[cfg(target_arch = "x86_64")]
+#[target_feature(enable = "avx2")]
+unsafe fn lpc_store_any_avx2<const NARROW: bool>(
+    samples: &[i32],
+    coefficients: &[i32],
+    shift: u32,
+    out: &mut [u32],
+) -> bool {
+    lpc_store_any::<NARROW>(samples, coefficients, shift, out)
 }
 
 /// Whether every LPC prediction sum over `samples` is below 2^30 in
@@ -696,76 +878,6 @@ unsafe fn lpc_store_avx2<const N: usize>(
 }
 
 impl LpcKernel {
-    /// [`Self::partition_sums_into`] without keeping the residuals: they are
-    /// formed in 64-sample pieces on the stack, with the same arithmetic.
-    pub(crate) fn partition_sums(
-        &self,
-        samples: &[i32],
-        coefficients: &[i32],
-        shift: u32,
-        size: usize,
-        sums: &mut [u64],
-    ) -> bool {
-        assert!(shift <= 15 && size > coefficients.len());
-        assert!(sums.len() * size == samples.len());
-        assert!(coefficients.iter().all(|&c| (-16384..=16383).contains(&c)));
-        let narrow = fits_i32(samples, coefficients);
-        macro_rules! dispatch {
-            ($($n:literal)*) => {
-                match coefficients.len() {
-                    $($n => self.chunked_sums::<$n>(narrow, samples, coefficients, shift, size, sums),)*
-                    _ => unreachable!("unsupported LPC order"),
-                }
-            };
-        }
-        dispatch!(1 2 3 4 5 6 7 8)
-    }
-    fn chunked_sums<const N: usize>(
-        &self,
-        narrow: bool,
-        samples: &[i32],
-        coefficients: &[i32],
-        shift: u32,
-        size: usize,
-        sums: &mut [u64],
-    ) -> bool {
-        let mut piece = [0u32; 64];
-        let mut ok = true;
-        for (p, sum) in sums.iter_mut().enumerate() {
-            let end = (p + 1) * size;
-            let mut i = (p * size).max(N);
-            let mut total = 0u64;
-            while i < end {
-                let stop = end.min(i + piece.len());
-                let window = &samples[i - N..stop];
-                let out = &mut piece[..stop - i];
-                #[cfg(target_arch = "x86_64")]
-                if self.0 == Backend::Avx2 {
-                    // SAFETY: AVX2 selected at construction; the bodies are
-                    // safe Rust.
-                    unsafe {
-                        if narrow {
-                            lpc_store_narrow_avx2::<N>(window, coefficients, shift, out);
-                        } else {
-                            ok &= lpc_store_avx2::<N>(window, coefficients, shift, out);
-                        }
-                    }
-                    total += out.iter().map(|&v| v as u64).sum::<u64>();
-                    i = stop;
-                    continue;
-                }
-                if narrow {
-                    lpc_store_narrow::<N>(window, coefficients, shift, out);
-                } else {
-                    ok &= lpc_store::<N>(window, coefficients, shift, out);
-                }
-                total += out.iter().map(|&v| v as u64).sum::<u64>();
-                i = stop;
-            }
-            *sum = total;
-        }
-        ok
-    }
     /// Per-partition sums of folded LPC residuals, for ranking models.
     /// `sums[p]` covers samples `p * size..(p + 1) * size`, excluding the
     /// first `order` warm-up samples; the folded residuals of samples
@@ -795,95 +907,143 @@ impl LpcKernel {
     }
 }
 
-impl Dot64Kernel {
+/// Zero samples kept before the windowed block (and after it, rounded up to
+/// a whole group) so every lag of every group reads inside the buffer.
+pub const AUTOCORR_PAD: usize = 48;
+
+/// FLAC LPC autocorrelation of a windowed block for lags `0..out.len()`, in
+/// f64. All lags of a group are accumulated in one pass over the block, so
+/// each sample is loaded once per group instead of twice per lag.
+/// `w[AUTOCORR_PAD..AUTOCORR_PAD + n]` holds the block and every other
+/// element of `w` is zero; `w.len()` is at least `2 * AUTOCORR_PAD + n`.
+pub struct AutocorrKernel(fn(&[f64], usize, &mut [f64]));
+impl AutocorrKernel {
     pub fn new(backend: Backend) -> Self {
         assert!(backend.available());
         #[cfg(target_arch = "x86_64")]
         if backend == Backend::Avx2 {
-            return Self(|a, b| unsafe { dot64_avx2(a, b) });
+            return Self(|w, n, out| unsafe { autocorr_avx2(w, n, out) });
         }
         #[cfg(target_arch = "aarch64")]
         if backend == Backend::Neon {
-            return Self(|a, b| unsafe { dot64_neon(a, b) });
+            return Self(|w, n, out| unsafe { autocorr_neon(w, n, out) });
         }
-        Self(|a, b| a.iter().zip(b).map(|(x, y)| x * y).sum())
+        Self(autocorr_scalar)
     }
-    pub fn apply(&self, a: &[f64], b: &[f64]) -> f64 {
-        assert_eq!(a.len(), b.len());
-        (self.0)(a, b)
+    pub fn apply(&self, w: &[f64], n: usize, out: &mut [f64]) {
+        assert!(out.len() <= AUTOCORR_PAD - 16 + 1 && w.len() >= 2 * AUTOCORR_PAD + n);
+        assert!(w[..AUTOCORR_PAD].iter().all(|&v| v == 0.0));
+        (self.0)(w, n, out)
     }
 }
-
+fn autocorr_scalar(w: &[f64], n: usize, out: &mut [f64]) {
+    let x = &w[AUTOCORR_PAD..AUTOCORR_PAD + n];
+    for (lag, r) in out.iter_mut().enumerate() {
+        let later = x.get(lag..).unwrap_or_default();
+        *r = later.iter().zip(x).map(|(a, b)| a * b).sum();
+    }
+}
+/// Lag-group widths: the widest group that is still filled, so at most
+/// one partly used group (of at most 3 unused lags) per block.
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+#[inline(always)]
+fn autocorr_groups(lags: usize, widest: usize, mut group: impl FnMut(usize, usize)) {
+    let mut first = 0;
+    while first < lags {
+        let left = lags - first;
+        let width = if left >= widest {
+            widest
+        } else if left > 4 {
+            8.min(widest)
+        } else if left > 2 {
+            4
+        } else {
+            2
+        };
+        group(first, width);
+        first += width;
+    }
+}
 #[cfg(target_arch = "x86_64")]
 #[target_feature(enable = "avx2")]
-unsafe fn dot64_avx2(a: &[f64], b: &[f64]) -> f64 {
+unsafe fn autocorr_avx2(w: &[f64], n: usize, out: &mut [f64]) {
+    // At most eight lags per pass: eight accumulators plus the shared
+    // samples fit the sixteen YMM registers. Products are added, not fused,
+    // so the result does not depend on FMA support.
+    let end = AUTOCORR_PAD + n.next_multiple_of(4);
+    assert!(end + 4 <= w.len());
+    autocorr_groups(out.len(), 8, |first, width| match width {
+        8 => autocorr_group_avx2::<8>(w, end, first, out),
+        4 => autocorr_group_avx2::<4>(w, end, first, out),
+        _ => autocorr_group_avx2::<2>(w, end, first, out),
+    });
+}
+#[cfg(target_arch = "x86_64")]
+#[target_feature(enable = "avx2")]
+unsafe fn autocorr_group_avx2<const G: usize>(
+    w: &[f64],
+    end: usize,
+    first: usize,
+    out: &mut [f64],
+) {
     use std::arch::x86_64::*;
-    let mut accumulators = [_mm256_setzero_pd(); 4];
-    let mut i = 0;
-    while i + 16 <= a.len() {
-        for (lane, accumulator) in accumulators.iter_mut().enumerate() {
-            let offset = i + lane * 4;
-            *accumulator = _mm256_add_pd(
-                *accumulator,
-                _mm256_mul_pd(
-                    _mm256_loadu_pd(a.as_ptr().add(offset)),
-                    _mm256_loadu_pd(b.as_ptr().add(offset)),
-                ),
-            );
+    let p = w.as_ptr();
+    let mut acc = [_mm256_setzero_pd(); G];
+    let mut i = AUTOCORR_PAD;
+    while i < end {
+        let x = _mm256_loadu_pd(p.add(i));
+        for (j, acc) in acc.iter_mut().enumerate() {
+            let y = _mm256_loadu_pd(p.add(i - first - j));
+            *acc = _mm256_add_pd(*acc, _mm256_mul_pd(x, y));
         }
-        i += 16;
-    }
-    let mut v = _mm256_add_pd(
-        _mm256_add_pd(accumulators[0], accumulators[1]),
-        _mm256_add_pd(accumulators[2], accumulators[3]),
-    );
-    while i + 4 <= a.len() {
-        v = _mm256_add_pd(
-            v,
-            _mm256_mul_pd(
-                _mm256_loadu_pd(a.as_ptr().add(i)),
-                _mm256_loadu_pd(b.as_ptr().add(i)),
-            ),
-        );
         i += 4;
     }
-    let mut sums = [0.0; 4];
-    _mm256_storeu_pd(sums.as_mut_ptr(), v);
-    sums.iter().sum::<f64>() + a[i..].iter().zip(&b[i..]).map(|(x, y)| x * y).sum::<f64>()
+    for (j, acc) in acc.iter().enumerate() {
+        if let Some(r) = out.get_mut(first + j) {
+            let mut lanes = [0.0; 4];
+            _mm256_storeu_pd(lanes.as_mut_ptr(), *acc);
+            *r = (lanes[0] + lanes[1]) + (lanes[2] + lanes[3]);
+        }
+    }
 }
 #[cfg(target_arch = "aarch64")]
 #[target_feature(enable = "neon")]
-unsafe fn dot64_neon(a: &[f64], b: &[f64]) -> f64 {
+unsafe fn autocorr_neon(w: &[f64], n: usize, out: &mut [f64]) {
+    // Up to sixteen lags per pass: sixteen independent FMA chains keep four
+    // FP pipes (Neoverse V2) busy, in 17 of the 32 vector registers.
+    let end = AUTOCORR_PAD + n.next_multiple_of(2);
+    assert!(end + 2 <= w.len());
+    autocorr_groups(out.len(), 16, |first, width| match width {
+        16 => autocorr_group_neon::<16>(w, end, first, out),
+        8 => autocorr_group_neon::<8>(w, end, first, out),
+        4 => autocorr_group_neon::<4>(w, end, first, out),
+        _ => autocorr_group_neon::<2>(w, end, first, out),
+    });
+}
+#[cfg(target_arch = "aarch64")]
+#[target_feature(enable = "neon")]
+unsafe fn autocorr_group_neon<const G: usize>(
+    w: &[f64],
+    end: usize,
+    first: usize,
+    out: &mut [f64],
+) {
     use std::arch::aarch64::*;
-    // Independent accumulation chains let the CPU overlap multiply/add work
-    // instead of waiting on one accumulator for every two samples. No FMA.
-    let mut accumulators = [vdupq_n_f64(0.0); 4];
-    let mut i = 0;
-    while i + 8 <= a.len() {
-        for (lane, accumulator) in accumulators.iter_mut().enumerate() {
-            let offset = i + lane * 2;
-            *accumulator = vaddq_f64(
-                *accumulator,
-                vmulq_f64(
-                    vld1q_f64(a.as_ptr().add(offset)),
-                    vld1q_f64(b.as_ptr().add(offset)),
-                ),
-            );
+    let p = w.as_ptr();
+    let mut acc = [vdupq_n_f64(0.0); G];
+    let mut i = AUTOCORR_PAD;
+    while i < end {
+        let x = vld1q_f64(p.add(i));
+        for (j, acc) in acc.iter_mut().enumerate() {
+            *acc = vfmaq_f64(*acc, x, vld1q_f64(p.add(i - first - j)));
         }
-        i += 8;
-    }
-    let mut v = vaddq_f64(
-        vaddq_f64(accumulators[0], accumulators[1]),
-        vaddq_f64(accumulators[2], accumulators[3]),
-    );
-    while i + 2 <= a.len() {
-        v = vaddq_f64(
-            v,
-            vmulq_f64(vld1q_f64(a.as_ptr().add(i)), vld1q_f64(b.as_ptr().add(i))),
-        );
         i += 2;
     }
-    vaddvq_f64(v) + a[i..].iter().zip(&b[i..]).map(|(x, y)| x * y).sum::<f64>()
+    for (j, acc) in acc.iter().enumerate() {
+        if let Some(r) = out.get_mut(first + j) {
+            *r = vaddvq_f64(*acc);
+        }
+    }
 }
 
 type PeakFn = fn(&[f32], &[[f32; 4]; 12]) -> f32;
@@ -1158,11 +1318,11 @@ mod tests {
         // Large samples take the i64 path; scaled down, the i32 one.
         for divisor in [1, 4096] {
             let samples: Vec<i32> = base.iter().map(|&x| x / divisor).collect();
-            for order in 1..=8 {
+            for order in 1..=32 {
                 for shift in [0, 5, 15] {
-                    for size in [18, 72, 4608] {
+                    for size in [36, 72, 4608] {
                         let coefficients: Vec<i32> = (0..order)
-                            .map(|j| [16383, -16384, 9000, -1, 0, 77, -5000, 3][j])
+                            .map(|j| [16383, -16384, 9000, -1, 0, 77, -5000, 3][j % 8] >> (j / 8))
                             .collect();
                         for backend in [Backend::Scalar, Backend::detect()] {
                             let kernel = LpcKernel::new(backend);
@@ -1186,21 +1346,6 @@ mod tests {
                             assert_eq!(ok, stored, "order {order} shift {shift}");
                             if ok {
                                 assert_eq!(into, residual);
-                            }
-                            // The chunked variant gives the same verdict and sums.
-                            let mut chunked = vec![u64::MAX; samples.len() / size];
-                            let chunked_ok = kernel.partition_sums(
-                                &samples,
-                                &coefficients,
-                                shift,
-                                size,
-                                &mut chunked,
-                            );
-                            assert_eq!(chunked_ok, ok, "chunked order {order} shift {shift}");
-                            if ok {
-                                assert_eq!(chunked, sums);
-                            }
-                            if ok {
                                 for (p, &sum) in sums.iter().enumerate() {
                                     let start = (p * size).max(order) - order;
                                     let end = (p + 1) * size - order;
@@ -1227,12 +1372,13 @@ mod tests {
                     (seed as i32) % (amplitude + 1)
                 })
                 .collect();
-            for order in 1..=8usize {
+            // Constant-order kernels (1..=8) and the any-order kernel.
+            for order in 1..=32usize {
                 for shift in [0u32, 3, 9, 15] {
                     for set in 0..3 {
                         let coefficients: Vec<i32> = (0..order)
                             .map(|j| match set {
-                                0 => [16383, -16384, 1, -1, 0, 2, -2, 3][j],
+                                0 => [16383, -16384, 1, -1, 0, 2, -2, 3][j % 8],
                                 1 => j as i32 * 37 - 100,
                                 _ => -16384,
                             })
@@ -1328,29 +1474,34 @@ mod tests {
                 dot(&a, &a, Backend::Scalar).to_bits(),
                 dot(&a, &a, Backend::detect()).to_bits()
             );
-            let b: Vec<_> = a.iter().map(|x| *x as f64).collect();
-            assert!(
-                (Dot64Kernel::new(Backend::Scalar).apply(&b, &b)
-                    - Dot64Kernel::new(Backend::detect()).apply(&b, &b))
-                .abs()
-                    < 1e-10
-            );
         }
-        // Mixed signs, cancellation, full blocks and vector-boundary tails.
-        for n in (0..129).chain([4095, 4096, 4097, 32768]) {
-            let a: Vec<f64> = (0..n)
-                .map(|i| (i as f64 * 0.137).sin() * 8388607.0)
+    }
+    /// Every lag count (1..=33) and block length, including vector and lag
+    /// group boundaries, against the per-lag definition.
+    #[test]
+    fn autocorrelation_matches_definition() {
+        for n in (1..70).chain([4095, 4096, 4097]) {
+            let x: Vec<f64> = (0..n)
+                .map(|i| ((i as f64 * 0.137).sin() + (i as f64 * 0.011).cos()) * 8388607.0)
                 .collect();
-            let b: Vec<f64> = (0..n)
-                .map(|i| (i as f64 * 0.173).cos() * 8388607.0)
-                .collect();
-            let reference: f64 = a.iter().zip(&b).map(|(a, b)| a * b).sum();
-            let magnitude: f64 = a.iter().zip(&b).map(|(a, b)| (a * b).abs()).sum();
-            let actual = Dot64Kernel::new(Backend::detect()).apply(&a, &b);
-            assert!(
-                (actual - reference).abs() <= magnitude.max(1.0) * 1e-10,
-                "n={n}"
-            );
+            let mut w = vec![0.0; AUTOCORR_PAD];
+            w.extend_from_slice(&x);
+            w.resize(2 * AUTOCORR_PAD + n, 0.0);
+            for lags in 1..=33 {
+                for backend in [Backend::Scalar, Backend::detect()] {
+                    let mut out = vec![f64::NAN; lags];
+                    AutocorrKernel::new(backend).apply(&w, n, &mut out);
+                    for (lag, &r) in out.iter().enumerate() {
+                        let pairs = x.iter().skip(lag).zip(&x);
+                        let reference: f64 = pairs.clone().map(|(a, b)| a * b).sum();
+                        let magnitude: f64 = pairs.map(|(a, b)| (a * b).abs()).sum();
+                        assert!(
+                            (r - reference).abs() <= magnitude.max(1.0) * 1e-12,
+                            "n={n} lags={lags} lag={lag}"
+                        );
+                    }
+                }
+            }
         }
     }
 }

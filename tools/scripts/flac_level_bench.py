@@ -2,14 +2,14 @@
 """FLAC compression-level comparison on a WAV corpus (development only).
 
 Usage: flac_level_bench.py CORPUS_DIR OUT.json NAME=BINARY... [--levels 0,5]
-       [--repeats 3] [--ffmpeg]
+       [--repeats 3] [--ffmpeg] [--albums ALBUM.wav,...]
 
-For every level, each engine converts every WAV in CORPUS_DIR. Runs are
-interleaved per file (engine order alternates by repeat). Reported per level
-and engine: total output bytes, CPU seconds (user+system, sum over files of
-the per-file minimum over repeats) and the largest peak RSS of one process,
-all from GNU time. Every output is decoded by FFmpeg with CRC checking and
-must reproduce the source PCM (MD5 of the decoded samples).
+For every level, each engine converts every WAV in CORPUS_DIR once: total
+output bytes, every output decoded by FFmpeg with CRC checking (it must
+reproduce the source PCM), and the largest peak RSS. CPU is measured on the
+--albums (long files, so GNU time's 10 ms resolution does not matter):
+user+system seconds, minimum over repeats, runs interleaved (engine order
+alternates by repeat).
 """
 import glob
 import json
@@ -45,9 +45,13 @@ def main():
     repeats = 3
     use_ffmpeg = "--ffmpeg" in args
     engines = []
+    albums = []
     i = 2
     while i < len(args):
-        if args[i] == "--levels":
+        if args[i] == "--albums":
+            albums = args[i + 1].split(",")
+            i += 2
+        elif args[i] == "--levels":
             levels = [int(x) for x in args[i + 1].split(",")]
             i += 2
         elif args[i] == "--repeats":
@@ -65,44 +69,49 @@ def main():
     sources = {f: md5(f) for f in files}
     work = tempfile.mkdtemp()
     result = {"arch": platform.machine(), "files": len(files), "repeats": repeats, "levels": {}}
+    def command(name, binary, f, o, level):
+        if binary is None:
+            return ["ffmpeg", "-nostdin", "-v", "error", "-threads", "1", "-i", f,
+                    "-map_metadata", "-1", "-c:a", "flac", "-compression_level", str(level), o]
+        return [binary, "convert", f, o, "--compression-level", str(level)]
+
+    result["albums"] = [os.path.basename(a) for a in albums]
     for level in levels:
-        totals = {name: {"bytes": 0, "cpu_s": 0.0, "peak_rss_kib": 0} for name, _ in engines}
+        totals = {name: {"bytes": 0, "peak_rss_kib": 0, "album_cpu_s": {}} for name, _ in engines}
         for f in files:
+            for name, binary in engines:
+                o = os.path.join(work, f"{name}.flac")
+                if os.path.exists(o):
+                    os.remove(o)
+                _, rss = run(command(name, binary, f, o, level))
+                t = totals[name]
+                t["peak_rss_kib"] = max(t["peak_rss_kib"], rss)
+                t["bytes"] += os.path.getsize(o)
+                if md5(o) != sources[f]:
+                    sys.exit(f"{name} level {level} {f}: decoded PCM differs")
+        for album in albums:
             best = {name: None for name, _ in engines}
             for r in range(repeats):
-                order = engines if r % 2 == 0 else engines[::-1]
-                for name, binary in order:
+                for name, binary in (engines if r % 2 == 0 else engines[::-1]):
                     o = os.path.join(work, f"{name}.flac")
                     if os.path.exists(o):
                         os.remove(o)
-                    if binary is None:
-                        cmd = ["ffmpeg", "-nostdin", "-v", "error", "-threads", "1", "-i", f,
-                               "-map_metadata", "-1", "-c:a", "flac",
-                               "-compression_level", str(level), o]
-                    else:
-                        cmd = [binary, "convert", f, o, "--compression-level", str(level)]
-                    cpu, rss = run(cmd)
-                    t = totals[name]
-                    t["peak_rss_kib"] = max(t["peak_rss_kib"], rss)
+                    cpu, rss = run(command(name, binary, album, o, level))
+                    totals[name]["peak_rss_kib"] = max(totals[name]["peak_rss_kib"], rss)
                     best[name] = cpu if best[name] is None else min(best[name], cpu)
-                    if r == 0:
-                        t["bytes"] += os.path.getsize(o)
-                        if md5(o) != sources[f]:
-                            sys.exit(f"{name} level {level} {f}: decoded PCM differs")
             for name in best:
-                totals[name]["cpu_s"] += best[name]
-        for t in totals.values():
-            t["cpu_s"] = round(t["cpu_s"], 3)
+                totals[name]["album_cpu_s"][os.path.basename(album)] = round(best[name], 3)
         result["levels"][str(level)] = totals
         print(level, json.dumps(totals), flush=True)
     with open(out, "w") as fh:
         json.dump(result, fh, indent=1)
     names = [n for n, _ in engines]
-    print("\n| Level | " + " | ".join(f"{n} bytes / CPU s / RSS KiB" for n in names) + " |")
+    print("\n| Level | " + " | ".join(f"{n} bytes / album CPU s / RSS KiB" for n in names) + " |")
     print("|---|" + "---:|" * len(names))
     for level, totals in result["levels"].items():
-        cells = [f"{totals[n]['bytes']:,} / {totals[n]['cpu_s']} / {totals[n]['peak_rss_kib']}"
-                 for n in names]
+        cells = [f"{totals[n]['bytes']:,} / "
+                 + " + ".join(str(v) for v in totals[n]["album_cpu_s"].values())
+                 + f" / {totals[n]['peak_rss_kib']}" for n in names]
         print(f"| {level} | " + " | ".join(cells) + " |")
 
 

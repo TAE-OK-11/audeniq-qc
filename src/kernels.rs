@@ -916,25 +916,49 @@ pub const AUTOCORR_PAD: usize = 48;
 /// each sample is loaded once per group instead of twice per lag.
 /// `w[AUTOCORR_PAD..AUTOCORR_PAD + n]` holds the block and every other
 /// element of `w` is zero; `w.len()` is at least `2 * AUTOCORR_PAD + n`.
-pub struct AutocorrKernel(fn(&[f64], usize, &mut [f64]));
+type WindowFn = fn(&[i32], &[f64], &mut [f64]);
+pub struct AutocorrKernel(fn(&[f64], usize, &mut [f64]), WindowFn);
 impl AutocorrKernel {
     pub fn new(backend: Backend) -> Self {
         assert!(backend.available());
         #[cfg(target_arch = "x86_64")]
         if backend == Backend::Avx2 {
-            return Self(|w, n, out| unsafe { autocorr_avx2(w, n, out) });
+            return Self(
+                |w, n, out| unsafe { autocorr_avx2(w, n, out) },
+                |x, w, out| unsafe { window_avx2(x, w, out) },
+            );
         }
         #[cfg(target_arch = "aarch64")]
         if backend == Backend::Neon {
-            return Self(|w, n, out| unsafe { autocorr_neon(w, n, out) });
+            return Self(|w, n, out| unsafe { autocorr_neon(w, n, out) }, window_body);
         }
-        Self(autocorr_scalar)
+        Self(autocorr_scalar, window_body)
     }
     pub fn apply(&self, w: &[f64], n: usize, out: &mut [f64]) {
         assert!(out.len() <= AUTOCORR_PAD - 16 + 1 && w.len() >= 2 * AUTOCORR_PAD + n);
         assert!(w[..AUTOCORR_PAD].iter().all(|&v| v == 0.0));
         (self.0)(w, n, out)
     }
+    /// `out[i] = x[i] * w[i]`. Exact products of integers below 2^25 and
+    /// f64 window values, identical for every backend; vectorized here
+    /// because the planner's generic loop compiled to scalar conversions.
+    pub fn window(&self, x: &[i32], w: &[f64], out: &mut [f64]) {
+        assert!(x.len() == w.len() && x.len() == out.len());
+        (self.1)(x, w, out)
+    }
+}
+#[inline(always)]
+fn window_body(x: &[i32], w: &[f64], out: &mut [f64]) {
+    let n = out.len();
+    let (x, w) = (&x[..n], &w[..n]);
+    for i in 0..n {
+        out[i] = x[i] as f64 * w[i];
+    }
+}
+#[cfg(target_arch = "x86_64")]
+#[target_feature(enable = "avx2")]
+unsafe fn window_avx2(x: &[i32], w: &[f64], out: &mut [f64]) {
+    window_body(x, w, out)
 }
 fn autocorr_scalar(w: &[f64], n: usize, out: &mut [f64]) {
     let x = &w[AUTOCORR_PAD..AUTOCORR_PAD + n];

@@ -23,7 +23,7 @@ jobs:
       - name: Engine before the level and LPC search changes (round 12)
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
         with:
-          ref: 5257cac3bc6dab9a33a36b4be08db32a8d05c1e1
+          ref: 5257cac77e2ce67a810467e7026527c54e51ccba
           path: round12
       - name: Toolchain, development oracle and time
         run: |

@@ -16,7 +16,29 @@ const RATES: [u32; 16] = [
     6000, 8000, 9600, 11025, 12000, 16000, 22050, 24000, 32000, 44100, 48000, 64000, 88200, 96000,
     192000, 0,
 ];
-include!("wavpack_table.rs");
+/// 256 * 2^(i / 256) - 256, rounded, for i in 0..256: the mantissas of
+/// WavPack's logarithmic sample and weight encoding. Computed in Q56 fixed
+/// point: 2^(1/256) by eight integer square roots of 2, then powers of it.
+/// (Every exact value is at least 0.003 away from a rounding boundary,
+/// far beyond the error of this computation; a test checks all 256.)
+const EXP2: [u8; 256] = {
+    const ONE: u128 = 1 << 56;
+    let mut root = 2 * ONE;
+    let mut k = 0;
+    while k < 8 {
+        root = (root << 56).isqrt();
+        k += 1;
+    }
+    let mut table = [0u8; 256];
+    let mut value = 256 * ONE;
+    let mut i = 0;
+    while i < 256 {
+        table[i] = (((value + ONE / 2) >> 56) - 256) as u8;
+        value = (value * root) >> 56;
+        i += 1;
+    }
+    table
+};
 fn le16(b: &[u8]) -> i16 {
     i16::from_le_bytes(b[..2].try_into().unwrap())
 }
@@ -336,33 +358,11 @@ impl<'a> Context<'a> {
         if c.post_shift > 31 {
             return Err(Error::Invalid("WavPack shift"));
         }
-        let mut pos = 0;
+        // Every metadata sub-block once at most (ids below 32), in the
+        // block's order.
         let mut seen = 0u32;
-        while pos < packet.len() {
-            if packet.len() - pos < 2 {
-                return Err(Error::Invalid("WavPack metadata"));
-            }
-            let id = packet[pos];
-            let mut size = packet[pos + 1] as usize;
-            pos += 2;
-            if id & 0x80 != 0 {
-                if packet.len() - pos < 2 {
-                    return Err(Error::Invalid("WavPack metadata size"));
-                }
-                size |=
-                    (u16::from_le_bytes(packet[pos..pos + 2].try_into().unwrap()) as usize) << 8;
-                pos += 2;
-            }
-            size *= 2;
-            let actual = size
-                .checked_sub(if id & 0x40 != 0 { 1 } else { 0 })
-                .ok_or(Error::Invalid("WavPack odd size"))?;
-            if size > packet.len() - pos {
-                return Err(Error::Invalid("WavPack metadata length"));
-            }
-            let d = &packet[pos..pos + actual];
-            pos += size;
-            let id = id & 0x3f;
+        for block in SubBlocks(packet) {
+            let (id, d) = block?;
             if id < 32 {
                 let mask = 1u32 << id;
                 if seen & mask != 0 {
@@ -535,52 +535,59 @@ struct Words {
     zeroes: u32,
 }
 impl Words {
+    /// One residual: a zero from a run, or a code t that selects a range
+    /// of magnitudes from the channel's three running medians, then the
+    /// position within the range and the sign.
     #[inline(always)]
     fn value(&mut self, bits: &mut Lsb<'_>, ch: usize) -> Result<i32> {
-        if self.median[0][0] < 2 && self.median[1][0] < 2 && !self.zero && !self.one {
-            if self.zeroes != 0 {
-                self.zeroes -= 1;
-                if self.zeroes != 0 {
-                    return Ok(0);
-                }
-            } else {
-                let n = bits.ones(33)?;
-                let t = if n >= 2 {
-                    if n >= 32 {
-                        return Err(Error::Invalid("WavPack zero run"));
-                    }
-                    bits.read(n - 1)? | (1 << (n - 1))
-                } else {
-                    n
-                };
-                self.zeroes = t;
-                if t != 0 {
-                    self.median = [[0; 3]; 2];
-                    return Ok(0);
-                }
-            }
+        if self.silent() && self.zero_run(bits)? {
+            return Ok(0);
         }
-        let t = if self.zero {
+        let t = self.code(bits)?;
+        let (base, add) = self.step(ch, t)?;
+        tail(bits, base, add)
+    }
+    /// Both channels' first medians below 2 and no code held: zeros may come
+    /// as counted runs.
+    #[inline(always)]
+    fn silent(&self) -> bool {
+        self.median[0][0] < 2 && self.median[1][0] < 2 && !self.zero && !self.one
+    }
+    /// Whether this value is a zero of a run, starting a run (and clearing
+    /// the medians) when its count is nonzero.
+    fn zero_run(&mut self, bits: &mut Lsb<'_>) -> Result<bool> {
+        if self.zeroes != 0 {
+            self.zeroes -= 1;
+            return Ok(self.zeroes != 0);
+        }
+        self.zeroes = count(bits, "WavPack zero run")?;
+        if self.zeroes != 0 {
+            self.median = [[0; 3]; 2];
+        }
+        Ok(self.zeroes != 0)
+    }
+    /// The code t. A run of ones n (16 escapes to n + a count) carries
+    /// two codes' worth: an even n implies that the next code is 0, an odd
+    /// one adds one to the next.
+    #[inline(always)]
+    fn code(&mut self, bits: &mut Lsb<'_>) -> Result<u32> {
+        if self.zero {
             self.zero = false;
-            0
-        } else {
-            let mut t = bits.ones(33)?;
-            if t == 16 {
-                let n = bits.ones(33)?;
-                t += if n < 2 {
-                    n
-                } else {
-                    if n >= 32 {
-                        return Err(Error::Invalid("WavPack unary"));
-                    }
-                    bits.read(n - 1)? | (1 << (n - 1))
-                };
-            }
-            let old = self.one;
-            self.one = t & 1 != 0;
-            self.zero = !self.one;
-            (t >> 1) + u32::from(old)
-        };
+            return Ok(0);
+        }
+        let mut n = bits.ones(33)?;
+        if n == 16 {
+            n += count(bits, "WavPack unary")?;
+        }
+        let held = self.one;
+        self.one = n & 1 != 0;
+        self.zero = !self.one;
+        Ok((n >> 1) + u32::from(held))
+    }
+    /// The range [base, base + add] selected by code t, and the medians'
+    /// adaptation to it.
+    #[inline(always)]
+    fn step(&mut self, ch: usize, t: u32) -> Result<(u32, u32)> {
         let med = &mut self.median[ch];
         let m = med.map(|x| (x as u32 >> 4) + 1);
         // Code t selects a base and a range from the three medians:
@@ -627,46 +634,105 @@ impl Words {
         if overflow {
             return Err(Error::Invalid("WavPack median overflow"));
         }
-        // add + 1 values: p bits, and one more for the upper ones (an
-        // almost-binary code), then the sign.
-        if bits.available < 57 {
-            bits.refill();
-        }
-        let p = 31 - (add | 1).leading_zeros();
-        let p = if add == 0 { 0 } else { p };
-        let e = (1u64 << (p + 1)) - add as u64 - 1;
-        if add != 0 && p + 2 <= bits.available {
-            let x = (bits.cache & ((1u64 << p) - 1)) as u32;
-            let long = x as u64 >= e;
-            let extra = ((bits.cache >> p) & 1) as u32;
-            let used = p + long as u32;
-            let tail = if long {
-                x.wrapping_mul(2).wrapping_sub(e as u32).wrapping_add(extra)
-            } else {
-                x
-            };
-            let sign = (bits.cache >> used) & 1;
-            bits.cache >>= used + 1;
-            bits.available -= used + 1;
-            let v = base.wrapping_add(tail) as i32;
-            return Ok(if sign != 0 { !v } else { v });
-        }
-        let tail = if add == 0 {
-            0
-        } else {
-            let x = bits.read(p)?;
-            if x as u64 >= e {
-                x.wrapping_mul(2)
-                    .wrapping_sub(e as u32)
-                    .wrapping_add(bits.read(1)?)
-            } else {
-                x
-            }
-        };
-        let v = base.wrapping_add(tail) as i32;
-        Ok(if bits.read(1)? != 0 { !v } else { v })
+        Ok((base, add))
     }
 }
+/// The metadata sub-blocks of a WavPack block: a byte id (bit 7: 24-bit
+/// size, bit 6: odd length), a size in 16-bit words and the data. Yields the
+/// id's low six bits and the data without its pad byte.
+struct SubBlocks<'a>(&'a [u8]);
+impl<'a> Iterator for SubBlocks<'a> {
+    type Item = Result<(u8, &'a [u8])>;
+    fn next(&mut self) -> Option<Self::Item> {
+        let rest = self.0;
+        if rest.is_empty() {
+            return None;
+        }
+        Some(
+            (|| {
+                let [id, low, ..] = *rest else {
+                    return Err(Error::Invalid("WavPack metadata"));
+                };
+                let (words, data) = if id & 0x80 != 0 {
+                    let [_, _, a, b, ..] = *rest else {
+                        return Err(Error::Invalid("WavPack metadata size"));
+                    };
+                    (u32::from_le_bytes([low, a, b, 0]) as usize, &rest[4..])
+                } else {
+                    (low as usize, &rest[2..])
+                };
+                let size = words * 2;
+                let actual = size
+                    .checked_sub((id & 0x40 != 0) as usize)
+                    .ok_or(Error::Invalid("WavPack odd size"))?;
+                if size > data.len() {
+                    return Err(Error::Invalid("WavPack metadata length"));
+                }
+                self.0 = &data[size..];
+                Ok((id & 0x3f, &data[..actual]))
+            })()
+            .inspect_err(|_| self.0 = &[]),
+        )
+    }
+}
+
+/// A count: n ones then, for n >= 2, n - 1 more bits below an implicit top
+/// bit (n >= 32 is invalid).
+fn count(bits: &mut Lsb<'_>, invalid: &'static str) -> Result<u32> {
+    let n = bits.ones(33)?;
+    if n < 2 {
+        return Ok(n);
+    }
+    if n >= 32 {
+        return Err(Error::Invalid(invalid));
+    }
+    Ok(bits.read(n - 1)? | (1 << (n - 1)))
+}
+
+/// The value base + x for x in [0, add] (p = floor(log2(add)) bits, one more
+/// for the upper values of an almost-binary code), then the sign.
+#[inline(always)]
+fn tail(bits: &mut Lsb<'_>, base: u32, add: u32) -> Result<i32> {
+    // add + 1 values: p bits, and one more for the upper ones (an
+    // almost-binary code), then the sign.
+    if bits.available < 57 {
+        bits.refill();
+    }
+    let p = 31 - (add | 1).leading_zeros();
+    let p = if add == 0 { 0 } else { p };
+    let e = (1u64 << (p + 1)) - add as u64 - 1;
+    if add != 0 && p + 2 <= bits.available {
+        let x = (bits.cache & ((1u64 << p) - 1)) as u32;
+        let long = x as u64 >= e;
+        let extra = ((bits.cache >> p) & 1) as u32;
+        let used = p + long as u32;
+        let tail = if long {
+            x.wrapping_mul(2).wrapping_sub(e as u32).wrapping_add(extra)
+        } else {
+            x
+        };
+        let sign = (bits.cache >> used) & 1;
+        bits.cache >>= used + 1;
+        bits.available -= used + 1;
+        let v = base.wrapping_add(tail) as i32;
+        return Ok(if sign != 0 { !v } else { v });
+    }
+    let tail = if add == 0 {
+        0
+    } else {
+        let x = bits.read(p)?;
+        if x as u64 >= e {
+            x.wrapping_mul(2)
+                .wrapping_sub(e as u32)
+                .wrapping_add(bits.read(1)?)
+        } else {
+            x
+        }
+    };
+    let v = base.wrapping_add(tail) as i32;
+    Ok(if bits.read(1)? != 0 { !v } else { v })
+}
+
 fn get_exp(d: &[u8], i: &mut usize) -> Result<i32> {
     if d.len() - *i < 2 {
         return Err(Error::Invalid("WavPack history"));
@@ -832,5 +898,37 @@ fn decorrelate(terms: &mut [Decorr], left: &mut [i32], right: &mut [i32], stereo
         }
         pos = (pos + 1) & 7;
         (*l, *r) = (x, y);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The table as WavPack's format documents it.
+    #[test]
+    fn exp2_table_matches_the_format() {
+        const PUBLISHED: [u8; 256] = [
+            0x00, 0x01, 0x01, 0x02, 0x03, 0x03, 0x04, 0x05, 0x06, 0x06, 0x07, 0x08, 0x08, 0x09,
+            0x0a, 0x0b, 0x0b, 0x0c, 0x0d, 0x0e, 0x0e, 0x0f, 0x10, 0x10, 0x11, 0x12, 0x13, 0x13,
+            0x14, 0x15, 0x16, 0x16, 0x17, 0x18, 0x19, 0x19, 0x1a, 0x1b, 0x1c, 0x1d, 0x1d, 0x1e,
+            0x1f, 0x20, 0x20, 0x21, 0x22, 0x23, 0x24, 0x24, 0x25, 0x26, 0x27, 0x28, 0x28, 0x29,
+            0x2a, 0x2b, 0x2c, 0x2c, 0x2d, 0x2e, 0x2f, 0x30, 0x30, 0x31, 0x32, 0x33, 0x34, 0x35,
+            0x35, 0x36, 0x37, 0x38, 0x39, 0x3a, 0x3a, 0x3b, 0x3c, 0x3d, 0x3e, 0x3f, 0x40, 0x41,
+            0x41, 0x42, 0x43, 0x44, 0x45, 0x46, 0x47, 0x48, 0x48, 0x49, 0x4a, 0x4b, 0x4c, 0x4d,
+            0x4e, 0x4f, 0x50, 0x51, 0x51, 0x52, 0x53, 0x54, 0x55, 0x56, 0x57, 0x58, 0x59, 0x5a,
+            0x5b, 0x5c, 0x5d, 0x5e, 0x5e, 0x5f, 0x60, 0x61, 0x62, 0x63, 0x64, 0x65, 0x66, 0x67,
+            0x68, 0x69, 0x6a, 0x6b, 0x6c, 0x6d, 0x6e, 0x6f, 0x70, 0x71, 0x72, 0x73, 0x74, 0x75,
+            0x76, 0x77, 0x78, 0x79, 0x7a, 0x7b, 0x7c, 0x7d, 0x7e, 0x7f, 0x80, 0x81, 0x82, 0x83,
+            0x84, 0x85, 0x87, 0x88, 0x89, 0x8a, 0x8b, 0x8c, 0x8d, 0x8e, 0x8f, 0x90, 0x91, 0x92,
+            0x93, 0x95, 0x96, 0x97, 0x98, 0x99, 0x9a, 0x9b, 0x9c, 0x9d, 0x9f, 0xa0, 0xa1, 0xa2,
+            0xa3, 0xa4, 0xa5, 0xa6, 0xa8, 0xa9, 0xaa, 0xab, 0xac, 0xad, 0xaf, 0xb0, 0xb1, 0xb2,
+            0xb3, 0xb4, 0xb6, 0xb7, 0xb8, 0xb9, 0xba, 0xbc, 0xbd, 0xbe, 0xbf, 0xc0, 0xc2, 0xc3,
+            0xc4, 0xc5, 0xc6, 0xc8, 0xc9, 0xca, 0xcb, 0xcd, 0xce, 0xcf, 0xd0, 0xd2, 0xd3, 0xd4,
+            0xd6, 0xd7, 0xd8, 0xd9, 0xdb, 0xdc, 0xdd, 0xde, 0xe0, 0xe1, 0xe2, 0xe4, 0xe5, 0xe6,
+            0xe8, 0xe9, 0xea, 0xec, 0xed, 0xee, 0xf0, 0xf1, 0xf2, 0xf4, 0xf5, 0xf6, 0xf8, 0xf9,
+            0xfa, 0xfc, 0xfd, 0xff,
+        ];
+        assert_eq!(EXP2, PUBLISHED);
     }
 }

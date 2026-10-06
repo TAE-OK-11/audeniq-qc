@@ -1,0 +1,29 @@
+Round 12: FLAC encoder Rice cost model, block size and stereo trials
+Corpus: 55 files (50 WAV + 5 M4A), `convert IN OUT [--compression-level N]`.
+
+Total output bytes (CPU s is the sum of user+sys over the corpus, one run):
+  before (HEAD 55b2864), level 5          300,072,692
+  before, level 6 (8192-frame blocks)     worse than level 5 (see round 10)
+  after, level 5 (4096)                   299,882,124  (-0.064%)
+  after, level 6                          299,846,990  (-0.075%)  cpu 16.60
+  after, level 7 (2 exact stereo trials)  299,519,096  (-0.184%)  cpu 19.70
+  after, level 8 (4 exact stereo trials)  299,494,407  (-0.193%)  cpu 22.45
+  after, level 5                                                    cpu 11.29
+
+Level 5 CPU, whole corpus, alternating runs (s):
+  HEAD  11.48 11.55 11.42 11.27 11.37 11.51 11.95 11.27   mean 11.48
+  new   11.52 11.34 11.60 11.65 11.45 11.34 11.91 11.17   mean 11.50  (+0.2%)
+  estimate only, 4608 blocks: 11.60 11.98 11.82 11.09     mean 11.62, -912 bytes
+
+Division in the estimate (first version) vs bit-length form, encoder_fixed
+stage min of 11 (album44.wav): 30.3 ms HEAD, 35.7 ms with division,
+31.0-34.6 ms without; outputs of the two forms identical on all 55 files.
+
+Peak RSS KB, level 5 album44.wav, 5 runs: HEAD 3608-3808, new 3692-3816.
+Level 8: HEAD 5316 / 5472 (album44 / album192), new 3728 / 3700.
+
+Gates: jsondiff 2931 comparisons, 0 differ except 365 FLAC converts that
+differ only in output bytes with identical decoded PCM; qualify, codec-stress,
+standards passed and identical to round 11; mutation_fuzz 1600 cases passed
+(pcm-hash ok 588 / rejected 1012, convert ok 417 / rejected 1183, all
+cross-decode checked); tests debug, release, reference-codecs, aarch64 QEMU.

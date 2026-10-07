@@ -941,6 +941,26 @@ Remaining cost: levels 2-3 now run LPC (the source of their 5.9-6.6% smaller
 files); on Arm its f64 autocorrelation (two lanes) and 64-bit residuals for
 24-bit material are the largest items.
 
+## Round 16: level 5 smaller with less CPU; static musl build
+
+| # | Hypothesis | Measurement | Verdict |
+|---|---|---|---|
+| H20 | On AArch64 the constant-order LPC loops (orders 1-8) became two-lane widening SMLAL; route them to the grouped four-lane MLA kernel | Arm runner levels 2/3: 1.59/1.71 s -> 1.62/1.74 s (no gain) | Rejected, reverted |
+| H21 | Stereo estimate with lags up to min(LPC order, 8) instead of 4 (planning reuses them) | Levels 3-6 0.009-0.013% smaller (level 5 67,315,197 -> 67,306,865); order 12 saved no more; level 2 unchanged | Kept |
+| H22 | LPC partition sums and peak scans ran in baseline SSE2 | AVX2 builds: level 5 instructions 7,333M -> 7,210M (16-bit album), 3,623M -> 3,563M (24-bit), including H21 | Kept |
+| H14' | Integer (16-bit) autocorrelation for Arm | Arm's integer multiply pipes give no more products per cycle than its f64 FMA pipes; not built | Rejected |
+| M1 | Peak RSS is mostly shared-library pages (glibc, libm), not the heap (374 KB peak by massif) | Static musl build: peak RSS 3.7 -> 1.54 MiB on x86, same bytes, CPU within 2% | Build option (README) |
+
+GitHub runners, commit `3421869`, long albums (16-bit / 24-bit) CPU s and
+peak RSS KiB over the corpus, round 12 -> glibc build -> static musl build:
+
+| Level | Arm CPU | Arm RSS | x86 CPU | x86 RSS |
+|---|---|---:|---|---:|
+| 5 | 1.98+0.77 -> 1.85+0.71 -> 1.86+0.72 | 2972 -> 2912 -> 1308 | 1.81+0.79 -> 1.57+0.63 -> 1.61+0.64 | 3808 -> 3840 -> 1604 |
+| 0 | 1.34+0.48 -> 1.33+0.49 -> 1.34+0.49 | 2656 -> 2912 -> 1180 | 1.45+0.54 -> 1.19+0.46 -> 1.23+0.47 | 3472 -> 3816 -> 1604 |
+| 3 | 1.48+0.51 -> 1.69+0.65 -> 1.70+0.66 | 2716 -> 2912 -> 1308 | 1.49+0.52 -> 1.48+0.59 -> 1.52+0.60 | 3500 -> 3844 -> 1608 |
+| 8 | 4.47+1.96 -> 4.31+2.11 -> 4.33+2.11 | 3100 -> 3424 -> 1692 | 4.50+1.89 -> 3.39+1.49 -> 3.46+1.51 | 3948 -> 4176 -> 1992 |
+
 ## Remaining hotspots (after round 10), ranked by expected ROI
 
 0. **Conversion after round 10**: the fused MD5/SHA-256 pass is now the

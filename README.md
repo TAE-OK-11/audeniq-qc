@@ -43,6 +43,8 @@ target/release/audeniq-qc probe cover.png
 target/release/audeniq-qc tags master.wv
 ```
 
+정적 musl 빌드(`rustup target add $(uname -m)-unknown-linux-musl` 후 `cargo build --release --locked --target $(uname -m)-unknown-linux-musl`)는 같은 출력을 만들면서 공유 라이브러리 페이지가 없어 최대 RSS가 작습니다(레벨 5: Arm 2.9 → 1.3 MiB, x86 3.8 → 1.6 MiB, CPU 차이 2% 이내, [라운드 16](docs/BENCHMARK-VERIFIED-PIPELINE.md#round-16-level-5-smaller-with-less-cpu-static-musl-build)).
+
 표준 출력은 JSON 한 개입니다. 실패 시 종료 코드 2와 표준 오류 JSON을 반환합니다. `--scalar`, `--timeout-secs 60`을 지원합니다. `probe`는 메타데이터 확인이며 전체 오디오 무결성의 증명이 아닙니다. `analyze`와 `convert`가 전체 디코딩을 검사합니다. `convert`는 기존 출력을 덮어쓰지 않습니다.
 
 `convert --analyze`의 `analysis`는 입력 PCM의 QC입니다. 출력 FLAC의 재디코딩·규격·프레임 수·PCM 해시가 일치한 뒤 결과를 게시합니다. 상위 `spec`은 출력 FLAC, `analysis.spec`은 원본 입력입니다. standalone `analyze`와 같은 규격/백엔드에서 지표와 지문이 정확히 일치합니다. `--fingerprint`는 `analyze` 또는 `convert --analyze`에만 적용합니다. 압축 레벨 0~8과도 함께 사용할 수 있습니다.

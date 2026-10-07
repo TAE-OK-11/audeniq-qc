@@ -1,0 +1,19 @@
+Round 14: streamable subset, stereo estimate, block size. Corpus: 49 IETF CELLAR CC0 tracks as WAV.
+Level 5 corpus bytes (round 13 non-subset engine = 67,310,249 unless noted):
+  upper bounds: stereo trials 2 67156372, 4 67147638; precision search 12-15 67277245; order span 1 67284026;
+    partition 8 67309759; windows by estimate: welch+tukey 67306397, +partial 67411578/67410924, +punchout 67410896,
+    +hann/thirds 67508351; windows costed exactly 67216801
+  stereo Levinson estimate order 2 67247905, 3 67236205, 4 67212365, 8 67204598, 16 67198986, 32 67200890
+  order 4, central half block 67226374
+  precision rule (13,087 subframes at 11-15): p13 536265822 bits, oracle 535895922 (-0.069%), best rule -0.023%
+  block per file (exact frame sizes, L5): 1024 68158266, 2048 67499092, 4096 67308191, 8192 67454532, 16384 67726062
+    trees: 2048..4096 -0.270%, 4096..8192 -0.239%, 2048..8192 -0.488%, 1024..8192 -0.597%, 1024..16384 -0.678%
+    best fixed per file -0.311%; rule >48k 8192 -0.081%, >48k 16384 -0.093% (of corpus)
+  album96 (L5): round13 16407454, +estimator 16401394, +8192 blocks 16385279; RSS med 3680 / 3696 / 3928 KiB
+Final (subset, estimator, 8192 above 48 kHz at levels 6-8), corpus bytes / CPU s / max RSS KiB:
+  L0 71700400 0.835 3840   L1 71628179 0.891 3836   L2 68619943 0.942 3844
+  L3 67627433 1.020 3840   L4 67349714 1.128 3848   L5 67325634 1.129 3852
+  L6 67223444 1.253 4100   L7 67137764 1.892 4340   L8 67123667 2.750 4284
+Paired CPU vs round 12 (21 runs): album44 -8.5%, album96 -8.3%. Instructions: album44 8,133.1M -> 7,906.7M,
+album96 4,175.0M -> 3,830.6M.
+aarch64 under QEMU: L5 67325104, L8 67123493 bytes, all cross-decoded.

@@ -518,17 +518,16 @@ fn verify_subframe(
             r.resize(x.len(), 0);
             let fits = if let Some((shift, coeff)) = lpc {
                 let c = &coeff[..order];
-                match order {
-                    1 => expected_lpc::<1>(x, c, shift, r, backend),
-                    2 => expected_lpc::<2>(x, c, shift, r, backend),
-                    3 => expected_lpc::<3>(x, c, shift, r, backend),
-                    4 => expected_lpc::<4>(x, c, shift, r, backend),
-                    5 => expected_lpc::<5>(x, c, shift, r, backend),
-                    6 => expected_lpc::<6>(x, c, shift, r, backend),
-                    7 => expected_lpc::<7>(x, c, shift, r, backend),
-                    8 => expected_lpc::<8>(x, c, shift, r, backend),
-                    _ => expected_lpc::<0>(x, c, shift, r, backend),
+                macro_rules! orders {
+                    ($($n:literal)*) => {
+                        match order {
+                            $($n => expected_lpc::<$n>(x, c, shift, r, backend),)*
+                            // Any higher order (see `expected_lpc_any`).
+                            _ => expected_lpc::<0>(x, c, shift, r, backend),
+                        }
+                    };
                 }
+                orders!(1 2 3 4 5 6 7 8)
             } else {
                 expected_fixed(x, order, r, backend)
             };
@@ -614,15 +613,35 @@ fn expected_lpc<const N: usize>(
     e: &mut [i32],
     backend: Backend,
 ) -> bool {
-    if N == 0 {
+    let total = coeff.iter().map(|c| c.unsigned_abs() as u64).sum::<u64>();
+    let peak = x.iter().fold(0u32, |a, &v| a.max(v.unsigned_abs())) as u64;
+    if !(0..32).contains(&shift) {
         return expected_lpc_wide(x, coeff, shift, e);
+    }
+    let narrow = total * peak < 1 << 31;
+    #[cfg(target_arch = "aarch64")]
+    if backend == Backend::Neon && !narrow {
+        return expected_lpc_wide_neon(x, coeff, shift, e);
+    }
+    if N == 0 || !narrow {
+        #[cfg(target_arch = "x86_64")]
+        if backend == Backend::Avx2 {
+            // SAFETY: as below.
+            return unsafe {
+                if narrow {
+                    expected_lpc_any_avx2::<true>(x, coeff, shift, e)
+                } else {
+                    expected_lpc_any_avx2::<false>(x, coeff, shift, e)
+                }
+            };
+        }
+        return if narrow {
+            expected_lpc_any::<true>(x, coeff, shift, e)
+        } else {
+            expected_lpc_any::<false>(x, coeff, shift, e)
+        };
     }
     let c: [i32; N] = coeff.try_into().unwrap();
-    let largest = c.iter().map(|c| c.unsigned_abs()).max().unwrap_or(0) as u64;
-    let peak = x.iter().fold(0u32, |a, &v| a.max(v.unsigned_abs())) as u64;
-    if !(0..32).contains(&shift) || largest * N as u64 * peak >= 1 << 31 {
-        return expected_lpc_wide(x, coeff, shift, e);
-    }
     #[cfg(target_arch = "x86_64")]
     if backend == Backend::Avx2 {
         // SAFETY: the backend was checked available by the encoder; the
@@ -633,7 +652,8 @@ fn expected_lpc<const N: usize>(
     expected_lpc_body::<N>(x, &c, shift, e)
 }
 
-/// Exact i32 accumulation, valid when |c| * N * max|x| < 2^31.
+/// Exact i32 accumulation, valid when sum |c| * max|x| < 2^31: every partial
+/// sum is then below 2^31 in magnitude.
 #[inline(always)]
 fn expected_lpc_body<const N: usize>(x: &[i32], c: &[i32; N], shift: i32, e: &mut [i32]) -> bool {
     let mut out = 0u64;
@@ -659,6 +679,99 @@ unsafe fn expected_lpc_avx2<const N: usize>(
     e: &mut [i32],
 ) -> bool {
     expected_lpc_body::<N>(x, c, shift, e)
+}
+
+/// Predictions accumulated together by [`expected_lpc_any`].
+const ANY_GROUP: usize = 16;
+
+/// [`expected_lpc_body`] (`NARROW`, under its bound) or
+/// [`expected_lpc_wide`] (exact i64 sums, shift 0..32) for any order: the
+/// sums of `ANY_GROUP` consecutive samples accumulate side by side, each
+/// coefficient broadcast once per group, which vectorizes for every order
+/// and for 24-bit material; the remaining samples take the same exact sum
+/// one at a time.
+#[inline(always)]
+fn expected_lpc_any<const NARROW: bool>(x: &[i32], c: &[i32], shift: i32, e: &mut [i32]) -> bool {
+    let order = c.len();
+    let n = x.len();
+    let mut out = 0u64;
+    let mut i = order;
+    while i + ANY_GROUP <= n {
+        let v: &[i32; ANY_GROUP] = x[i..i + ANY_GROUP].try_into().unwrap();
+        let e: &mut [i32; ANY_GROUP] = (&mut e[i..i + ANY_GROUP]).try_into().unwrap();
+        if NARROW {
+            let mut acc = [0i32; ANY_GROUP];
+            for (j, &c) in c.iter().enumerate() {
+                let h: &[i32; ANY_GROUP] = x[i - 1 - j..i - 1 - j + ANY_GROUP].try_into().unwrap();
+                for (a, &h) in acc.iter_mut().zip(h) {
+                    *a = a.wrapping_add(c.wrapping_mul(h));
+                }
+            }
+            for ((e, &v), &a) in e.iter_mut().zip(v).zip(&acc) {
+                let d = v as i64 - (a >> shift) as i64;
+                out |= (d.wrapping_add(1 << 31) as u64) >> 32;
+                *e = d as i32;
+            }
+        } else {
+            let mut acc = [0i64; ANY_GROUP];
+            for (j, &c) in c.iter().enumerate() {
+                let h: &[i32; ANY_GROUP] = x[i - 1 - j..i - 1 - j + ANY_GROUP].try_into().unwrap();
+                for (a, &h) in acc.iter_mut().zip(h) {
+                    *a += c as i64 * h as i64;
+                }
+            }
+            for ((e, &v), &a) in e.iter_mut().zip(v).zip(&acc) {
+                let d = (v as i64).wrapping_sub(a >> shift);
+                out |= (d.wrapping_add(1 << 31) as u64) >> 32;
+                *e = d as i32;
+            }
+        }
+        i += ANY_GROUP;
+    }
+    for i in i..n {
+        let mut sum = 0i64;
+        for (j, &c) in c.iter().enumerate() {
+            sum += c as i64 * x[i - 1 - j] as i64;
+        }
+        let d = (x[i] as i64).wrapping_sub(sum >> shift);
+        out |= (d.wrapping_add(1 << 31) as u64) >> 32;
+        e[i] = d as i32;
+    }
+    out == 0
+}
+
+#[cfg(target_arch = "x86_64")]
+#[target_feature(enable = "avx2")]
+unsafe fn expected_lpc_any_avx2<const NARROW: bool>(
+    x: &[i32],
+    c: &[i32],
+    shift: i32,
+    e: &mut [i32],
+) -> bool {
+    expected_lpc_any::<NARROW>(x, c, shift, e)
+}
+
+/// [`expected_lpc_wide`] for shifts 0..32 on NEON: whole groups of 16 with
+/// widening multiply-accumulates (see `kernels::lpc_wide_groups_neon`), the
+/// remaining samples one at a time with the same exact sums.
+#[cfg(target_arch = "aarch64")]
+fn expected_lpc_wide_neon(x: &[i32], c: &[i32], shift: i32, e: &mut [i32]) -> bool {
+    let order = c.len();
+    // SAFETY: NEON was selected by the caller (AArch64 baseline); the
+    // kernel asserts its bounds.
+    let (done, high) =
+        unsafe { crate::kernels::lpc_wide_groups_neon(x, c, shift as u32, &mut e[order..]) };
+    let mut out = u64::from(high);
+    for i in done..x.len() {
+        let mut sum = 0i64;
+        for (j, &c) in c.iter().enumerate() {
+            sum += c as i64 * x[i - 1 - j] as i64;
+        }
+        let d = (x[i] as i64).wrapping_sub(sum >> shift);
+        out |= (d.wrapping_add(1 << 31) as u64) >> 32;
+        e[i] = d as i32;
+    }
+    out == 0
 }
 
 /// Exact i64 accumulation for any order, coefficient size and shift.
@@ -740,40 +853,96 @@ fn rice_codes_body(data: &[u8], mut pos: usize, k: u32, values: &[i32]) -> Optio
     let mut diff = 0u64;
     let fold = |v: i32| ((v << 1) ^ (v >> 31)) as u32 as u64;
     // Compare `len` (at most 57) bits at `pos` with `code`, or bit by bit.
-    let compare = |pos: usize, code: u64, len: u64, u: u64, diff: &mut u64| match data
-        .get(pos >> 3..(pos >> 3) + 8)
-    {
+    // Consecutive codes are one bit string: compare two (or four, when they
+    // fit 57 bits, as short codes usually do) together.
+    // With k above 12 four codes never fit 57 bits: pairs only.
+    let quad_k = if k <= 12 { values.len() } else { 0 };
+    let (quads, _) = values[..quad_k].as_chunks::<4>();
+    let tail = &values[quads.len() * 4..];
+    for &[a, b, c, d] in quads {
+        let [a, b, c, d] = [a, b, c, d].map(fold);
+        let len = |u: u64| (u >> k) + 1 + k as u64;
+        let (la, lb, lc, ld) = (len(a), len(b), len(c), len(d));
+        let total = la + lb + lc + ld;
+        let joined = data.get(pos >> 3..(pos >> 3) + 8);
+        if let (Some(bytes), true) = (joined, total <= 57) {
+            let code = |u: u64| suffix | (u & mask);
+            let expected = (((((code(a) << lb) | code(b)) << lc) | code(c)) << ld) | code(d);
+            let word = u64::from_be_bytes(bytes.try_into().unwrap()) << (pos & 7);
+            diff |= (word >> (64 - total)) ^ expected;
+            pos += total as usize;
+        } else {
+            pos = rice_pair_cold(data, pos, k, a, b, &mut diff)?;
+            pos = rice_pair_cold(data, pos, k, c, d, &mut diff)?;
+        }
+    }
+    let (pairs, rest) = tail.as_chunks::<2>();
+    for &[a, b] in pairs {
+        pos = rice_pair_at(data, pos, k, fold(a), fold(b), &mut diff)?;
+    }
+    for &v in rest {
+        let u = fold(v);
+        let len = (u >> k) + 1 + k as u64;
+        rice_code_at(data, pos, k, u, suffix | (u & mask), len, &mut diff)?;
+        pos += len as usize;
+    }
+    (diff == 0 && pos <= data.len() * 8).then_some(pos)
+}
+
+/// [`rice_pair_at`] out of line, for the rare quads that do not fit.
+#[cold]
+#[inline(never)]
+fn rice_pair_cold(
+    data: &[u8],
+    pos: usize,
+    k: u32,
+    a: u64,
+    b: u64,
+    diff: &mut u64,
+) -> Option<usize> {
+    rice_pair_at(data, pos, k, a, b, diff)
+}
+
+/// Two consecutive Rice codes (folded `a`, `b`) compared at bit `pos` of
+/// `data`, together when they fit 57 bits; differences are ORed into
+/// `diff`. Returns the position after them, None past the end.
+#[inline(always)]
+fn rice_pair_at(data: &[u8], pos: usize, k: u32, a: u64, b: u64, diff: &mut u64) -> Option<usize> {
+    let suffix = 1u64 << k;
+    let mask = suffix - 1;
+    let (ca, la) = (suffix | (a & mask), (a >> k) + 1 + k as u64);
+    let (cb, lb) = (suffix | (b & mask), (b >> k) + 1 + k as u64);
+    let joined = data.get(pos >> 3..(pos >> 3) + 8);
+    if let (Some(bytes), true) = (joined, la + lb <= 57) {
+        let word = u64::from_be_bytes(bytes.try_into().unwrap()) << (pos & 7);
+        *diff |= (word >> (64 - (la + lb))) ^ ((ca << lb) | cb);
+    } else {
+        rice_code_at(data, pos, k, a, ca, la, diff)?;
+        rice_code_at(data, pos + la as usize, k, b, cb, lb, diff)?;
+    }
+    Some(pos + (la + lb) as usize)
+}
+
+/// One Rice code `code` of `len` bits (value `u`) compared at bit `pos`:
+/// with one 8-byte load up to 57 bits, otherwise bit by bit.
+#[inline(always)]
+fn rice_code_at(
+    data: &[u8],
+    pos: usize,
+    k: u32,
+    u: u64,
+    code: u64,
+    len: u64,
+    diff: &mut u64,
+) -> Option<()> {
+    match data.get(pos >> 3..(pos >> 3) + 8) {
         Some(bytes) if len <= 57 => {
             let word = u64::from_be_bytes(bytes.try_into().unwrap()) << (pos & 7);
             *diff |= (word >> (64 - len)) ^ code;
             Some(())
         }
         _ => rice_code_bits(data, pos, k, u)?.then_some(()),
-    };
-    // Two consecutive codes are one bit string: compare them together
-    // when they fit 57 bits.
-    let (pairs, rest) = values.as_chunks::<2>();
-    for &[a, b] in pairs {
-        let (a, b) = (fold(a), fold(b));
-        let (ca, la) = (suffix | (a & mask), (a >> k) + 1 + k as u64);
-        let (cb, lb) = (suffix | (b & mask), (b >> k) + 1 + k as u64);
-        let joined = data.get(pos >> 3..(pos >> 3) + 8);
-        if let (Some(bytes), true) = (joined, la + lb <= 57) {
-            let word = u64::from_be_bytes(bytes.try_into().unwrap()) << (pos & 7);
-            diff |= (word >> (64 - (la + lb))) ^ ((ca << lb) | cb);
-        } else {
-            compare(pos, ca, la, a, &mut diff)?;
-            compare(pos + la as usize, cb, lb, b, &mut diff)?;
-        }
-        pos += (la + lb) as usize;
     }
-    for &v in rest {
-        let u = fold(v);
-        let len = (u >> k) + 1 + k as u64;
-        compare(pos, suffix | (u & mask), len, u, &mut diff)?;
-        pos += len as usize;
-    }
-    (diff == 0 && pos <= data.len() * 8).then_some(pos)
 }
 
 /// One Rice code compared bit by bit; None when it extends past `data`.

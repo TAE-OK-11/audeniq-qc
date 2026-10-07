@@ -620,8 +620,14 @@ fn expected_lpc<const N: usize>(
     }
     let narrow = total * peak < 1 << 31;
     #[cfg(target_arch = "aarch64")]
-    if backend == Backend::Neon && !narrow {
-        return expected_lpc_wide_neon(x, coeff, shift, e);
+    if backend == Backend::Neon {
+        // The grouped kernel keeps four i32 lanes (MLA) on AArch64, where
+        // the constant-order loops become two-lane widening multiply-adds.
+        return if narrow {
+            expected_lpc_any::<true>(x, coeff, shift, e)
+        } else {
+            expected_lpc_wide_neon(x, coeff, shift, e)
+        };
     }
     if N == 0 || !narrow {
         #[cfg(target_arch = "x86_64")]

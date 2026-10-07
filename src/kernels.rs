@@ -601,9 +601,15 @@ impl LpcKernel {
             .then_some(());
         }
         #[cfg(target_arch = "aarch64")]
-        if self.0 == Backend::Neon && !narrow {
-            // SAFETY: NEON selected at construction; bounds are asserted.
-            return lpc_store_wide_neon(samples, coefficients, shift, out).then_some(());
+        if self.0 == Backend::Neon {
+            if !narrow {
+                // SAFETY: NEON selected at construction; bounds are asserted.
+                return lpc_store_wide_neon(samples, coefficients, shift, out).then_some(());
+            }
+            // The constant-order loops compile to two-lane widening
+            // multiply-adds on AArch64; the grouped kernel keeps four i32
+            // lanes (MLA) with one coefficient broadcast per 16 samples.
+            return lpc_store_any::<true>(samples, coefficients, shift, out).then_some(());
         }
         match (N, narrow) {
             (0, true) => lpc_store_any::<true>(samples, coefficients, shift, out),

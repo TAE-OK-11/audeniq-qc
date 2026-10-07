@@ -881,6 +881,39 @@ with CRC checking to the source PCM. Real Arm timing: the workflow
 on the same corpus for round 12, this engine and FFmpeg on x86 and Arm
 runners. [Raw](verified-pipeline/round14-encoder.txt).
 
+## Round 15: same compression, less CPU
+
+Goal: rounds 13-14 made every level smaller but levels 0-4 and level 8
+dearer than round 12. Keep the round-14 bytes (or better) and remove CPU.
+Every speed change below is byte-identical unless stated; instruction
+counts are valgrind/cachegrind on album44 (205 s, 16-bit) and album96 (41 s,
+24-bit), with SHA-256 counted in software (valgrind has no SHA-NI); times are
+paired interleaved runs pinned to one core. Real Arm and x86 runner timing
+comes from `flac-levels.yml` on long albums (16-bit and 24-bit, about 20 and
+6 minutes), minimum of five interleaved runs.
+
+### Hypotheses
+
+| # | Hypothesis | Measurement | Verdict |
+|---|---|---|---|
+| H1 | The autocorrelation windowing loop compiled to scalar int-to-float conversions | Moved into the AVX2/NEON kernel: -42M (L1) / -84M (L3, L5) instructions | Kept |
+| H2 | Run the Rice partition search only for the best 2-3 fixed orders by a whole-block estimate | -53..-82M instructions but +0.009..+0.023% bytes | Rejected (compression) |
+| H2' | Branch-free `rice_estimate` | Same instructions, 10% fewer mispredicts in `choose_rice` | Kept (neutral, simpler) |
+| H3 | The fixed-residual writer pushed one value at a time through a closure (no vectorization) | Zipped slices: -233M instructions at level 1 | Kept |
+| H5 | Fused fixed partition sums in an AVX2 build (8 u32 lanes instead of SSE2's 4) | -119M instructions, -7.5% CPU at level 1 (round 2 had found no gain in the older structure) | Kept |
+| H6 | Skip exact fixed predictors when the LPC estimate beats the fixed predictors' autocorrelation estimate by a margin | Any margin that saves CPU costs +0.004..+0.11% bytes | Rejected |
+| H7 | `choose_rice` keeps only per-order totals while searching | +5..+7M instructions | Rejected |
+| H8 | f32 stereo estimate (ranking only) | +0.012..+0.018% bytes, no instruction gain | Rejected |
+| H9 | Rice writer: four codes per 8-byte store when they fit 56 bits | -107..-113M instructions, -4.1% CPU | Kept |
+| H10 | Frame verification: four expected codes per load | -133M instructions, -2.1% CPU; bit-flip differential test unchanged | Kept |
+| H11 | Short autocorrelation groups were latency bound (4 or 2 accumulation chains) | 2-4 sample vectors per step keep 8 (AVX2) / 16 (NEON) chains; FMA on x86: same bytes at every level, -6.8% CPU (L2), -5.9% (L5) | Kept |
+| H12 | Reuse the stereo-estimate lags in planning (whole-block lags 0-4 at LPC levels, exactly rescaled for wasted bits) | -37M instructions at L2, and 0.013-0.017% smaller files at levels 2-6 | Kept |
+| H13 | Fixed-only levels: plan all four stereo channels exactly instead of estimating | -0.10% bytes but +59M (L0) / +226M (L1) instructions | Rejected (CPU) |
+| H14 | Integer autocorrelation for 16-bit material | 16-bit quantization +0.0004..+0.002% bytes but no AVX2 gain (i32 pair sums need widening every step); 15-bit +0.002..+0.004% | Not adopted |
+| H15-17 | The quad writer/verifier's pair closures were compiled out of line (no BMI2, a call per pair), doubling Rice work on 24-bit material | `inline(always)` pair functions, a cold pair only for non-fitting quads, pairs directly when k > 12: 24-bit L1 3,404M -> 3,178M instructions (round 12: 3,245M), 16-bit slightly lower | Kept |
+| H18 | Level 8 above 48 kHz: orders within 1 of the estimate instead of 2 | +246 bytes on 34 MB of high-resolution files (+0.0007%), -20% CPU, below round 12 | Kept |
+| H19 | i32 coefficients in the wide (24-bit) x86 kernel to obtain VPMULDQ | LLVM still emulates 64-bit products; no gain | Rejected |
+
 ## Remaining hotspots (after round 10), ranked by expected ROI
 
 0. **Conversion after round 10**: the fused MD5/SHA-256 pass is now the

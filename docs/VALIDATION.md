@@ -93,7 +93,7 @@ Arm의 실제 제품명/세대는 확인되지 않아 요청한 Arm 4세대 장�
 ## 적용한 최적화와 남은 검증
 
 * 필요한 codec/container와 JPEG·PNG만 빌드하고, 디코딩과 QC·hash·선택적 지문을 한 흐름에서 처리합니다.
-* AVX2/NEON PCM unpack·FIR·f64 autocorrelation·정수 LPC 예측, RustCrypto SHA-256과 IEEE CRC32 하드웨어 선택을 사용합니다. 전역 target-cpu나 LTO 조절에 의존하지 않습니다.
+* AVX2/NEON PCM unpack·FIR·f64 autocorrelation·정수 LPC 예측, RustCrypto SHA-256과 IEEE CRC32 하드웨어 선택을 사용합니다. 전역 target-cpu에 의존하지 않으며, release 빌드는 두 아키텍처 모두 fat LTO(`codegen-units = 1`)를 사용합니다.
 * 비트 입력을 64-bit cache로 읽고 unary run을 묶어서 처리합니다. FLAC Rice 출력도 단어 단위로 묶어 씁니다.
 * 레벨 4~5의 LPC 후보는 최대 128개의 정수 잔차로 먼저 평가하고, 선택한 후보의 전체 잔차를 정확히 계산합니다. 레벨 6~8은 전체 후보 평가를 유지합니다. 모든 방식에서 PCM을 재검증합니다.
 * 검증한 FLAC은 불필요한 재압축을 생략합니다. 지문을 포함한 JSON은 샘플별 Value 객체를 만들지 않고 직접 직렬화합니다.

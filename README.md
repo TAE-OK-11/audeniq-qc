@@ -105,7 +105,7 @@ target/release/audeniq-qc-tools benchmark-review --seconds 120 --repeats 5 --fin
 
 이전 독립 엔진의 [x86 원시 측정](docs/benchmark-ci-x86.json), [Arm 원시 측정](docs/benchmark-ci-arm.json), [검증 조건](docs/VALIDATION.md)과 최신 [Arm 우선 최적화 결과](docs/GRAVITON4.md)를 공개합니다. 양쪽 모두 디코딩+LUFS/True Peak+PCM SHA-256을 수행합니다. native는 추가 QC 지표도 계산합니다. 지문을 포함한 분석과 검증한 FLAC 변환도 각각 측정합니다. CPU 시간은 user+system, 메모리는 프로세스 최대 RSS이며, AUDENIQ 전체 파이프라인 속도 향상 수치는 아닙니다.
 
-Zen3에서는 AVX2, AArch64에서는 NEON을 사용하며, 전역 `target-cpu=native`나 LTO 변경에 의존하지 않습니다. [EPYC 7763 실행](docs/benchmark-zen3-7763.json)에서도 AVX2 경로를 검증했습니다. GitHub 러너의 실제 CPU는 실행마다 달라질 수 있으므로 각 결과의 CPU 식별자·소스 커밋·선택한 커널을 확인하세요. Arm CPU의 세대/제품명이 확인되지 않아 요청한 Arm 4세대 장비로 표시하지 않습니다. 배포할 장비에서도 위 명령으로 다시 측정할 수 있습니다.
+Zen3에서는 AVX2, AArch64에서는 NEON을 사용하며, 전역 `target-cpu=native`에 의존하지 않습니다. release 프로필은 x86_64와 aarch64 모두 fat LTO(`codegen-units = 1`)로 빌드합니다. SIMD는 런타임 선택 커널이 담당하므로 LTO는 모듈 간 인라이닝과 바이너리 크기(상주 text 페이지)에 대한 설정입니다. [EPYC 7763 실행](docs/benchmark-zen3-7763.json)에서도 AVX2 경로를 검증했습니다. GitHub 러너의 실제 CPU는 실행마다 달라질 수 있으므로 각 결과의 CPU 식별자·소스 커밋·선택한 커널을 확인하세요. Arm CPU의 세대/제품명이 확인되지 않아 요청한 Arm 4세대 장비로 표시하지 않습니다. 배포할 장비에서도 위 명령으로 다시 측정할 수 있습니다.
 
 ## 라이선스
 

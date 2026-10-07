@@ -961,6 +961,29 @@ peak RSS KiB over the corpus, round 12 -> glibc build -> static musl build:
 | 3 | 1.48+0.51 -> 1.69+0.65 -> 1.70+0.66 | 2716 -> 2912 -> 1308 | 1.49+0.52 -> 1.48+0.59 -> 1.52+0.60 | 3500 -> 3844 -> 1608 |
 | 8 | 4.47+1.96 -> 4.31+2.11 -> 4.33+2.11 | 3100 -> 3424 -> 1692 | 4.50+1.89 -> 3.39+1.49 -> 3.46+1.51 | 3948 -> 4176 -> 1992 |
 
+## Round 17: release LTO on x86_64 and aarch64
+
+Cargo's default release profile already runs thin-local LTO over 16 codegen
+units; `lto = "off"` is the real no-LTO build. Same source (`b947a4d`), x86
+(AVX2 kernels), level 5, 16-bit / 24-bit album:
+
+| Build | text bytes | Instructions (valgrind) | Paired CPU vs default |
+|---|---:|---|---|
+| `lto = "off"`, 16 units | 1,043,310 | 11,656M / 5,111M | - |
+| default (thin-local, 16 units) | 1,026,232 | 7,210M / 3,563M | 0 |
+| `lto = "thin"`, 16 units | 1,026,232 | 7,209M / 3,563M | +1.7% / -1.1% (noise) |
+| `lto = "thin"`, 1 unit | 999,732 | 7,271M | - |
+| `lto = "fat"`, 16 units | 950,626 | 7,232M | - |
+| `lto = "fat"`, 1 unit | 955,230 | 7,269M / 3,579M | +3.0% / +1.4% (noise; levels 0 and 8 +0.4% / +2.0%) |
+
+Every variant writes byte-identical FLAC (levels 0/3/5/8, both albums). On
+x86 the hot loops are already one crate with runtime-dispatched kernels, so
+LTO beyond the default is CPU-neutral within +-1% of instructions; fat LTO in
+one unit gives the smallest binary (-7% text, -11% file). The release profile
+now uses it on both architectures (one profile, no per-target split), and
+`flac-levels.yml` builds the previous default as `new-nolto` so each runner
+(Arm and x86) measures the same engine with and without it.
+
 ## Remaining hotspots (after round 10), ranked by expected ROI
 
 0. **Conversion after round 10**: the fused MD5/SHA-256 pass is now the

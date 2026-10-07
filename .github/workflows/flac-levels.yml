@@ -2,6 +2,7 @@ name: FLAC levels on the IETF corpus
 on:
   push:
     paths:
+      - Cargo.toml
       - src/flac.rs
       - src/flac_decode.rs
       - src/kernels.rs
@@ -17,7 +18,7 @@ jobs:
       matrix:
         runner: [ubuntu-24.04, ubuntu-24.04-arm]
     runs-on: ${{ matrix.runner }}
-    timeout-minutes: 75
+    timeout-minutes: 100
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
       - name: Engine before the level and LPC search changes (round 12)
@@ -32,6 +33,13 @@ jobs:
           sudo apt-get install -y -qq ffmpeg time
           grep -m4 -E "model name|CPU implementer|CPU part" /proc/cpuinfo || true
       - run: cargo build --release --locked
+      - name: Same engine without the release LTO (Cargo's default thin-local, 16 units)
+        env:
+          CARGO_PROFILE_RELEASE_LTO: "false"
+          CARGO_PROFILE_RELEASE_CODEGEN_UNITS: "16"
+        run: |
+          cargo build --release --locked --target-dir nolto-target
+          ls -l target/release/audeniq-qc nolto-target/release/audeniq-qc
       - name: Same engine as a static musl binary (peak RSS comparison)
         run: |
           T=$(uname -m)-unknown-linux-musl
@@ -67,6 +75,6 @@ jobs:
       - name: Levels 0-8, three interleaved repeats, every output cross-decoded
         run: |
           python3 tools/scripts/flac_level_bench.py corpus flac-levels.json \
-            round12=round12/target/release/audeniq-qc new=target/release/audeniq-qc new-musl=./new-musl \
+            round12=round12/target/release/audeniq-qc new=target/release/audeniq-qc new-nolto=nolto-target/release/audeniq-qc new-musl=./new-musl \
             --ffmpeg --repeats 5 \
             --albums long44100.wav,long96000.wav

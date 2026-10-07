@@ -442,6 +442,7 @@ impl Encoder {
             frame_buffer: Vec::with_capacity(raw_capacity + 128),
             channel_buffers: std::array::from_fn(|_| Vec::new()),
             planner: Planner {
+                integer: profile.level >= INTEGER_AUTOCORR_LEVEL,
                 fixed_sums: vec![[0; PARTITIONS]; 5],
                 ..Default::default()
             },
@@ -716,6 +717,14 @@ const LPC_PRECISION: u32 = 13;
 const LPC_MAX: f64 = ((1 << (LPC_PRECISION - 1)) - 1) as f64;
 /// Highest LPC order FLAC allows; levels 6-8 search up to it.
 const MAX_LPC_ORDER: usize = 32;
+/// From this level on, autocorrelation runs on the windowed block scaled to
+/// 15-bit integers with exact integer sums: up to 32 lags cost half the
+/// f64 FMAs' time on NEON (two f64 lanes against SMLAL's four products)
+/// and less on AVX2 (VPMADDWD, 16 products). On the corpus every level 5-8
+/// stayed within 0.003% of f64 (level 5 0.003% smaller); levels 2-4 grew
+/// 0.001-0.004% and keep f64 (round 18, H28). Integer sums are exact, so
+/// every backend plans the same models.
+const INTEGER_AUTOCORR_LEVEL: u8 = 5;
 
 /// Rice partition orders above this are never searched. With 4096-frame
 /// blocks the finest partitions hold 16 residuals.
@@ -1083,6 +1092,10 @@ struct Plan {
 }
 #[derive(Default)]
 struct Planner {
+    /// Integer autocorrelation (see [`INTEGER_AUTOCORR_LEVEL`]).
+    integer: bool,
+    /// The windowed block quantized for it, laid out like `windowed`.
+    quantized: Vec<i16>,
     window: Vec<f64>,
     /// Window of the central half block for the stereo estimate.
     stereo_window: Vec<f64>,
@@ -1121,6 +1134,29 @@ impl Planner {
                     1.0 - d * d
                 })
                 .collect();
+        }
+        if self.integer {
+            let peak = crate::kernels::peak_abs(x);
+            if peak == 0 {
+                r.fill(0.0);
+                return window;
+            }
+            // Removing wasted bits halves the peak and doubles the scale
+            // (powers of two, exact), so the integers are the same and every
+            // lag divides by exactly 4^wasted more, as the reused
+            // stereo-estimate lags assume (see `Plan::new`).
+            let scale = crate::kernels::QUANT_MAX / peak as f64;
+            let y = &mut self.quantized;
+            y.resize(2 * AUTOCORR_PAD + n, 0);
+            y[AUTOCORR_PAD + n..].fill(0);
+            kernel.quantize(x, &window, scale, &mut y[AUTOCORR_PAD..AUTOCORR_PAD + n]);
+            let mut sums = [0i64; MAX_LPC_ORDER + 1];
+            let sums = &mut sums[..r.len()];
+            kernel.apply_int(y, n, first, sums);
+            for (r, &sum) in r.iter_mut().zip(sums.iter()) {
+                *r = sum as f64 / (scale * scale);
+            }
+            return window;
         }
         let windowed = &mut self.windowed;
         // Zero padding around the block; the block itself is overwritten.

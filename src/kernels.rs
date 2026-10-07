@@ -1110,21 +1110,36 @@ pub const AUTOCORR_PAD: usize = 48;
 /// `w[AUTOCORR_PAD..AUTOCORR_PAD + n]` holds the block and every other
 /// element of `w` is zero; `w.len()` is at least `2 * AUTOCORR_PAD + n`.
 type WindowFn = fn(&[i32], &[f64], &mut [f64]);
-pub struct AutocorrKernel(fn(&[f64], usize, usize, &mut [f64]), WindowFn);
+type QuantizeFn = fn(&[i32], &[f64], f64, &mut [i16]);
+type IntFn = fn(&[i16], usize, usize, &mut [i64]);
+pub struct AutocorrKernel(
+    fn(&[f64], usize, usize, &mut [f64]),
+    WindowFn,
+    QuantizeFn,
+    IntFn,
+);
 impl AutocorrKernel {
     pub fn new(backend: Backend) -> Self {
         assert!(backend.available());
         #[cfg(target_arch = "x86_64")]
         if backend == Backend::Avx2 {
+            // SAFETY (all closures): AVX2 (and FMA where used) detected; the
+            // bodies are bounds-checked or assert their bounds.
+            let quantize: QuantizeFn = |x, w, scale, y| unsafe { quantize_avx2(x, w, scale, y) };
+            let int: IntFn = |y, n, first, out| unsafe { autocorr_int_avx2(y, n, first, out) };
             if std::is_x86_feature_detected!("fma") {
                 return Self(
                     |w, n, first, out| unsafe { autocorr_fma(w, n, first, out) },
                     |x, w, out| unsafe { window_avx2(x, w, out) },
+                    quantize,
+                    int,
                 );
             }
             return Self(
                 |w, n, first, out| unsafe { autocorr_avx2(w, n, first, out) },
                 |x, w, out| unsafe { window_avx2(x, w, out) },
+                quantize,
+                int,
             );
         }
         #[cfg(target_arch = "aarch64")]
@@ -1132,9 +1147,36 @@ impl AutocorrKernel {
             return Self(
                 |w, n, first, out| unsafe { autocorr_neon(w, n, first, out) },
                 window_body,
+                |x, w, scale, y| unsafe { quantize_neon(x, w, scale, y) },
+                |y, n, first, out| unsafe { autocorr_int_neon(y, n, first, out) },
             );
         }
-        Self(autocorr_scalar, window_body)
+        Self(
+            autocorr_scalar,
+            window_body,
+            quantize_body,
+            autocorr_int_scalar,
+        )
+    }
+    /// Exact integer autocorrelation for lags `first..first + out.len()`
+    /// of `y[AUTOCORR_PAD..AUTOCORR_PAD + n]`, laid out like
+    /// [`Self::apply_from`]'s buffer (zeros around the block). Every |y| is
+    /// at most [`QUANT_MAX`], so i32 lanes take eight products (four
+    /// VPMADDWD pairs) before they are widened: the same sums on every
+    /// backend.
+    pub fn apply_int(&self, y: &[i16], n: usize, first: usize, out: &mut [i64]) {
+        assert!(first + out.len() <= AUTOCORR_PAD - 16 + 1 && y.len() >= 2 * AUTOCORR_PAD + n);
+        assert!(y[..AUTOCORR_PAD].iter().all(|&v| v == 0));
+        assert!(y[AUTOCORR_PAD + n..].iter().all(|&v| v == 0));
+        (self.3)(y, n, first, out)
+    }
+    /// `y[i] = round(x[i] * w[i] * scale)` (ties to even), for a scale of at
+    /// most [`QUANT_MAX`] / max |x| so every |y| is within [`QUANT_MAX`]
+    /// (clamped as well). IEEE products and rounding: identical on every
+    /// backend.
+    pub fn quantize(&self, x: &[i32], w: &[f64], scale: f64, y: &mut [i16]) {
+        assert!(x.len() == w.len() && x.len() == y.len());
+        (self.2)(x, w, scale, y)
     }
     pub fn apply(&self, w: &[f64], n: usize, out: &mut [f64]) {
         self.apply_from(w, n, 0, out)
@@ -1153,6 +1195,213 @@ impl AutocorrKernel {
         (self.1)(x, w, out)
     }
 }
+/// Largest |sample| of the integer autocorrelation (15 bits): products stay
+/// below 2^28, so eight of them (four VPMADDWD pairs) fit an i32 lane.
+pub const QUANT_MAX: f64 = 16383.0;
+
+#[inline(always)]
+fn quantize_body(x: &[i32], w: &[f64], scale: f64, y: &mut [i16]) {
+    let limit = QUANT_MAX as i32;
+    for ((y, &x), &w) in y.iter_mut().zip(x).zip(w) {
+        let v = (x as f64 * w * scale).round_ties_even() as i32;
+        *y = v.clamp(-limit, limit) as i16;
+    }
+}
+/// [`quantize_body`] eight samples at a time: the same products, rounding
+/// (VROUNDPD to nearest even) and clamp.
+#[cfg(target_arch = "x86_64")]
+#[target_feature(enable = "avx2")]
+unsafe fn quantize_avx2(x: &[i32], w: &[f64], scale: f64, y: &mut [i16]) {
+    use std::arch::x86_64::*;
+    const NEAREST: i32 = _MM_FROUND_TO_NEAREST_INT | _MM_FROUND_NO_EXC;
+    let n = x.len();
+    let s = _mm256_set1_pd(scale);
+    let limit = _mm_set1_epi32(QUANT_MAX as i32);
+    let quarter = |at: usize, v: __m128i| {
+        let p = _mm256_mul_pd(
+            _mm256_mul_pd(_mm256_cvtepi32_pd(v), _mm256_loadu_pd(w.as_ptr().add(at))),
+            s,
+        );
+        let q = _mm256_cvtpd_epi32(_mm256_round_pd::<NEAREST>(p));
+        _mm_max_epi32(
+            _mm_min_epi32(q, limit),
+            _mm_sub_epi32(_mm_setzero_si128(), limit),
+        )
+    };
+    let mut i = 0;
+    while i + 8 <= n {
+        let v = _mm256_loadu_si256(x.as_ptr().add(i).cast());
+        let lo = quarter(i, _mm256_castsi256_si128(v));
+        let hi = quarter(i + 4, _mm256_extracti128_si256::<1>(v));
+        _mm_storeu_si128(y.as_mut_ptr().add(i).cast(), _mm_packs_epi32(lo, hi));
+        i += 8;
+    }
+    quantize_body(&x[i..], &w[i..], scale, &mut y[i..]);
+}
+
+/// [`quantize_body`] four samples at a time: FCVTNS rounds to nearest even.
+#[cfg(target_arch = "aarch64")]
+#[target_feature(enable = "neon")]
+unsafe fn quantize_neon(x: &[i32], w: &[f64], scale: f64, y: &mut [i16]) {
+    use std::arch::aarch64::*;
+    let n = x.len();
+    let s = vdupq_n_f64(scale);
+    let limit = vdupq_n_s32(QUANT_MAX as i32);
+    let mut i = 0;
+    while i + 4 <= n {
+        let v = vld1q_s32(x.as_ptr().add(i));
+        let lo = vmulq_f64(
+            vmulq_f64(
+                vcvtq_f64_s64(vmovl_s32(vget_low_s32(v))),
+                vld1q_f64(w.as_ptr().add(i)),
+            ),
+            s,
+        );
+        let hi = vmulq_f64(
+            vmulq_f64(
+                vcvtq_f64_s64(vmovl_high_s32(v)),
+                vld1q_f64(w.as_ptr().add(i + 2)),
+            ),
+            s,
+        );
+        let q = vmovn_high_s64(vmovn_s64(vcvtnq_s64_f64(lo)), vcvtnq_s64_f64(hi));
+        let q = vmaxq_s32(vminq_s32(q, limit), vnegq_s32(limit));
+        vst1_s16(y.as_mut_ptr().add(i), vmovn_s32(q));
+        i += 4;
+    }
+    quantize_body(&x[i..], &w[i..], scale, &mut y[i..]);
+}
+
+fn autocorr_int_scalar(y: &[i16], n: usize, first: usize, out: &mut [i64]) {
+    let x = &y[AUTOCORR_PAD..AUTOCORR_PAD + n];
+    for (j, r) in out.iter_mut().enumerate() {
+        let lag = first + j;
+        *r = (lag..n).map(|i| x[i] as i64 * x[i - lag] as i64).sum();
+    }
+}
+
+/// [`AutocorrKernel::apply_int`] on AVX2: VPMADDWD of 16 samples with the
+/// samples `lag` earlier adds two products per i32 lane; four lags per pass,
+/// widened to i64 every four steps.
+#[cfg(target_arch = "x86_64")]
+#[target_feature(enable = "avx2")]
+unsafe fn autocorr_int_avx2(y: &[i16], n: usize, first: usize, out: &mut [i64]) {
+    let end = AUTOCORR_PAD + n.next_multiple_of(16);
+    assert!(end <= y.len());
+    let mut done = 0;
+    while done < out.len() {
+        let width = (out.len() - done).min(4);
+        let lag = first + done;
+        let out = &mut out[done..done + width];
+        match width {
+            4 => autocorr_int_group_avx2::<4>(y, end, lag, out),
+            3 => autocorr_int_group_avx2::<3>(y, end, lag, out),
+            2 => autocorr_int_group_avx2::<2>(y, end, lag, out),
+            _ => autocorr_int_group_avx2::<1>(y, end, lag, out),
+        }
+        done += width;
+    }
+}
+#[cfg(target_arch = "x86_64")]
+#[inline(always)]
+unsafe fn autocorr_int_group_avx2<const G: usize>(
+    y: &[i16],
+    end: usize,
+    first: usize,
+    out: &mut [i64],
+) {
+    use std::arch::x86_64::*;
+    let p = y.as_ptr();
+    let mut wide = [[_mm256_setzero_si256(); 2]; G];
+    let mut i = AUTOCORR_PAD;
+    while i < end {
+        let stop = (i + 64).min(end);
+        let mut acc = [_mm256_setzero_si256(); G];
+        while i < stop {
+            let x = _mm256_loadu_si256(p.add(i).cast());
+            for (j, acc) in acc.iter_mut().enumerate() {
+                let h = _mm256_loadu_si256(p.add(i - first - j).cast());
+                *acc = _mm256_add_epi32(*acc, _mm256_madd_epi16(x, h));
+            }
+            i += 16;
+        }
+        for (wide, acc) in wide.iter_mut().zip(acc) {
+            wide[0] = _mm256_add_epi64(wide[0], _mm256_cvtepi32_epi64(_mm256_castsi256_si128(acc)));
+            wide[1] = _mm256_add_epi64(
+                wide[1],
+                _mm256_cvtepi32_epi64(_mm256_extracti128_si256::<1>(acc)),
+            );
+        }
+    }
+    for (r, wide) in out.iter_mut().zip(wide) {
+        let mut lanes = [0i64; 4];
+        _mm256_storeu_si256(
+            lanes.as_mut_ptr().cast(),
+            _mm256_add_epi64(wide[0], wide[1]),
+        );
+        *r = lanes.iter().sum();
+    }
+}
+
+/// [`AutocorrKernel::apply_int`] on NEON: SMLAL/SMLAL2 of eight samples with
+/// the samples `lag` earlier into two i32x4 lanes per lag, eight lags per
+/// pass, accumulated pairwise into i64 (SADALP) every eight steps.
+#[cfg(target_arch = "aarch64")]
+#[target_feature(enable = "neon")]
+unsafe fn autocorr_int_neon(y: &[i16], n: usize, first: usize, out: &mut [i64]) {
+    let end = AUTOCORR_PAD + n.next_multiple_of(16);
+    assert!(end <= y.len());
+    let mut done = 0;
+    while done < out.len() {
+        let left = out.len() - done;
+        let lag = first + done;
+        let width = if left >= 8 {
+            autocorr_int_group_neon::<8>(y, end, lag, &mut out[done..]);
+            8
+        } else if left >= 4 {
+            autocorr_int_group_neon::<4>(y, end, lag, &mut out[done..]);
+            4
+        } else {
+            autocorr_int_group_neon::<2>(y, end, lag, &mut out[done..]);
+            2
+        };
+        done += width;
+    }
+}
+#[cfg(target_arch = "aarch64")]
+#[target_feature(enable = "neon")]
+unsafe fn autocorr_int_group_neon<const G: usize>(
+    y: &[i16],
+    end: usize,
+    first: usize,
+    out: &mut [i64],
+) {
+    use std::arch::aarch64::*;
+    let p = y.as_ptr();
+    let mut wide = [vdupq_n_s64(0); G];
+    let mut i = AUTOCORR_PAD;
+    while i < end {
+        let stop = (i + 64).min(end);
+        let mut lo = [vdupq_n_s32(0); G];
+        let mut hi = [vdupq_n_s32(0); G];
+        while i < stop {
+            let x = vld1q_s16(p.add(i));
+            for j in 0..G {
+                let h = vld1q_s16(p.add(i - first - j));
+                lo[j] = vmlal_s16(lo[j], vget_low_s16(x), vget_low_s16(h));
+                hi[j] = vmlal_high_s16(hi[j], x, h);
+            }
+            i += 8;
+        }
+        for j in 0..G {
+            wide[j] = vpadalq_s32(vpadalq_s32(wide[j], lo[j]), hi[j]);
+        }
+    }
+    for (r, wide) in out.iter_mut().zip(wide) {
+        *r = vaddvq_s64(wide);
+    }
+}
+
 #[inline(always)]
 fn window_body(x: &[i32], w: &[f64], out: &mut [f64]) {
     let n = out.len();
@@ -1781,6 +2030,85 @@ mod tests {
                             "n={n} lags={lags} lag={lag}"
                         );
                     }
+                }
+            }
+        }
+    }
+    /// Integer autocorrelation: exact sums at the quantization extremes (all
+    /// samples +-QUANT_MAX fill every i32 lane to its widening bound), for
+    /// every lag range and block-length tail.
+    #[test]
+    fn integer_autocorrelation_is_exact() {
+        let limit = QUANT_MAX as i16;
+        let mut seed = 7u32;
+        for n in (1..70).chain([255, 256, 257, 4095, 4096, 4097, 16384]) {
+            for pattern in 0..3 {
+                let x: Vec<i16> = (0..n)
+                    .map(|i| match pattern {
+                        0 => limit,
+                        1 => {
+                            if i % 2 == 0 {
+                                limit
+                            } else {
+                                -limit
+                            }
+                        }
+                        _ => {
+                            seed = seed.wrapping_mul(1664525).wrapping_add(1013904223);
+                            ((seed >> 16) as i32 % (QUANT_MAX as i32 + 1)) as i16
+                        }
+                    })
+                    .collect();
+                let mut y = vec![0i16; AUTOCORR_PAD];
+                y.extend_from_slice(&x);
+                y.resize(2 * AUTOCORR_PAD + n, 0);
+                for first in [0usize, 5, 9, 13] {
+                    for count in [1usize, 2, 3, 4, 5, 8, 9, 12, 20, 24] {
+                        if first + count > 33 {
+                            continue;
+                        }
+                        let expected: Vec<i64> = (first..first + count)
+                            .map(|lag| (lag..n).map(|i| x[i] as i64 * x[i - lag] as i64).sum())
+                            .collect();
+                        for backend in [Backend::Scalar, Backend::detect()] {
+                            let mut out = vec![i64::MIN; count];
+                            AutocorrKernel::new(backend).apply_int(&y, n, first, &mut out);
+                            assert_eq!(out, expected, "n={n} pattern={pattern} first={first}");
+                        }
+                    }
+                }
+            }
+        }
+    }
+    /// Quantization: every backend gives the scalar rounding (ties to even)
+    /// and stays within QUANT_MAX, including halfway products and tails.
+    #[test]
+    fn quantize_matches_scalar_rounding() {
+        for n in (1..40).chain([4095, 4096]) {
+            let x: Vec<i32> = (0..n)
+                .map(|i| ((i as i32 * 7919) % 65536) - 32768)
+                .collect();
+            let w: Vec<f64> = (0..n)
+                .map(|i| {
+                    if i % 5 == 0 {
+                        0.5
+                    } else {
+                        1.0 - (i as f64 / n as f64)
+                    }
+                })
+                .collect();
+            for scale in [QUANT_MAX / 32768.0, 0.5, 1.0 / 3.0] {
+                let mut expected = vec![0i16; n];
+                quantize_body(&x, &w, scale, &mut expected);
+                for (y, (&x, &w)) in expected.iter().zip(x.iter().zip(&w)) {
+                    let exact = (x as f64 * w * scale).round_ties_even();
+                    assert!(y.unsigned_abs() as f64 <= QUANT_MAX);
+                    assert_eq!(*y as f64, exact.clamp(-QUANT_MAX, QUANT_MAX));
+                }
+                for backend in [Backend::Scalar, Backend::detect()] {
+                    let mut y = vec![i16::MIN; n];
+                    AutocorrKernel::new(backend).quantize(&x, &w, scale, &mut y);
+                    assert_eq!(y, expected, "n={n} scale={scale}");
                 }
             }
         }

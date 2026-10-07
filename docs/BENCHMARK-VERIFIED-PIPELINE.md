@@ -984,6 +984,11 @@ now uses it on both architectures (one profile, no per-target split), and
 `flac-levels.yml` builds the previous default as `new-nolto` so each runner
 (Arm and x86) measures the same engine with and without it.
 
+Runners, commit `e353fe4` (long albums 16-bit + 24-bit CPU s, fat LTO vs the
+previous thin-local profile): x86 level 5 1.64+0.66 vs 1.67+0.68, levels
+6-8 1-2% faster, peak RSS about 100 KiB lower; Arm level 5 1.86+0.72 vs
+1.85+0.72, levels 0-8 within +-1%. Same bytes everywhere.
+
 ## Round 18: level 5 orders to 32 again; 16-bit LPC kernels
 
 Round 14 capped every level at LPC order 12 up to 48 kHz (streamable
@@ -1002,13 +1007,18 @@ level 5, encoder only = total minus software SHA-256 and MD5.
 | H25 | Extra penalty per LPC order (fewer taps in residual and verify) | 8 / 16 / 32 / 64 bits per order: +0.06 / +0.13 / +0.31 / +0.64% bytes; the Levinson estimate is already calibrated | Rejected |
 | H26 | 16-bit samples (every subframe with peak < 2^15) need only 16x16-bit products: VPMADDWD on sample pairs (x86), SMLAL/SMLAL2 (AArch64, twice the issue rate of 32-bit MLA on Neoverse) for orders 9-32; the verifier gets its own 16-bit kernel (highest taps paired first on x86, multiply-by-lane on NEON) so it stays independent of the encoder | Encoder LPC residual 305M -> 117M, verify 316M -> 110M; identical bytes on x86 and aarch64 (QEMU) at levels 5 and 8; a corrupted encoder kernel fails verification | Kept |
 | S1 | Level 8 costs orders +-1 around the estimate at every rate (was +-2 up to 48 kHz) | +0.007% bytes, -12% level 8 instructions | Kept |
+| R1 | Runners after H26 (commit `0bcb0fe`) | x86 level 5 16-bit 6% below round 12; Arm 1.86 -> 2.13 s, 7% above round 12 (1.99 s) and 16% above round 15 (`2baeaf8`, 1.83 s) | Arm regression to remove |
+| A1 | Why round 15 (`2baeaf8`) level 5 is faster: per-function instructions against it | Encoder 2,226M (round 15) vs 2,203M; LPC residual + verify 370M -> 227M (H26), autocorrelation 162M -> 312M: lags 13-32 in f64, two lanes per NEON vector | Autocorrelation is the difference |
+| H27 | Lags 13-32 in f32 (twice the lanes) | Corpus +0.33%, mono +2.5%: the high-order Levinson recursion needs the precision | Rejected |
+| H28a | Exact integer lags 9-32 of the windowed block scaled to 14-16 bits, f64 lags 0-8 | +0.5..+1.2%: lags of different precision in one Toeplitz system | Rejected |
+| H28 | Every lag (stereo estimate and planning) exact in integers of the windowed block scaled to 15 bits (scale = 16383 / max \|x\|, round to even): VPMADDWD (16 products) / SMLAL (4 products) into i32 lanes, widened to i64 every eight products; f64 FMA does 4 / 2 | Levels 5-8 0.001-0.003% smaller than f64 (16-bit scaling within 0.001%, 13-bit +0.02%); levels 2-4 +0.001-0.004%, so they keep f64. x86 level 5 paired CPU vs round 15: -6% (16-bit), -13% (24-bit). Exact sums: x86 and Arm (QEMU) write identical bytes | Kept for levels 5-8 |
 
-Level 5 result: corpus 67,306,865 -> 67,018,905 bytes (-0.43%; 44.1 kHz
-stereo -1.12%, mono -2.8%; high resolution unchanged), FFmpeg 6.1 level 5
-68,251,657. Encoder instructions (album44) 2,107M -> 2,203M (+4.5%; +23%
-without H26); x86 paired CPU album44 +5% median, album96 unchanged. Levels
-6 / 7 / 8: 66,916,787 / 66,841,097 / 66,827,215 bytes (were 67,204,708 /
-67,137,178 / 67,123,887). Arm and x86 runner results: `flac-levels.yml`.
+Level 5 result: corpus 67,306,865 -> 67,017,261 bytes (-0.43%; 44.1 kHz
+stereo -1.1%, mono -2.8%; high resolution unchanged), FFmpeg 6.1 level 5
+68,251,657. Levels 6 / 7 / 8: 66,915,041 / 66,840,693 / 66,826,844 bytes
+(were 67,204,708 / 67,137,178 / 67,123,887). Arm and x86 runner results,
+including round 15 and a level-5 stage profile of both engines:
+`flac-levels.yml`.
 
 ## Remaining hotspots (after round 10), ranked by expected ROI
 

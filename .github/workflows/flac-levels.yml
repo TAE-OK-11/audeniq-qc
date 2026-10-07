@@ -17,7 +17,7 @@ jobs:
       matrix:
         runner: [ubuntu-24.04, ubuntu-24.04-arm]
     runs-on: ${{ matrix.runner }}
-    timeout-minutes: 45
+    timeout-minutes: 75
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
       - name: Engine before the level and LPC search changes (round 12)
@@ -32,6 +32,13 @@ jobs:
           sudo apt-get install -y -qq ffmpeg time
           grep -m4 -E "model name|CPU implementer|CPU part" /proc/cpuinfo || true
       - run: cargo build --release --locked
+      - name: Same engine as a static musl binary (peak RSS comparison)
+        run: |
+          T=$(uname -m)-unknown-linux-musl
+          rustup target add $T
+          cargo build --release --locked --target $T --target-dir musl-target
+          cp musl-target/$T/release/audeniq-qc new-musl
+          file new-musl
       - run: cargo build --manifest-path round12/Cargo.toml --release --locked --target-dir round12/target
       - name: CC0 corpus (IETF CELLAR FLAC test files, supported formats) as WAV
         run: |
@@ -60,5 +67,6 @@ jobs:
       - name: Levels 0-8, three interleaved repeats, every output cross-decoded
         run: |
           python3 tools/scripts/flac_level_bench.py corpus flac-levels.json \
-            round12=round12/target/release/audeniq-qc new=target/release/audeniq-qc --ffmpeg --repeats 5 \
+            round12=round12/target/release/audeniq-qc new=target/release/audeniq-qc new-musl=./new-musl \
+            --ffmpeg --repeats 5 \
             --albums long44100.wav,long96000.wav

@@ -48,6 +48,16 @@ jobs:
           cp musl-target/$T/release/audeniq-qc new-musl
           file new-musl
       - run: cargo build --manifest-path round12/Cargo.toml --release --locked --target-dir round12/target
+      - name: Level 5 reference for the stage profile (round 15, merged to main as 2baeaf8)
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: 2baeaf8e4b6b11ddf6b6c28ac4b78b64caf6fa18
+          path: round15
+      - name: Round 15 engine and stage-profiled builds (development feature profile-native)
+        run: |
+          cargo build --manifest-path round15/Cargo.toml --release --locked --target-dir round15/target
+          cargo build --release --locked --features profile-native --target-dir profile-target
+          cargo build --manifest-path round15/Cargo.toml --release --locked --features profile-native --target-dir round15/profile-target
       - name: CC0 corpus (IETF CELLAR FLAC test files, supported formats) as WAV
         run: |
           git clone --depth 1 https://github.com/ietf-wg-cellar/flac-test-files corpus-src
@@ -75,6 +85,31 @@ jobs:
       - name: Levels 0-8, three interleaved repeats, every output cross-decoded
         run: |
           python3 tools/scripts/flac_level_bench.py corpus flac-levels.json \
-            round12=round12/target/release/audeniq-qc new=target/release/audeniq-qc new-nolto=nolto-target/release/audeniq-qc new-musl=./new-musl \
+            round12=round12/target/release/audeniq-qc round15=round15/target/release/audeniq-qc new=target/release/audeniq-qc new-nolto=nolto-target/release/audeniq-qc new-musl=./new-musl \
             --ffmpeg --repeats 5 \
             --albums long44100.wav,long96000.wav
+      - name: Level 5 stage profile, round 15 and this engine (wall ms, best of 3)
+        run: |
+          for engine in round15=round15/profile-target/release/audeniq-qc new=profile-target/release/audeniq-qc; do
+            for album in long44100.wav long96000.wav; do
+              for r in 1 2 3; do
+                rm -f p.flac
+                ${engine#*=} convert $album p.flac --compression-level 5 2> "p-${engine%%=*}-$album-$r.json" > /dev/null
+              done
+            done
+          done
+          python3 - <<'PY'
+          import glob, json
+          best = {}
+          for f in glob.glob("p-*.json"):
+              _, engine, album, _ = f.split("-", 3)
+              stages = json.load(open(f))["native_profile"]["stages"]
+              for name, v in stages.items():
+                  if v["calls"]:
+                      key = (album, name, engine)
+                      best[key] = min(best.get(key, 1e18), v["wall_ns"] / 1e6)
+          for album in sorted({k[0] for k in best}):
+              print(f"\n{album}\n| stage | round15 ms | new ms |\n|---|---:|---:|")
+              for name in sorted({k[1] for k in best if k[0] == album}):
+                  print(f"| {name} | {best.get((album, name, 'round15'), 0):.0f} | {best.get((album, name, 'new'), 0):.0f} |")
+          PY

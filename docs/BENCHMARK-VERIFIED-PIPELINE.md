@@ -984,6 +984,32 @@ now uses it on both architectures (one profile, no per-target split), and
 `flac-levels.yml` builds the previous default as `new-nolto` so each runner
 (Arm and x86) measures the same engine with and without it.
 
+## Round 18: level 5 orders to 32 again; 16-bit LPC kernels
+
+Round 14 capped every level at LPC order 12 up to 48 kHz (streamable
+subset). On real 44.1 kHz material that cap made level 5 noticeably larger,
+so the cap is lifted for levels 5-8 (levels 0-4 never exceed 12 and stay
+subset streams; blocks stay within the subset everywhere). Every FLAC
+decoder (libFLAC, FFmpeg) reads these streams; strict subset hardware may
+not. Same corpus; x86 instructions by valgrind on album44 (16-bit) at
+level 5, encoder only = total minus software SHA-256 and MD5.
+
+| # | Hypothesis | Measurement | Verdict |
+|---|---|---|---|
+| C1 | Order cap 12 at 44.1-48 kHz costs level 5 | Uncapped order 16 / 20 / 24 / 32: corpus -0.15 / -0.27 / -0.35 / -0.45% (44.1 kHz stereo -0.37 / -0.65 / -0.85 / -1.12%); encoder instructions +5% / +11% / +15% / +23% | Order 32 at levels 5-8 |
+| C2 | Above 48 kHz level 5 order 32 instead of 16 | High-resolution files -0.05%, 24-bit album encoder +7.6% | Rejected; level 5 stays 16 there |
+| H24 | Lags 13-32 only while the Levinson estimate still falls (staged autocorrelation) | Threshold 0 / 0.01 / 0.03 / 0.1 bit per sample: -1.1 / -1.5 / -2.4 / -4.8% instructions for +0.03 / +0.06 / +0.13 / +0.34% bytes | Rejected |
+| H25 | Extra penalty per LPC order (fewer taps in residual and verify) | 8 / 16 / 32 / 64 bits per order: +0.06 / +0.13 / +0.31 / +0.64% bytes; the Levinson estimate is already calibrated | Rejected |
+| H26 | 16-bit samples (every subframe with peak < 2^15) need only 16x16-bit products: VPMADDWD on sample pairs (x86), SMLAL/SMLAL2 (AArch64, twice the issue rate of 32-bit MLA on Neoverse) for orders 9-32; the verifier gets its own 16-bit kernel (highest taps paired first on x86, multiply-by-lane on NEON) so it stays independent of the encoder | Encoder LPC residual 305M -> 117M, verify 316M -> 110M; identical bytes on x86 and aarch64 (QEMU) at levels 5 and 8; a corrupted encoder kernel fails verification | Kept |
+| S1 | Level 8 costs orders +-1 around the estimate at every rate (was +-2 up to 48 kHz) | +0.007% bytes, -12% level 8 instructions | Kept |
+
+Level 5 result: corpus 67,306,865 -> 67,018,905 bytes (-0.43%; 44.1 kHz
+stereo -1.12%, mono -2.8%; high resolution unchanged), FFmpeg 6.1 level 5
+68,251,657. Encoder instructions (album44) 2,107M -> 2,203M (+4.5%; +23%
+without H26); x86 paired CPU album44 +5% median, album96 unchanged. Levels
+6 / 7 / 8: 66,916,787 / 66,841,097 / 66,827,215 bytes (were 67,204,708 /
+67,137,178 / 67,123,887). Arm and x86 runner results: `flac-levels.yml`.
+
 ## Remaining hotspots (after round 10), ranked by expected ROI
 
 0. **Conversion after round 10**: the fused MD5/SHA-256 pass is now the

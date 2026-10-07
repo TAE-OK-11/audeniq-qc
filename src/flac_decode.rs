@@ -619,6 +619,15 @@ fn expected_lpc<const N: usize>(
         return expected_lpc_wide(x, coeff, shift, e);
     }
     let narrow = total * peak < 1 << 31;
+    // 16-bit samples of a high order: 16-bit multiplies (written apart from
+    // the encoder's kernels, so this check stays independent of them).
+    // Under 2^30 every residual fits i32 as well.
+    if N == 0 && peak < 1 << 15 && total * peak < 1 << 30 && backend != Backend::Scalar {
+        SHORT_SCRATCH.with(|scratch| {
+            expected_lpc_short(x, coeff, shift, e, backend, &mut scratch.borrow_mut())
+        });
+        return true;
+    }
     #[cfg(target_arch = "aarch64")]
     if backend == Backend::Neon && !narrow {
         return expected_lpc_wide_neon(x, coeff, shift, e);
@@ -650,6 +659,165 @@ fn expected_lpc<const N: usize>(
     }
     let _ = backend;
     expected_lpc_body::<N>(x, &c, shift, e)
+}
+
+thread_local! {
+    /// Sample layout buffer of [`expected_lpc_short`].
+    static SHORT_SCRATCH: std::cell::RefCell<Vec<i32>> = const { std::cell::RefCell::new(Vec::new()) };
+}
+
+/// [`expected_lpc`] for orders 9..=32 when every |x| < 2^15 and
+/// sum |c| * max|x| < 2^30: 16-bit products summed exactly in i32, every
+/// residual within i32. Vector groups of 16, then one sample at a time.
+fn expected_lpc_short(
+    x: &[i32],
+    c: &[i32],
+    shift: i32,
+    e: &mut [i32],
+    backend: Backend,
+    scratch: &mut Vec<i32>,
+) {
+    let order = c.len();
+    assert!((9..=32).contains(&order) && (0..32).contains(&shift) && e.len() == x.len());
+    let done = match backend {
+        #[cfg(target_arch = "x86_64")]
+        // SAFETY: the encoder checked AVX2 available; loads stay inside
+        // `scratch` and `x`, stores inside `e` (asserted).
+        Backend::Avx2 => unsafe { expected_lpc_pairs_avx2(x, c, shift, e, scratch) },
+        #[cfg(target_arch = "aarch64")]
+        // SAFETY: NEON is part of the AArch64 baseline.
+        Backend::Neon => unsafe { expected_lpc_lanes_neon(x, c, shift, e, scratch) },
+        _ => order,
+    };
+    for i in done.max(order)..x.len() {
+        let sum: i64 = (0..order).map(|j| c[j] as i64 * x[i - 1 - j] as i64).sum();
+        e[i] = (x[i] as i64 - (sum >> shift)) as i32;
+    }
+}
+
+/// [`expected_lpc_short`] on AVX2. `q[m]` packs x[m] (low half) and x[m + 1]
+/// (high half); taps pair from the highest order down, (L-1, L-2), (L-3,
+/// L-4), ..., so VPMADDWD of q[i - L + 2k] with (c[L-1-2k], c[L-2-2k]) adds
+/// two taps of eight residuals (an odd order's last pair multiplies x[i] by
+/// zero). Returns the first sample not done.
+#[cfg(target_arch = "x86_64")]
+#[target_feature(enable = "avx2")]
+unsafe fn expected_lpc_pairs_avx2(
+    x: &[i32],
+    c: &[i32],
+    shift: i32,
+    e: &mut [i32],
+    q: &mut Vec<i32>,
+) -> usize {
+    use std::arch::x86_64::*;
+    let order = c.len();
+    let n = x.len();
+    q.clear();
+    q.extend(x.windows(2).map(|w| (w[0] & 0xffff) | (w[1] << 16)));
+    q.push(x[n - 1] & 0xffff);
+    let mut pairs = [_mm256_setzero_si256(); 16];
+    let count = order.div_ceil(2);
+    for (k, p) in pairs[..count].iter_mut().enumerate() {
+        let low = c[order - 1 - 2 * k];
+        let high = if 2 * k + 2 <= order {
+            c[order - 2 - 2 * k]
+        } else {
+            0
+        };
+        *p = _mm256_set1_epi32((low & 0xffff) | (high << 16));
+    }
+    let shift = _mm_cvtsi32_si128(shift);
+    let mut i = order;
+    while i + 16 <= n {
+        let base = q.as_ptr().add(i - order);
+        let mut lo = _mm256_setzero_si256();
+        let mut hi = _mm256_setzero_si256();
+        for (k, p) in pairs[..count].iter().enumerate() {
+            let h = base.add(2 * k);
+            lo = _mm256_add_epi32(lo, _mm256_madd_epi16(_mm256_loadu_si256(h.cast()), *p));
+            hi = _mm256_add_epi32(
+                hi,
+                _mm256_madd_epi16(_mm256_loadu_si256(h.add(8).cast()), *p),
+            );
+        }
+        let v0 = _mm256_loadu_si256(x.as_ptr().add(i).cast());
+        let v1 = _mm256_loadu_si256(x.as_ptr().add(i + 8).cast());
+        let d0 = _mm256_sub_epi32(v0, _mm256_sra_epi32(lo, shift));
+        let d1 = _mm256_sub_epi32(v1, _mm256_sra_epi32(hi, shift));
+        _mm256_storeu_si256(e.as_mut_ptr().add(i).cast(), d0);
+        _mm256_storeu_si256(e.as_mut_ptr().add(i + 8).cast(), d1);
+        i += 16;
+    }
+    i
+}
+
+/// [`expected_lpc_short`] on NEON: the samples as i16 and the coefficients
+/// in vectors of eight, each multiplied by lane (SMLAL/SMLAL2 by element)
+/// into four i32x4 accumulators of 16 residuals. Returns the first sample
+/// not done.
+#[cfg(target_arch = "aarch64")]
+#[target_feature(enable = "neon")]
+unsafe fn expected_lpc_lanes_neon(
+    x: &[i32],
+    c: &[i32],
+    shift: i32,
+    e: &mut [i32],
+    scratch: &mut Vec<i32>,
+) -> usize {
+    use std::arch::aarch64::*;
+    let order = c.len();
+    let n = x.len();
+    scratch.clear();
+    scratch.resize(n.div_ceil(2), 0);
+    // SAFETY: the i32 buffer holds at least n i16 values.
+    let s = std::slice::from_raw_parts_mut(scratch.as_mut_ptr().cast::<i16>(), n);
+    for (s, &v) in s.iter_mut().zip(x) {
+        *s = v as i16;
+    }
+    let mut taps = [0i16; 32];
+    for (t, &c) in taps.iter_mut().zip(c) {
+        *t = c as i16;
+    }
+    let p = s.as_ptr();
+    let shift = vdupq_n_s32(-shift);
+    let mut i = order;
+    while i + 16 <= n {
+        let mut a = [vdupq_n_s32(0); 4];
+        for block in 0..order.div_ceil(8) {
+            let cv = vld1q_s16(taps.as_ptr().add(8 * block));
+            macro_rules! lane {
+                ($l:literal) => {
+                    let j = 8 * block + $l;
+                    if j < order {
+                        let h = p.add(i - 1 - j);
+                        let v0 = vld1q_s16(h);
+                        let v1 = vld1q_s16(h.add(8));
+                        a[0] = vmlal_laneq_s16::<$l>(a[0], vget_low_s16(v0), cv);
+                        a[1] = vmlal_high_laneq_s16::<$l>(a[1], v0, cv);
+                        a[2] = vmlal_laneq_s16::<$l>(a[2], vget_low_s16(v1), cv);
+                        a[3] = vmlal_high_laneq_s16::<$l>(a[3], v1, cv);
+                    }
+                };
+            }
+            lane!(0);
+            lane!(1);
+            lane!(2);
+            lane!(3);
+            lane!(4);
+            lane!(5);
+            lane!(6);
+            lane!(7);
+        }
+        for (k, &a) in a.iter().enumerate() {
+            let v = vld1q_s32(x.as_ptr().add(i + 4 * k));
+            vst1q_s32(
+                e.as_mut_ptr().add(i + 4 * k),
+                vsubq_s32(v, vshlq_s32(a, shift)),
+            );
+        }
+        i += 16;
+    }
+    i
 }
 
 /// Exact i32 accumulation, valid when sum |c| * max|x| < 2^31: every partial

@@ -32,7 +32,8 @@ enum Search {
     EstimateAndHighest,
     /// Orders within the span of the estimated one, and the highest. On
     /// the test corpus a span of 2 kept 72% of the gain of costing all 32
-    /// orders exactly, for 30% of its CPU.
+    /// orders exactly, for 30% of its CPU; a span of 1 is within 0.007% of
+    /// span 2 for 12% fewer level-8 instructions (round 18).
     Around(usize),
 }
 /// Fixed predictors of orders 0..=4 are evaluated (in one fused pass) at
@@ -56,10 +57,10 @@ impl Profile {
             2 => (4, 6, Estimate, 1),
             3 => (8, 6, Estimate, 1),
             4 => (12, 6, Estimate, 1),
-            5 => (16, 6, Estimate, 1),
+            5 => (32, 6, Estimate, 1),
             6 => (32, 8, Estimate, 1),
             7 => (32, 8, EstimateAndHighest, 2),
-            8 => (32, 8, Around(2), 4),
+            8 => (32, 8, Around(1), 4),
             _ => return Err(Error::Invalid("compression level range 0..8")),
         };
         Ok(Self {
@@ -71,34 +72,31 @@ impl Profile {
             stereo_trials,
         })
     }
-    /// Keep every level inside the FLAC streamable subset, which hardware
-    /// decoders and FFmpeg's default encoder rely on: up to 48 kHz, LPC
-    /// orders up to 12 and blocks up to 4608 frames; above, orders up to 32
-    /// and blocks up to 16384. Above 48 kHz, levels 6-8 use blocks of 8192
-    /// frames (the duration of 4096 at 44.1-48 kHz): 0.10-0.16% smaller
-    /// high-resolution files for about 250 KiB more peak RSS, which level 5
-    /// does not spend; 16384 saved little more for twice the buffers.
+    /// Blocks stay inside the FLAC streamable subset (4608 frames up to
+    /// 48 kHz, 16384 above). LPC orders do not: levels 0-4 (orders up to
+    /// 12) are subset streams at every rate, levels 5-8 use orders up to 32
+    /// at 44.1-48 kHz as well, which every FLAC decoder (libFLAC, FFmpeg)
+    /// reads but strict subset hardware may not. Capping them at 12 cost
+    /// level 5 0.45% of the corpus and 1.1% of its 44.1 kHz stereo files
+    /// (round 18). Above 48 kHz level 5 stays at order 16: 32 saved only
+    /// 0.05% of the high-resolution files for 7.6% more encoder work.
+    /// Above 48 kHz, levels 6-8 use blocks of 8192 frames (the duration of
+    /// 4096 at 44.1-48 kHz): 0.10-0.16% smaller high-resolution files for
+    /// about 250 KiB more peak RSS, which level 5 does not spend; 16384
+    /// saved little more for twice the buffers.
     fn for_rate(self, sample_rate: u32) -> Self {
         if sample_rate <= 48000 {
-            Self {
-                lpc: self.lpc.min(12),
-                ..self
-            }
+            self
         } else if self.level >= 6 {
             Self {
                 block: 8192,
-                // Orders to 32 make each exact costing dearer: +-1 around
-                // the estimate kept the high-resolution files within
-                // 0.001% of +-2 for 20% less CPU (below the order-8 level 8
-                // of round 12).
-                search: match self.search {
-                    Search::Around(_) => Search::Around(1),
-                    search => search,
-                },
                 ..self
             }
         } else {
-            self
+            Self {
+                lpc: self.lpc.min(16),
+                ..self
+            }
         }
     }
 }
@@ -1613,17 +1611,20 @@ mod tests {
             .is_ok_and(|(length, _)| length == frame.len())
     }
 
-    /// Every level stays inside the FLAC streamable subset at every rate.
+    /// Blocks stay inside the FLAC streamable subset at every level and
+    /// rate; LPC orders do at levels 0-4 and stay within the format's 32.
     #[test]
     fn profiles_stay_in_the_streamable_subset() {
         const { assert!(LPC_PRECISION <= 15) };
         for level in 0..=8 {
             for rate in [8000, 44100, 48000, 48001, 96000, 192000] {
                 let p = Profile::new(level).unwrap().for_rate(rate);
+                assert!(p.lpc <= MAX_LPC_ORDER, "level {level} rate {rate}");
                 if rate <= 48000 {
-                    assert!(p.lpc <= 12 && p.block <= 4608, "level {level} rate {rate}");
+                    assert!(p.block <= 4608, "level {level} rate {rate}");
+                    assert!(level >= 5 || p.lpc <= 12, "level {level} rate {rate}");
                 } else {
-                    assert!(p.lpc <= 32 && p.block <= 16384, "level {level} rate {rate}");
+                    assert!(p.block <= 16384, "level {level} rate {rate}");
                 }
                 assert!(p.partition <= 8);
             }

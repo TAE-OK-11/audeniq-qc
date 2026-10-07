@@ -583,7 +583,22 @@ impl LpcKernel {
     ) -> Option<()> {
         let order = coefficients.len();
         out.resize(samples.len() - order, 0);
-        let narrow = fits_i32(samples, coefficients);
+        let peak = peak_abs(samples);
+        let narrow = fits_i32(peak, coefficients);
+        if N == 0 && narrow && peak < 1 << 15 && self.0 != Backend::Scalar {
+            return SHORT_SCRATCH
+                .with(|scratch| {
+                    lpc_store_short(
+                        self.0,
+                        samples,
+                        coefficients,
+                        shift,
+                        out,
+                        &mut scratch.borrow_mut(),
+                    )
+                })
+                .then_some(());
+        }
         #[cfg(target_arch = "x86_64")]
         if self.0 == Backend::Avx2 {
             // SAFETY: AVX2 selected at construction; the bodies are safe Rust.
@@ -673,6 +688,147 @@ pub(crate) unsafe fn lpc_wide_groups_neon(
         i += 16;
     }
     (i, vmaxvq_u32(vreinterpretq_u32_u64(high)) != 0)
+}
+
+/// Narrow LPC residuals of 16-bit samples for orders 9..=32: the same
+/// values as [`lpc_store_any`]`::<true>`, with 16-bit multiplies. Each
+/// sample and coefficient fits i16 and [`fits_i32`] bounds every partial
+/// sum, so 16x16->32-bit products accumulated in i32 are exact. Groups of 16
+/// predictions, then the remaining samples one at a time. `scratch` holds
+/// the samples in the multiplier's layout.
+fn lpc_store_short(
+    backend: Backend,
+    samples: &[i32],
+    coefficients: &[i32],
+    shift: u32,
+    out: &mut [u32],
+    scratch: &mut Vec<i32>,
+) -> bool {
+    let order = coefficients.len();
+    assert!((9..=32).contains(&order) && out.len() + order == samples.len());
+    let done = match backend {
+        #[cfg(target_arch = "x86_64")]
+        // SAFETY: AVX2 was selected at construction; loads stay inside
+        // `scratch` and `samples`, stores inside `out` (asserted).
+        Backend::Avx2 => unsafe { lpc_pairs_avx2(samples, coefficients, shift, out, scratch) },
+        #[cfg(target_arch = "aarch64")]
+        // SAFETY: NEON is part of the AArch64 baseline and was selected.
+        Backend::Neon => unsafe { lpc_short_neon(samples, coefficients, shift, out, scratch) },
+        _ => order,
+    };
+    for i in done..samples.len() {
+        let mut prediction = 0i32;
+        for (j, &c) in coefficients.iter().enumerate() {
+            prediction = prediction.wrapping_add(c.wrapping_mul(samples[i - 1 - j]));
+        }
+        let r = samples[i].wrapping_sub(prediction >> shift);
+        out[i - order] = ((r << 1) ^ (r >> 31)) as u32;
+    }
+    true
+}
+
+/// [`lpc_store_short`] on AVX2: `pairs[m]` packs samples m (low half) and
+/// m - 1 (high half) as i16, so one VPMADDWD with a broadcast coefficient
+/// pair adds two taps of eight predictions. Returns the first sample not
+/// done.
+#[cfg(target_arch = "x86_64")]
+#[target_feature(enable = "avx2")]
+unsafe fn lpc_pairs_avx2(
+    x: &[i32],
+    c: &[i32],
+    shift: u32,
+    out: &mut [u32],
+    pairs: &mut Vec<i32>,
+) -> usize {
+    use std::arch::x86_64::*;
+    let order = c.len();
+    let n = x.len();
+    pairs.clear();
+    pairs.push(x[0] & 0xffff);
+    pairs.extend(x.windows(2).map(|w| (w[1] & 0xffff) | (w[0] << 16)));
+    // Tap pairs (2p, 2p + 1); an odd order's last pair has a zero high
+    // coefficient, against sample -1 (zero) at the block start.
+    let mut taps = [0i32; 16];
+    for (t, c) in taps.iter_mut().zip(c.chunks(2)) {
+        *t = (c[0] & 0xffff) | (c.get(1).copied().unwrap_or(0) << 16);
+    }
+    let taps = &taps[..order.div_ceil(2)];
+    let count = _mm_cvtsi32_si128(shift as i32);
+    let p = pairs.as_ptr();
+    let mut i = order;
+    while i + 16 <= n {
+        let mut a0 = _mm256_setzero_si256();
+        let mut a1 = _mm256_setzero_si256();
+        for (k, &t) in taps.iter().enumerate() {
+            let t = _mm256_set1_epi32(t);
+            let h = p.add(i - 1 - 2 * k);
+            a0 = _mm256_add_epi32(a0, _mm256_madd_epi16(_mm256_loadu_si256(h.cast()), t));
+            a1 = _mm256_add_epi32(
+                a1,
+                _mm256_madd_epi16(_mm256_loadu_si256(h.add(8).cast()), t),
+            );
+        }
+        for (k, a) in [a0, a1].into_iter().enumerate() {
+            let v = _mm256_loadu_si256(x.as_ptr().add(i + 8 * k).cast());
+            let r = _mm256_sub_epi32(v, _mm256_sra_epi32(a, count));
+            let folded = _mm256_xor_si256(_mm256_slli_epi32::<1>(r), _mm256_srai_epi32::<31>(r));
+            _mm256_storeu_si256(out.as_mut_ptr().add(i - order + 8 * k).cast(), folded);
+        }
+        i += 16;
+    }
+    i
+}
+
+/// [`lpc_store_short`] on NEON: the samples as i16, sixteen predictions per
+/// group in four i32x4 accumulators fed by SMLAL/SMLAL2 (16-bit multiplies
+/// issue at twice the rate of 32-bit MLA on Neoverse cores). Returns the
+/// first sample not done.
+#[cfg(target_arch = "aarch64")]
+#[target_feature(enable = "neon")]
+unsafe fn lpc_short_neon(
+    x: &[i32],
+    c: &[i32],
+    shift: u32,
+    out: &mut [u32],
+    scratch: &mut Vec<i32>,
+) -> usize {
+    use std::arch::aarch64::*;
+    let order = c.len();
+    let n = x.len();
+    scratch.clear();
+    scratch.resize(n.div_ceil(2), 0);
+    // SAFETY: the i32 buffer holds at least n i16 values.
+    let short = std::slice::from_raw_parts_mut(scratch.as_mut_ptr().cast::<i16>(), n);
+    for (s, &v) in short.iter_mut().zip(x) {
+        *s = v as i16;
+    }
+    let p = short.as_ptr();
+    let count = vdupq_n_s32(-(shift as i32));
+    let mut i = order;
+    while i + 16 <= n {
+        let mut acc = [vdupq_n_s32(0); 4];
+        for (j, &cj) in c.iter().enumerate() {
+            let cj = vdupq_n_s16(cj as i16);
+            let h = p.add(i - 1 - j);
+            let v0 = vld1q_s16(h);
+            let v1 = vld1q_s16(h.add(8));
+            acc[0] = vmlal_s16(acc[0], vget_low_s16(v0), vget_low_s16(cj));
+            acc[1] = vmlal_high_s16(acc[1], v0, cj);
+            acc[2] = vmlal_s16(acc[2], vget_low_s16(v1), vget_low_s16(cj));
+            acc[3] = vmlal_high_s16(acc[3], v1, cj);
+        }
+        for (k, &a) in acc.iter().enumerate() {
+            let v = vld1q_s32(x.as_ptr().add(i + 4 * k));
+            let r = vsubq_s32(v, vshlq_s32(a, count));
+            let folded = veorq_s32(vshlq_n_s32::<1>(r), vshrq_n_s32::<31>(r));
+            vst1q_u32(
+                out.as_mut_ptr().add(i - order + 4 * k),
+                vreinterpretq_u32_s32(folded),
+            );
+        }
+        i += 16;
+    }
+    i
 }
 
 /// Predictions computed together by [`lpc_store_any`]: each coefficient is
@@ -789,10 +945,15 @@ unsafe fn lpc_store_any_avx2<const NARROW: bool>(
 /// magnitude: sum |c| times the largest |x|. Then the sums are exact in i32
 /// and every residual x - (sum >> shift) is too (|x| < 2^30 as well), so
 /// none can be out of range.
-fn fits_i32(samples: &[i32], coefficients: &[i32]) -> bool {
+fn fits_i32(peak: u32, coefficients: &[i32]) -> bool {
     let total: u64 = coefficients.iter().map(|&c| c.unsigned_abs() as u64).sum();
-    let largest = peak_abs(samples) as u64;
+    let largest = peak as u64;
     total * largest < 1 << 30 && largest < 1 << 30
+}
+
+thread_local! {
+    /// Sample layout buffer of [`lpc_store_short`], one per encoding thread.
+    static SHORT_SCRATCH: std::cell::RefCell<Vec<i32>> = const { std::cell::RefCell::new(Vec::new()) };
 }
 
 /// Largest |x| of `x` (an AVX2 build on x86, eight lanes instead of the
@@ -1507,7 +1668,7 @@ mod tests {
                                 &mut out,
                             );
                             if total * (amplitude as i64) < 1 << 30 {
-                                assert!(fits_i32(&samples, &coefficients));
+                                assert!(fits_i32(peak_abs(&samples), &coefficients));
                             }
                             assert_eq!(ok.is_some(), expected.is_some());
                             if let Some(expected) = &expected {

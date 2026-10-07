@@ -516,9 +516,14 @@ impl Encoder {
         let stereo = crate::profile::scope(crate::profile::Stage::EncoderStereo);
         // Indices into channel_buffers: left, right, mid, side.
         const PAIRS: [(u64, [usize; 2]); 4] = [(1, [0, 1]), (8, [0, 3]), (9, [3, 1]), (10, [2, 3])];
-        // Whole-block lags 0..=STEREO_ESTIMATE_ORDER of each channel, when
+        // Whole-block lags 0..=prior_order of each channel, when
         // the stereo estimate computed them.
-        let mut priors = [[0.0f64; STEREO_ESTIMATE_ORDER + 1]; 4];
+        let mut priors = [[0.0f64; MAX_PRIOR_ORDER + 1]; 4];
+        // As many lags as planning will use, up to MAX_PRIOR_ORDER.
+        let prior_order = self
+            .profile
+            .lpc
+            .clamp(STEREO_ESTIMATE_ORDER, MAX_PRIOR_ORDER);
         let ranked = if channels == 1 {
             None
         } else {
@@ -537,7 +542,7 @@ impl Encoder {
             let [l, r, m, d] = if self.profile.lpc > 0 && n > 16 {
                 // LPC levels: the first lags of the whole block, which
                 // planning the chosen channels reuses (see `Plan::new`).
-                let lags = STEREO_ESTIMATE_ORDER.min(n - 1);
+                let lags = prior_order.min(n - 1);
                 let mut index = 0;
                 [&*left, &*right, &*mid, &*side].map(|x| {
                     let prior = &mut priors[index];
@@ -560,7 +565,7 @@ impl Encoder {
         stereo.end();
         let channel_depth = |index: usize| depth + u32::from(index == 3);
         let reuse = channels == 2 && self.profile.lpc > 0 && n > 16;
-        let prior = |index: usize| reuse.then_some(priors[index]);
+        let prior = |index: usize| reuse.then_some((priors[index], prior_order.min(n - 1)));
         let trials = if ranked.is_some() {
             self.profile.stereo_trials
         } else {
@@ -992,6 +997,11 @@ fn fixed_partition_sums(
 /// pairs saves 0.23% for about 35% more encoder time). Estimating on the
 /// central half of the block kept 89% of the order-4 gain at half the cost.
 const STEREO_ESTIMATE_ORDER: usize = 4;
+/// At LPC levels the stereo estimate uses the whole block and as many lags
+/// as planning reuses, up to this order: 8 instead of 4 made levels 3-6
+/// 0.009-0.013% smaller (12 saved no more), for the higher lags of the two
+/// channels that are not chosen.
+const MAX_PRIOR_ORDER: usize = 8;
 
 /// Estimated bits of one channel for ranking stereo assignments: the
 /// smallest Levinson estimate up to `STEREO_ESTIMATE_ORDER` (the per-order
@@ -1024,9 +1034,9 @@ fn levinson_estimate(r: &[f64], n: usize, depth: u32) -> f64 {
     // 0.01 per sample every channel costs the same.
     let floor = 1e-2 * n as f64;
     let mut best = 0.5 * n as f64 * r[0].max(floor).log2();
-    let mut a = [0.0f64; STEREO_ESTIMATE_ORDER];
+    let mut a = [0.0f64; MAX_PRIOR_ORDER];
     let mut error = r[0];
-    for index in 0..max_order.min(STEREO_ESTIMATE_ORDER) {
+    for index in 0..max_order.min(MAX_PRIOR_ORDER) {
         if error <= r[0] * 1e-12 || !error.is_finite() {
             break;
         }
@@ -1161,14 +1171,14 @@ fn quantize(a: &[f64]) -> Option<([i32; MAX_LPC_ORDER], u32)> {
 impl Plan {
     /// Plan one subframe. Common trailing zero bits ("wasted bits") are
     /// removed in place first; `write` must receive the same, shifted slice.
-    /// `prior`: autocorrelation lags `0..=STEREO_ESTIMATE_ORDER` of the
+    /// `prior`: autocorrelation lags `0..=order` of the
     /// unshifted channel over the whole block, if already computed.
     fn new(
         samples: &mut [i32],
         depth: u32,
         ctx: &Context<'_>,
         planner: &mut Planner,
-        prior: Option<[f64; STEREO_ESTIMATE_ORDER + 1]>,
+        prior: Option<([f64; MAX_PRIOR_ORDER + 1], usize)>,
     ) -> Self {
         let _profile = crate::profile::scope(crate::profile::Stage::EncoderPlan);
         let profile = ctx.profile;
@@ -1242,11 +1252,11 @@ impl Plan {
             let autocorr = crate::profile::scope(crate::profile::Stage::EncoderAutocorr);
             let mut r = [0.0f64; MAX_LPC_ORDER + 1];
             let mut first = 0;
-            if let Some(prior) = prior {
+            if let Some((prior, order)) = prior {
                 // Removing wasted bits divides every windowed sample by
                 // 2^wasted, so every lag by 4^wasted, exactly in f64.
                 let scale = 0.25f64.powi(wasted as i32);
-                first = (STEREO_ESTIMATE_ORDER + 1).min(max_order + 1);
+                first = (order + 1).min(max_order + 1);
                 for (r, &p) in r[..first].iter_mut().zip(&prior) {
                     *r = p * scale;
                 }

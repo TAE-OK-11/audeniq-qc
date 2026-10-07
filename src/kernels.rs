@@ -601,15 +601,9 @@ impl LpcKernel {
             .then_some(());
         }
         #[cfg(target_arch = "aarch64")]
-        if self.0 == Backend::Neon {
-            if !narrow {
-                // SAFETY: NEON selected at construction; bounds are asserted.
-                return lpc_store_wide_neon(samples, coefficients, shift, out).then_some(());
-            }
-            // The constant-order loops compile to two-lane widening
-            // multiply-adds on AArch64; the grouped kernel keeps four i32
-            // lanes (MLA) with one coefficient broadcast per 16 samples.
-            return lpc_store_any::<true>(samples, coefficients, shift, out).then_some(());
+        if self.0 == Backend::Neon && !narrow {
+            // SAFETY: NEON selected at construction; bounds are asserted.
+            return lpc_store_wide_neon(samples, coefficients, shift, out).then_some(());
         }
         match (N, narrow) {
             (0, true) => lpc_store_any::<true>(samples, coefficients, shift, out),
@@ -797,8 +791,28 @@ unsafe fn lpc_store_any_avx2<const NARROW: bool>(
 /// none can be out of range.
 fn fits_i32(samples: &[i32], coefficients: &[i32]) -> bool {
     let total: u64 = coefficients.iter().map(|&c| c.unsigned_abs() as u64).sum();
-    let largest = samples.iter().fold(0u32, |m, &x| m.max(x.unsigned_abs())) as u64;
+    let largest = peak_abs(samples) as u64;
     total * largest < 1 << 30 && largest < 1 << 30
+}
+
+/// Largest |x| of `x` (an AVX2 build on x86, eight lanes instead of the
+/// baseline's four).
+pub(crate) fn peak_abs(x: &[i32]) -> u32 {
+    #[cfg(target_arch = "x86_64")]
+    if std::is_x86_feature_detected!("avx2") {
+        // SAFETY: AVX2 was detected; the body is safe Rust.
+        return unsafe { peak_abs_avx2(x) };
+    }
+    peak_abs_body(x)
+}
+#[cfg(target_arch = "x86_64")]
+#[target_feature(enable = "avx2")]
+unsafe fn peak_abs_avx2(x: &[i32]) -> u32 {
+    peak_abs_body(x)
+}
+#[inline(always)]
+fn peak_abs_body(x: &[i32]) -> u32 {
+    x.iter().fold(0u32, |m, &v| m.max(v.unsigned_abs()))
 }
 
 /// [`lpc_store`] with i32 arithmetic, for blocks where [`fits_i32`] holds:
@@ -836,6 +850,12 @@ unsafe fn lpc_store_narrow_avx2<const N: usize>(
 
 /// Per-partition sums of stored folded residuals (`residual[i]` belongs to
 /// sample `order + i`), excluding the warm-up samples.
+#[cfg(target_arch = "x86_64")]
+#[target_feature(enable = "avx2")]
+unsafe fn sums_from_residual_avx2(residual: &[u32], order: usize, size: usize, sums: &mut [u64]) {
+    sums_from_residual(residual, order, size, sums)
+}
+#[inline(always)]
 fn sums_from_residual(residual: &[u32], order: usize, size: usize, sums: &mut [u64]) {
     for (p, sum) in sums.iter_mut().enumerate() {
         let start = (p * size).max(order) - order;
@@ -907,6 +927,12 @@ impl LpcKernel {
             .is_none()
         {
             return false;
+        }
+        #[cfg(target_arch = "x86_64")]
+        if self.0 == Backend::Avx2 {
+            // SAFETY: AVX2 selected at construction; the body is safe Rust.
+            unsafe { sums_from_residual_avx2(out, coefficients.len(), size, sums) };
+            return true;
         }
         sums_from_residual(out, coefficients.len(), size, sums);
         true

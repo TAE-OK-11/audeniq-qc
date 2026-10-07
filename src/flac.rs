@@ -87,6 +87,14 @@ impl Profile {
         } else if self.level >= 6 {
             Self {
                 block: 8192,
+                // Orders to 32 make each exact costing dearer: +-1 around
+                // the estimate kept the high-resolution files within
+                // 0.001% of +-2 for 20% less CPU (below the order-8 level 8
+                // of round 12).
+                search: match self.search {
+                    Search::Around(_) => Search::Around(1),
+                    search => search,
+                },
                 ..self
             }
         } else {

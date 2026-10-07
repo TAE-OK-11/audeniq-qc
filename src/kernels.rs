@@ -1344,8 +1344,9 @@ unsafe fn autocorr_int_group_avx2<const G: usize>(
 }
 
 /// [`AutocorrKernel::apply_int`] on NEON: SMLAL/SMLAL2 of eight samples with
-/// the samples `lag` earlier into two i32x4 lanes per lag, eight lags per
-/// pass, accumulated pairwise into i64 (SADALP) every eight steps.
+/// the samples `lag` earlier into two i32x4 lanes per lag, up to twelve lags
+/// per pass (one pass for the stereo estimate's nine), accumulated pairwise
+/// into i64 (SADALP) every eight steps.
 #[cfg(target_arch = "aarch64")]
 #[target_feature(enable = "neon")]
 unsafe fn autocorr_int_neon(y: &[i16], n: usize, first: usize, out: &mut [i64]) {
@@ -1355,17 +1356,26 @@ unsafe fn autocorr_int_neon(y: &[i16], n: usize, first: usize, out: &mut [i64]) 
     while done < out.len() {
         let left = out.len() - done;
         let lag = first + done;
-        let width = if left >= 8 {
-            autocorr_int_group_neon::<8>(y, end, lag, &mut out[done..]);
-            8
-        } else if left >= 4 {
-            autocorr_int_group_neon::<4>(y, end, lag, &mut out[done..]);
-            4
-        } else {
-            autocorr_int_group_neon::<2>(y, end, lag, &mut out[done..]);
-            2
+        let out = &mut out[done..];
+        let width = match left {
+            12.. => {
+                autocorr_int_group_neon::<12>(y, end, lag, out);
+                12
+            }
+            9..=11 => {
+                autocorr_int_group_neon::<9>(y, end, lag, out);
+                9
+            }
+            5..=8 => {
+                autocorr_int_group_neon::<8>(y, end, lag, out);
+                8
+            }
+            _ => {
+                autocorr_int_group_neon::<4>(y, end, lag, out);
+                4
+            }
         };
-        done += width;
+        done += width.min(left);
     }
 }
 #[cfg(target_arch = "aarch64")]
@@ -1425,7 +1435,7 @@ fn autocorr_scalar(w: &[f64], n: usize, first: usize, out: &mut [f64]) {
 }
 /// Lag-group widths: the widest group that is still filled, so at most
 /// one partly used group (of at most 1 or 3 unused lags) per block.
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 #[inline(always)]
 fn autocorr_groups(lags: usize, widest: usize, mut group: impl FnMut(usize, usize)) {
     let mut first = 0;
@@ -1515,33 +1525,17 @@ unsafe fn autocorr_group_avx2<const G: usize, const U: usize, const FMA: bool>(
 #[cfg(target_arch = "aarch64")]
 #[target_feature(enable = "neon")]
 unsafe fn autocorr_neon(w: &[f64], n: usize, lag0: usize, out: &mut [f64]) {
-    // Groups of twelve lags over two sample vectors per step: lag j of the
-    // second vector reads the same window as lag j + 2 of the first, so 24
-    // FMA chains need 16 loads per step instead of 26 (two passes of 12
-    // lags cover the 24 lags beyond the stereo estimate's 0-8 at order 32).
-    // Smaller groups keep at least sixteen chains: four FP pipes (Neoverse
-    // V2) stay busy, in at most 28 of 32 registers.
+    // Up to sixteen lags per pass, and sixteen independent FMA chains in
+    // every group (smaller groups take more sample vectors per step): four
+    // FP pipes (Neoverse V2) stay busy, in at most 17 of 32 registers.
     let end = AUTOCORR_PAD + n.next_multiple_of(16);
     assert!(end <= w.len());
-    let mut first = 0;
-    while first < out.len() {
-        let left = out.len() - first;
-        let at = lag0 + first;
-        let width = if left >= 12 {
-            autocorr_group_neon::<12, 2>(w, end, at, &mut out[first..]);
-            12
-        } else if left > 6 {
-            autocorr_group_neon::<8, 2>(w, end, at, &mut out[first..]);
-            8
-        } else if left > 2 {
-            autocorr_group_neon::<4, 4>(w, end, at, &mut out[first..]);
-            4
-        } else {
-            autocorr_group_neon::<2, 8>(w, end, at, &mut out[first..]);
-            2
-        };
-        first += width;
-    }
+    autocorr_groups(out.len(), 16, |first, width| match width {
+        16 => autocorr_group_neon::<16, 1>(w, end, lag0 + first, &mut out[first..]),
+        8 => autocorr_group_neon::<8, 2>(w, end, lag0 + first, &mut out[first..]),
+        4 => autocorr_group_neon::<4, 4>(w, end, lag0 + first, &mut out[first..]),
+        _ => autocorr_group_neon::<2, 8>(w, end, lag0 + first, &mut out[first..]),
+    });
 }
 #[cfg(target_arch = "aarch64")]
 #[target_feature(enable = "neon")]

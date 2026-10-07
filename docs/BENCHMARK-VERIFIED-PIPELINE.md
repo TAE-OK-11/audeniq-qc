@@ -914,6 +914,33 @@ comes from `flac-levels.yml` on long albums (16-bit and 24-bit, about 20 and
 | H18 | Level 8 above 48 kHz: orders within 1 of the estimate instead of 2 | +246 bytes on 34 MB of high-resolution files (+0.0007%), -20% CPU, below round 12 | Kept |
 | H19 | i32 coefficients in the wide (24-bit) x86 kernel to obtain VPMULDQ | LLVM still emulates 64-bit products; no gain | Rejected |
 
+### Result on GitHub runners (commit `d332a09`)
+
+CPU seconds on long albums (16-bit, about 20 min / 24-bit, about 6 min),
+minimum of five interleaved runs; bytes over the 49-track corpus (every
+output cross-decoded by FFmpeg); round 12 -> this round.
+
+| Level | Bytes | Arm 16-bit | Arm 24-bit | x86 16-bit | x86 24-bit |
+|---|---|---:|---:|---:|---:|
+| 0 | 98,442,777 -> 71,700,400 | 1.34 -> 1.34 (0%) | 0.48 -> 0.49 (+2%) | | |
+| 1 | 79,056,344 -> 71,628,179 | 1.36 -> 1.42 (+4%) | 0.48 -> 0.51 (+6%) | | |
+| 2 | 73,483,284 -> 68,610,902 | 1.37 -> 1.59 (+16%) | 0.48 -> 0.60 (+25%) | 1.36 -> 1.44 (+6%) | 0.49 -> 0.56 (+14%) |
+| 3 | 71,893,208 -> 67,615,972 | 1.48 -> 1.71 (+16%) | 0.51 -> 0.66 (+29%) | 1.49 -> 1.52 (+2%) | 0.52 -> 0.60 (+15%) |
+| 4 | 68,698,832 -> 67,339,439 | 1.73 -> 1.83 (+6%) | 0.67 -> 0.68 (+1%) | 1.62 -> 1.58 (-2%) | 0.70 -> 0.61 (-13%) |
+| 5 | 67,718,241 -> 67,315,197 | 1.98 -> 1.83 (-8%) | 0.77 -> 0.71 (-8%) | 1.80 -> 1.59 (-12%) | 0.79 -> 0.63 (-20%) |
+| 6 | 67,700,212 -> 67,212,070 | 2.88 -> 2.13 (-26%) | 1.22 -> 0.86 (-30%) | 2.86 -> 1.90 (-34%) | 1.22 -> 0.71 (-42%) |
+| 7 | 67,561,958 -> 67,137,198 | 4.12 -> 2.99 (-27%) | 1.94 -> 1.53 (-21%) | 4.13 -> 2.59 (-37%) | 1.87 -> 1.15 (-39%) |
+| 8 | 67,552,497 -> 67,123,906 | 4.49 -> 4.31 (-4%) | 1.97 -> 2.12 (+8%) | 4.51 -> 3.61 (-20%) | 1.91 -> 1.55 (-19%) |
+
+Before this round's 24-bit fixes (commit `177a0f1`) Arm 24-bit was +15%,
++19%, +38%, +44% at levels 0-3 and +35% at level 8. Peak RSS: levels 4-5
+unchanged; levels 0-3 about 0.3 MiB above round 12, which used no LPC or
+window buffers there.
+
+Remaining cost: levels 2-3 now run LPC (the source of their 5.9-6.6% smaller
+files); on Arm its f64 autocorrelation (two lanes) and 64-bit residuals for
+24-bit material are the largest items.
+
 ## Remaining hotspots (after round 10), ranked by expected ROI
 
 0. **Conversion after round 10**: the fused MD5/SHA-256 pass is now the

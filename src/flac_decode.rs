@@ -853,32 +853,12 @@ fn rice_codes_body(data: &[u8], mut pos: usize, k: u32, values: &[i32]) -> Optio
     let mut diff = 0u64;
     let fold = |v: i32| ((v << 1) ^ (v >> 31)) as u32 as u64;
     // Compare `len` (at most 57) bits at `pos` with `code`, or bit by bit.
-    let compare = |pos: usize, code: u64, len: u64, u: u64, diff: &mut u64| match data
-        .get(pos >> 3..(pos >> 3) + 8)
-    {
-        Some(bytes) if len <= 57 => {
-            let word = u64::from_be_bytes(bytes.try_into().unwrap()) << (pos & 7);
-            *diff |= (word >> (64 - len)) ^ code;
-            Some(())
-        }
-        _ => rice_code_bits(data, pos, k, u)?.then_some(()),
-    };
     // Consecutive codes are one bit string: compare two (or four, when they
     // fit 57 bits, as short codes usually do) together.
-    let pair = |pos: usize, a: u64, b: u64, diff: &mut u64| -> Option<usize> {
-        let (ca, la) = (suffix | (a & mask), (a >> k) + 1 + k as u64);
-        let (cb, lb) = (suffix | (b & mask), (b >> k) + 1 + k as u64);
-        let joined = data.get(pos >> 3..(pos >> 3) + 8);
-        if let (Some(bytes), true) = (joined, la + lb <= 57) {
-            let word = u64::from_be_bytes(bytes.try_into().unwrap()) << (pos & 7);
-            *diff |= (word >> (64 - (la + lb))) ^ ((ca << lb) | cb);
-        } else {
-            compare(pos, ca, la, a, diff)?;
-            compare(pos + la as usize, cb, lb, b, diff)?;
-        }
-        Some(pos + (la + lb) as usize)
-    };
-    let (quads, tail) = values.as_chunks::<4>();
+    // With k above 12 four codes never fit 57 bits: pairs only.
+    let quad_k = if k <= 12 { values.len() } else { 0 };
+    let (quads, _) = values[..quad_k].as_chunks::<4>();
+    let tail = &values[quads.len() * 4..];
     for &[a, b, c, d] in quads {
         let [a, b, c, d] = [a, b, c, d].map(fold);
         let len = |u: u64| (u >> k) + 1 + k as u64;
@@ -892,21 +872,77 @@ fn rice_codes_body(data: &[u8], mut pos: usize, k: u32, values: &[i32]) -> Optio
             diff |= (word >> (64 - total)) ^ expected;
             pos += total as usize;
         } else {
-            pos = pair(pos, a, b, &mut diff)?;
-            pos = pair(pos, c, d, &mut diff)?;
+            pos = rice_pair_cold(data, pos, k, a, b, &mut diff)?;
+            pos = rice_pair_cold(data, pos, k, c, d, &mut diff)?;
         }
     }
     let (pairs, rest) = tail.as_chunks::<2>();
     for &[a, b] in pairs {
-        pos = pair(pos, fold(a), fold(b), &mut diff)?;
+        pos = rice_pair_at(data, pos, k, fold(a), fold(b), &mut diff)?;
     }
     for &v in rest {
         let u = fold(v);
         let len = (u >> k) + 1 + k as u64;
-        compare(pos, suffix | (u & mask), len, u, &mut diff)?;
+        rice_code_at(data, pos, k, u, suffix | (u & mask), len, &mut diff)?;
         pos += len as usize;
     }
     (diff == 0 && pos <= data.len() * 8).then_some(pos)
+}
+
+/// [`rice_pair_at`] out of line, for the rare quads that do not fit.
+#[cold]
+#[inline(never)]
+fn rice_pair_cold(
+    data: &[u8],
+    pos: usize,
+    k: u32,
+    a: u64,
+    b: u64,
+    diff: &mut u64,
+) -> Option<usize> {
+    rice_pair_at(data, pos, k, a, b, diff)
+}
+
+/// Two consecutive Rice codes (folded `a`, `b`) compared at bit `pos` of
+/// `data`, together when they fit 57 bits; differences are ORed into
+/// `diff`. Returns the position after them, None past the end.
+#[inline(always)]
+fn rice_pair_at(data: &[u8], pos: usize, k: u32, a: u64, b: u64, diff: &mut u64) -> Option<usize> {
+    let suffix = 1u64 << k;
+    let mask = suffix - 1;
+    let (ca, la) = (suffix | (a & mask), (a >> k) + 1 + k as u64);
+    let (cb, lb) = (suffix | (b & mask), (b >> k) + 1 + k as u64);
+    let joined = data.get(pos >> 3..(pos >> 3) + 8);
+    if let (Some(bytes), true) = (joined, la + lb <= 57) {
+        let word = u64::from_be_bytes(bytes.try_into().unwrap()) << (pos & 7);
+        *diff |= (word >> (64 - (la + lb))) ^ ((ca << lb) | cb);
+    } else {
+        rice_code_at(data, pos, k, a, ca, la, diff)?;
+        rice_code_at(data, pos + la as usize, k, b, cb, lb, diff)?;
+    }
+    Some(pos + (la + lb) as usize)
+}
+
+/// One Rice code `code` of `len` bits (value `u`) compared at bit `pos`:
+/// with one 8-byte load up to 57 bits, otherwise bit by bit.
+#[inline(always)]
+fn rice_code_at(
+    data: &[u8],
+    pos: usize,
+    k: u32,
+    u: u64,
+    code: u64,
+    len: u64,
+    diff: &mut u64,
+) -> Option<()> {
+    match data.get(pos >> 3..(pos >> 3) + 8) {
+        Some(bytes) if len <= 57 => {
+            let word = u64::from_be_bytes(bytes.try_into().unwrap()) << (pos & 7);
+            *diff |= (word >> (64 - len)) ^ code;
+            Some(())
+        }
+        _ => rice_code_bits(data, pos, k, u)?.then_some(()),
+    }
 }
 
 /// One Rice code compared bit by bit; None when it extends past `data`.

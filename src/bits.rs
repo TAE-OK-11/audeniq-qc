@@ -215,19 +215,12 @@ fn rice_codes(out: &mut [u8], residual: &[u32], k: u32, pos: usize, used: u32, w
         used,
         word,
     };
-    let pair = |w: &mut Words<'_>, a: u64, b: u64| {
-        let (ca, la) = (suffix | (a & mask), (a >> k) + 1 + k as u64);
-        let (cb, lb) = (suffix | (b & mask), (b >> k) + 1 + k as u64);
-        if la + lb <= 56 {
-            w.put((ca << lb) | cb, la + lb);
-        } else {
-            w.code(a, ca, la, k);
-            w.code(b, cb, lb, k);
-        }
-    };
     // Four codes per store when they fit 56 bits (short codes, the common
-    // case for 16-bit material), otherwise two at a time.
-    let (quads, tail) = residual.as_chunks::<4>();
+    // case for 16-bit material), otherwise two at a time. With k above 12
+    // four codes never fit (24-bit material), so pairs are used directly.
+    let quad_k = if k <= 12 { residual.len() } else { 0 };
+    let (quads, _) = residual[..quad_k].as_chunks::<4>();
+    let tail = &residual[quads.len() * 4..];
     for &[a, b, c, d] in quads {
         let [a, b, c, d] = [a, b, c, d].map(u64::from);
         let len = |u: u64| (u >> k) + 1 + k as u64;
@@ -237,13 +230,13 @@ fn rice_codes(out: &mut [u8], residual: &[u32], k: u32, pos: usize, used: u32, w
             let joined = (((((code(a) << lb) | code(b)) << lc) | code(c)) << ld) | code(d);
             w.put(joined, la + lb + lc + ld);
         } else {
-            pair(&mut w, a, b);
-            pair(&mut w, c, d);
+            w.pair_cold(a, b, k);
+            w.pair_cold(c, d, k);
         }
     }
     let (pairs, rest) = tail.as_chunks::<2>();
     for &[a, b] in pairs {
-        pair(&mut w, a as u64, b as u64);
+        w.pair(a as u64, b as u64, k);
     }
     for &u in rest {
         let u = u as u64;
@@ -271,6 +264,27 @@ impl Words<'_> {
         self.pos += advance as usize;
         self.word <<= advance * 8;
         self.used &= 7;
+    }
+    /// [`Self::pair`] out of line, for the rare quads that do not fit:
+    /// keeps the quad loop small.
+    #[cold]
+    #[inline(never)]
+    fn pair_cold(&mut self, a: u64, b: u64, k: u32) {
+        self.pair(a, b, k)
+    }
+    /// The Rice codes of `a` and `b`: one store when they fit 56 bits.
+    #[inline(always)]
+    fn pair(&mut self, a: u64, b: u64, k: u32) {
+        let suffix = 1u64 << k;
+        let mask = suffix - 1;
+        let (ca, la) = (suffix | (a & mask), (a >> k) + 1 + k as u64);
+        let (cb, lb) = (suffix | (b & mask), (b >> k) + 1 + k as u64);
+        if la + lb <= 56 {
+            self.put((ca << lb) | cb, la + lb);
+        } else {
+            self.code(a, ca, la, k);
+            self.code(b, cb, lb, k);
+        }
     }
     /// The Rice code `code` of `len` bits for value `u`.
     #[inline(always)]
